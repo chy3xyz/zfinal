@@ -1,0 +1,15 @@
+<div class="card" id="todo-{{id}}">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            <input type="checkbox" {{#if completed}}checked{{/if}} hx-post="/api/todos/{{id}}/toggle"
+                hx-target="#todo-{{id}}" hx-swap="outerHTML">
+            <span style="{{#if completed}}text-decoration: line-through; opacity: 0.6;{{/if}}">
+                {{title}}
+            </span>
+        </div>
+        <button class="btn" style="background: #dc3545;" hx-delete="/api/todos/{{id}}" hx-target="#todo-{{id}}"
+            hx-swap="outerHTML swap:1s" hx-confirm="确定要删除这个待办事项吗？">
+            删除
+        </button>
+    </div>
+</div>

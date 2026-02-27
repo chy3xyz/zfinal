@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PocketBase Lite - Dashboard</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" />
+</head>
+
+<body class="bg-gray-100 h-screen flex overflow-hidden">
+    <!-- Sidebar -->
+    <aside class="w-64 bg-gray-800 text-white flex flex-col">
+        <div class="p-6 border-b border-gray-700">
+            <h1 class="text-2xl font-bold">PocketBase Lite</h1>
+        </div>
+        <nav class="flex-1 p-4 space-y-2">
+            <a href="#" class="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700 bg-gray-700">
+                <i class="fas fa-home mr-2"></i> Dashboard
+            </a>
+            <div class="pt-4 pb-2">
+                <p class="px-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Collections</p>
+            </div>
+            <div id="collections-list" hx-get="/admin/collections" hx-trigger="load">
+                <!-- Collections loaded here -->
+                <div class="px-4 py-2 text-gray-400 text-sm">Loading...</div>
+            </div>
+            <button onclick="document.getElementById('new-collection-modal').classList.remove('hidden')"
+                class="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded text-sm">
+                <i class="fas fa-plus mr-2"></i> New Collection
+            </button>
+        </nav>
+        <div class="p-4 border-t border-gray-700">
+            <a href="/admin/logout"
+                class="block py-2.5 px-4 rounded transition duration-200 hover:bg-red-600 text-gray-300 hover:text-white">
+                <i class="fas fa-sign-out-alt mr-2"></i> Logout
+            </a>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 flex flex-col overflow-hidden">
+        <header class="bg-white shadow p-4 flex justify-between items-center">
+            <h2 class="text-xl font-semibold text-gray-800" id="page-title">Dashboard</h2>
+            <div class="flex items-center">
+                <span class="text-gray-600 mr-4">admin@example.com</span>
+                <div class="h-8 w-8 rounded-full bg-gray-300 flex items-center justify-center">
+                    <i class="fas fa-user text-gray-600"></i>
+                </div>
+            </div>
+        </header>
+
+        <div id="main-content" class="flex-1 overflow-x-hidden overflow-y-auto bg-gray-100 p-6">
+            <!-- Dashboard Stats -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                <div class="bg-white rounded-lg shadow p-6">
+                    <div class="flex items-center">
+                        <div class="p-3 rounded-full bg-blue-100 text-blue-500">
+                            <i class="fas fa-database fa-2x"></i>
+                        </div>
+                        <div class="ml-4">
+                            <p class="text-gray-500 text-sm">Total Collections</p>
+                            <h3 class="text-2xl font-bold text-gray-800" id="stat-collections">-</h3>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-lg shadow p-6">
+                    <div class="flex items-center">
+                        <div class="p-3 rounded-full bg-green-100 text-green-500">
+                            <i class="fas fa-file-alt fa-2x"></i>
+                        </div>
+                        <div class="ml-4">
+                            <p class="text-gray-500 text-sm">Total Records</p>
+                            <h3 class="text-2xl font-bold text-gray-800">-</h3>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-lg shadow p-6">
+                    <div class="flex items-center">
+                        <div class="p-3 rounded-full bg-purple-100 text-purple-500">
+                            <i class="fas fa-server fa-2x"></i>
+                        </div>
+                        <div class="ml-4">
+                            <p class="text-gray-500 text-sm">System Status</p>
+                            <h3 class="text-2xl font-bold text-gray-800">Online</h3>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-800 mb-4">Welcome to PocketBase Lite</h3>
+                <p class="text-gray-600">Select a collection from the sidebar to manage records.</p>
+            </div>
+        </div>
+    </main>
+
+    <!-- New Collection Modal -->
+    <div id="new-collection-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden">
+        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div class="mt-3 text-center">
+                <h3 class="text-lg leading-6 font-medium text-gray-900">Create New Collection</h3>
+                <form hx-post="/admin/collections" hx-target="#collections-list"
+                    hx-on::after-request="document.getElementById('new-collection-modal').classList.add('hidden')">
+                    <div class="mt-2 px-7 py-3">
+                        <input type="text" name="name" placeholder="Collection Name (e.g. posts)"
+                            class="mb-3 px-3 py-2 border rounded w-full focus:outline-none focus:border-blue-500">
+                        <p class="text-xs text-gray-500 text-left mb-2">Fields (id, created_at added automatically)</p>
+                        <textarea name="schema" placeholder="title TEXT, content TEXT"
+                            class="px-3 py-2 border rounded w-full h-24 focus:outline-none focus:border-blue-500"></textarea>
+                    </div>
+                    <div class="items-center px-4 py-3">
+                        <button id="ok-btn" type="submit"
+                            class="px-4 py-2 bg-blue-500 text-white text-base font-medium rounded-md w-full shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300">
+                            Create
+                        </button>
+                        <button type="button"
+                            onclick="document.getElementById('new-collection-modal').classList.add('hidden')"
+                            class="mt-3 px-4 py-2 bg-gray-100 text-gray-700 text-base font-medium rounded-md w-full shadow-sm hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-300">
+                            Cancel
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

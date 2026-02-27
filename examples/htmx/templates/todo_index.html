@@ -1,0 +1,17 @@
+<div class="card">
+    <h2>📝 待办事项列表</h2>
+    <form hx-post="/api/todos" hx-target="#todo-list" hx-swap="beforeend">
+        <input type="text" name="title" placeholder="输入待办事项..." required>
+        <button type="submit" class="btn">添加</button>
+        <span class="htmx-indicator"></span>
+    </form>
+</div>
+
+<div id="todo-list">
+    <!-- 待办事项将动态加载到这里 -->
+</div>
+
+<script>
+    // 页面加载时获取待办列表
+    htmx.ajax('GET', '/api/todos', { target: '#todo-list', swap: 'innerHTML' });
+</script>

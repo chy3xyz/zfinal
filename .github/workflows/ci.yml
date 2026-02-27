@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        zig-version: ['0.14.0']
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Zig
+      uses: goto-bus-stop/setup-zig@v2
+      with:
+        version: ${{ matrix.zig-version }}
+    
+    - name: Install SQLite (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y sqlite3 libsqlite3-dev
+    
+    - name: Install SQLite (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew install sqlite3
+    
+    - name: Build
+      run: zig build
+    
+    - name: Run tests
+      run: zig build test
+    
+    - name: Build CLI tool
+      run: zig build install
+    
+    - name: Test CLI
+      run: |
+        export PATH="$PATH:$(pwd)/zig-out/bin"
+        zf version
+        zf help
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Zig
+      uses: goto-bus-stop/setup-zig@v2
+      with:
+        version: '0.14.0'
+    
+    - name: Check formatting
+      run: zig fmt --check src/ tools/ examples/
