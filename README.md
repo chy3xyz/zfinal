@@ -311,23 +311,38 @@ zig build run-blog
 
 ---
 
-## 🗺️ 路线图
+## 🗺️ Roadmap (路线图)
 
-- [x] 核心路由系统
+### ✅ Completed
+
+- [x] Core Routing System (核心路由系统)
 - [x] Active Record ORM
-- [x] 多数据库支持 (SQLite, MySQL, PostgreSQL)
-- [x] 拦截器 (AOP)
-- [x] 数据验证器
-- [x] HTMX 模板支持
-- [x] CLI 工具
-- [x] 文件上传
-- [x] Session 管理
-- [x] WebSocket 支持
-- [ ] 模板引擎增强
-- [ ] 缓存系统
-- [ ] 定时任务
-- [ ] 国际化 (i18n)
-- [ ] 更多数据库驱动
+- [x] Multi-Database Support (SQLite, MySQL, PostgreSQL)
+- [x] Interceptors / AOP (拦截器)
+- [x] Data Validator (数据验证器)
+- [x] HTMX Template Support (HTMX 模板支持)
+- [x] CLI Tool `zf` (命令行工具)
+- [x] File Uploads (文件上传)
+- [x] Static File Serving (静态文件服务)
+- [x] Session Management (会话管理)
+- [x] Cookie Support (Cookie 支持)
+- [x] WebSocket Support
+- [x] 17+ Utility Kits (实用工具包)
+
+### 🚧 In Progress
+
+- [ ] Template Engine Enhancements (模板引擎增强)
+- [ ] Cache System / Redis (缓存系统)
+- [ ] Cron Jobs (定时任务)
+- [ ] i18n Support (国际化)
+
+### 📅 Planned
+
+- [ ] More Database Drivers (更多数据库驱动)
+- [ ] gRPC Support
+- [ ] Microservices Toolkit (微服务工具包)
+- [ ] Docker Deployment Tools (Docker 部署工具)
+- [ ] Performance Monitoring Dashboard (性能监控面板)
 
 ---
 

@@ -365,6 +365,7 @@ zig build run-blog
 - [x] HTMX 模板支持
 - [x] CLI 工具 (zf)
 - [x] 文件上传
+- [x] 静态文件服务
 - [x] Session 管理
 - [x] Cookie 支持
 - [x] WebSocket 支持
@@ -380,7 +381,6 @@ zig build run-blog
 ### 📅 计划中
 
 - [ ] 更多数据库驱动
-- [ ] GraphQL 支持
 - [ ] gRPC 支持
 - [ ] 微服务工具包
 - [ ] Docker 部署工具

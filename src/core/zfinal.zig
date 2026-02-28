@@ -60,25 +60,50 @@ pub const ZFinal = struct {
     pub fn get(self: *ZFinal, path: []const u8, handler: Handler) !void {
         try self.router.addWithMethod(path, .GET, handler);
     }
+    pub fn getWithInterceptors(self: *ZFinal, path: []const u8, handler: Handler, interceptors: []const Interceptor) !void {
+        var chain = InterceptorChain.init(self.allocator);
+        for (interceptors) |i| try chain.add(i);
+        try self.router.addWithMethodAndInterceptors(path, .GET, handler, chain);
+    }
 
     /// Add POST route
     pub fn post(self: *ZFinal, path: []const u8, handler: Handler) !void {
         try self.router.addWithMethod(path, .POST, handler);
+    }
+    pub fn postWithInterceptors(self: *ZFinal, path: []const u8, handler: Handler, interceptors: []const Interceptor) !void {
+        var chain = InterceptorChain.init(self.allocator);
+        for (interceptors) |i| try chain.add(i);
+        try self.router.addWithMethodAndInterceptors(path, .POST, handler, chain);
     }
 
     /// Add PUT route
     pub fn put(self: *ZFinal, path: []const u8, handler: Handler) !void {
         try self.router.addWithMethod(path, .PUT, handler);
     }
+    pub fn putWithInterceptors(self: *ZFinal, path: []const u8, handler: Handler, interceptors: []const Interceptor) !void {
+        var chain = InterceptorChain.init(self.allocator);
+        for (interceptors) |i| try chain.add(i);
+        try self.router.addWithMethodAndInterceptors(path, .PUT, handler, chain);
+    }
 
     /// Add DELETE route
     pub fn delete(self: *ZFinal, path: []const u8, handler: Handler) !void {
         try self.router.addWithMethod(path, .DELETE, handler);
     }
+    pub fn deleteWithInterceptors(self: *ZFinal, path: []const u8, handler: Handler, interceptors: []const Interceptor) !void {
+        var chain = InterceptorChain.init(self.allocator);
+        for (interceptors) |i| try chain.add(i);
+        try self.router.addWithMethodAndInterceptors(path, .DELETE, handler, chain);
+    }
 
     /// Add PATCH route
     pub fn patch(self: *ZFinal, path: []const u8, handler: Handler) !void {
         try self.router.addWithMethod(path, .PATCH, handler);
+    }
+    pub fn patchWithInterceptors(self: *ZFinal, path: []const u8, handler: Handler, interceptors: []const Interceptor) !void {
+        var chain = InterceptorChain.init(self.allocator);
+        for (interceptors) |i| try chain.add(i);
+        try self.router.addWithMethodAndInterceptors(path, .PATCH, handler, chain);
     }
 
     pub fn start(self: *ZFinal) !void {

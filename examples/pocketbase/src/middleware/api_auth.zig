@@ -1,14 +1,15 @@
 const std = @import("std");
 const zfinal = @import("zfinal");
-const Token = @import("../../auth/token.zig");
+const Token = @import("../auth/token.zig");
+const State = @import("../state.zig");
 
 /// Helper to get global DB
 fn getDb() *zfinal.DB {
-    return global_state.?.db;
+    return State.global_state.?.db;
 }
 
 /// Middleware to check API token authentication
-pub fn checkApiToken(ctx: *zfinal.Context, next: anytype) !void {
+pub fn checkApiToken(ctx: *zfinal.Context) !bool {
     const db = getDb();
 
     // Get Authorization header
@@ -23,8 +24,8 @@ pub fn checkApiToken(ctx: *zfinal.Context, next: anytype) !void {
             const is_valid = try Token.validateToken(token, db, ctx.allocator);
 
             if (is_valid) {
-                // Token valid, proceed to next handler
-                return try next(ctx);
+                // Token valid, proceed to handler
+                return true;
             }
         }
     }
@@ -36,4 +37,5 @@ pub fn checkApiToken(ctx: *zfinal.Context, next: anytype) !void {
         .message = "Invalid or missing API token",
         .hint = "Include 'Authorization: Bearer <token>' header",
     });
+    return false;
 }

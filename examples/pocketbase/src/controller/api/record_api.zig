@@ -115,20 +115,85 @@ pub fn create(ctx: *zfinal.Context) !void {
 
     const db = getDb();
 
+    var body_buffer = std.ArrayList(u8).init(ctx.allocator);
+    defer body_buffer.deinit();
+    var reader = try ctx.req.reader();
+    try reader.readAllArrayList(&body_buffer, 10 * 1024 * 1024); // 10MB limit
+
+    var parsed = std.json.parseFromSlice(std.json.Value, ctx.allocator, body_buffer.items, .{}) catch {
+        return sendError(ctx, .bad_request, "Invalid JSON payload", 400);
+    };
+    defer parsed.deinit();
+
+    if (parsed.value != .object) {
+        return sendError(ctx, .bad_request, "Expected JSON object", 400);
+    }
+
     var random_bytes: [16]u8 = undefined;
     std.crypto.random.bytes(&random_bytes);
     var id_buf: [32]u8 = undefined;
     const new_id = std.fmt.bufPrint(&id_buf, "{s}", .{std.fmt.fmtSliceHexLower(&random_bytes)}) catch "error";
     const now = std.time.timestamp();
 
-    const sql = try std.fmt.allocPrintZ(ctx.allocator, "INSERT INTO {s} (id, created_at) VALUES ('{s}', {d})", .{ collection_name, new_id, now });
+    var fields_query = std.ArrayList(u8).init(ctx.allocator);
+    defer fields_query.deinit();
+    var values_query = std.ArrayList(u8).init(ctx.allocator);
+    defer values_query.deinit();
+
+    try fields_query.appendSlice("id, created_at, updated_at");
+    try values_query.writer().print("'{s}', {d}, {d}", .{ new_id, now, now });
+
+    var it = parsed.value.object.iterator();
+    while (it.next()) |entry| {
+        const key = entry.key_ptr.*;
+        if (!isValidCollectionName(key)) continue;
+
+        try fields_query.writer().print(", {s}", .{key});
+
+        switch (entry.value_ptr.*) {
+            .string => |s| {
+                var escaped = std.ArrayList(u8).init(ctx.allocator);
+                defer escaped.deinit();
+                for (s) |c| {
+                    if (c == '\'') {
+                        try escaped.appendSlice("''");
+                    } else {
+                        try escaped.append(c);
+                    }
+                }
+                try values_query.writer().print(", '{s}'", .{escaped.items});
+            },
+            .integer => |i| {
+                try values_query.writer().print(", {d}", .{i});
+            },
+            .float => |f| {
+                try values_query.writer().print(", {d}", .{f});
+            },
+            .bool => |b| {
+                const b_val: u8 = if (b) 1 else 0;
+                try values_query.writer().print(", {d}", .{b_val});
+            },
+            .null => {
+                try values_query.writer().print(", NULL", .{});
+            },
+            else => {
+                try values_query.writer().print(", NULL", .{});
+            },
+        }
+    }
+
+    const sql = try std.fmt.allocPrintZ(ctx.allocator, "INSERT INTO {s} ({s}) VALUES ({s})", .{ collection_name, fields_query.items, values_query.items });
     defer ctx.allocator.free(sql);
-    try db.exec(sql);
+
+    db.exec(sql) catch |err| {
+        std.debug.print("Insert error: {}\nSQL: {s}\n", .{ err, sql });
+        return sendError(ctx, .internal_server_error, "Failed to create record", 500);
+    };
 
     ctx.res_status = .created;
     var output = std.ArrayList(u8).init(ctx.allocator);
     defer output.deinit();
-    try output.writer().print("{{\"id\":\"{s}\",\"message\":\"Record created\"}}", .{new_id});
+    try output.writer().print("{{\"id\":\"{s}\",\"message\":\"Record created successfully\"}}", .{new_id});
     try sendJson(ctx, output.items);
 }
 
@@ -139,15 +204,77 @@ pub fn update(ctx: *zfinal.Context) !void {
 
     const db = getDb();
 
+    var body_buffer = std.ArrayList(u8).init(ctx.allocator);
+    defer body_buffer.deinit();
+    var reader = try ctx.req.reader();
+    try reader.readAllArrayList(&body_buffer, 10 * 1024 * 1024); // 10MB limit
+
+    var parsed = std.json.parseFromSlice(std.json.Value, ctx.allocator, body_buffer.items, .{}) catch {
+        return sendError(ctx, .bad_request, "Invalid JSON payload", 400);
+    };
+    defer parsed.deinit();
+
+    if (parsed.value != .object) {
+        return sendError(ctx, .bad_request, "Expected JSON object", 400);
+    }
+
     const now = std.time.timestamp();
-    const sql = try std.fmt.allocPrintZ(ctx.allocator, "UPDATE {s} SET updated_at = {d} WHERE id = '{s}'", .{ collection_name, now, id });
+    var set_query = std.ArrayList(u8).init(ctx.allocator);
+    defer set_query.deinit();
+
+    try set_query.writer().print("updated_at = {d}", .{now});
+
+    var it = parsed.value.object.iterator();
+    while (it.next()) |entry| {
+        const key = entry.key_ptr.*;
+        if (!isValidCollectionName(key) or std.mem.eql(u8, key, "id")) continue;
+
+        try set_query.writer().print(", {s} = ", .{key});
+
+        switch (entry.value_ptr.*) {
+            .string => |s| {
+                var escaped = std.ArrayList(u8).init(ctx.allocator);
+                defer escaped.deinit();
+                for (s) |c| {
+                    if (c == '\'') {
+                        try escaped.appendSlice("''");
+                    } else {
+                        try escaped.append(c);
+                    }
+                }
+                try set_query.writer().print("'{s}'", .{escaped.items});
+            },
+            .integer => |i| {
+                try set_query.writer().print("{d}", .{i});
+            },
+            .float => |f| {
+                try set_query.writer().print("{d}", .{f});
+            },
+            .bool => |b| {
+                const b_val: u8 = if (b) 1 else 0;
+                try set_query.writer().print("{d}", .{b_val});
+            },
+            .null => {
+                try set_query.writer().print("NULL", .{});
+            },
+            else => {
+                try set_query.writer().print("NULL", .{});
+            },
+        }
+    }
+
+    const sql = try std.fmt.allocPrintZ(ctx.allocator, "UPDATE {s} SET {s} WHERE id = '{s}'", .{ collection_name, set_query.items, id });
     defer ctx.allocator.free(sql);
-    try db.exec(sql);
+
+    db.exec(sql) catch |err| {
+        std.debug.print("Update error: {}\nSQL: {s}\n", .{ err, sql });
+        return sendError(ctx, .internal_server_error, "Failed to update record", 500);
+    };
 
     ctx.res_status = .ok;
     var output = std.ArrayList(u8).init(ctx.allocator);
     defer output.deinit();
-    try output.writer().print("{{\"id\":\"{s}\",\"message\":\"Record updated\"}}", .{id});
+    try output.writer().print("{{\"id\":\"{s}\",\"message\":\"Record updated successfully\"}}", .{id});
     try sendJson(ctx, output.items);
 }
 

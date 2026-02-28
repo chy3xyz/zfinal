@@ -64,13 +64,31 @@ pub const Context = struct {
     fn ensureQueryParams(self: *Context) !void {
         if (self.query_params != null) return;
 
+        var map = std.StringHashMap([]const u8).init(self.allocator);
+
+        // 1. Parse URL query string
         const target = self.req.head.target;
         if (std.mem.indexOfScalar(u8, target, '?')) |q_pos| {
             const query = target[q_pos + 1 ..];
-            self.query_params = try params.parseQuery(self.allocator, query);
-        } else {
-            self.query_params = std.StringHashMap([]const u8).init(self.allocator);
+            try params.parseQueryIntoAllocator(self.allocator, query, &map);
         }
+
+        // 2. Parse x-www-form-urlencoded body for POST/PUT/PATCH methods
+        if (self.req.head.method == .POST or self.req.head.method == .PUT or self.req.head.method == .PATCH) {
+            const content_type = self.getHeader("content-type") orelse "";
+            if (std.ascii.startsWithIgnoreCase(content_type, "application/x-www-form-urlencoded")) {
+                var body_buffer = std.ArrayList(u8).init(self.allocator);
+                defer body_buffer.deinit();
+
+                var reader = try self.req.reader();
+                try reader.readAllArrayList(&body_buffer, 2 * 1024 * 1024); // 2MB max for form
+                if (body_buffer.items.len > 0) {
+                    try params.parseQueryIntoAllocator(self.allocator, body_buffer.items, &map);
+                }
+            }
+        }
+
+        self.query_params = map;
     }
 
     pub fn getPara(self: *Context, name: []const u8) !?[]const u8 {
@@ -342,7 +360,7 @@ pub const Context = struct {
         var body_buffer = std.ArrayList(u8).init(self.allocator);
         defer body_buffer.deinit();
 
-        var reader = self.req.reader();
+        var reader = try self.req.reader();
         try reader.readAllArrayList(&body_buffer, 10 * 1024 * 1024); // 10MB max
 
         // Parse multipart

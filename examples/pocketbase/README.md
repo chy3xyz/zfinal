@@ -87,16 +87,18 @@ curl http://localhost:8090/api/collections/posts/records/1
 ```bash
 POST /api/collections/:name/records
 Content-Type: application/json
+Authorization: Bearer <your_api_token>
 
 # Example
 curl -X POST http://localhost:8090/api/collections/posts/records \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <your_api_token>" \
   -d '{"title":"New Post","content":"Content here"}'
 
 # Response
 {
-  "id": "placeholder_id",
-  "message": "Record created (placeholder implementation)"
+  "id": "e98e4r9d...",
+  "message": "Record created successfully"
 }
 ```
 
@@ -104,19 +106,23 @@ curl -X POST http://localhost:8090/api/collections/posts/records \
 ```bash
 PATCH /api/collections/:name/records/:id
 Content-Type: application/json
+Authorization: Bearer <your_api_token>
 
 # Example
 curl -X PATCH http://localhost:8090/api/collections/posts/records/1 \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <your_api_token>" \
   -d '{"title":"Updated Title"}'
 ```
 
 #### Delete Record
 ```bash
 DELETE /api/collections/:name/records/:id
+Authorization: Bearer <your_api_token>
 
 # Example
-curl -X DELETE http://localhost:8090/api/collections/posts/records/1
+curl -X DELETE http://localhost:8090/api/collections/posts/records/1 \
+  -H "Authorization: Bearer <your_api_token>"
 
 # Response: 204 No Content
 ```

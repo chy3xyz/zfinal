@@ -22,6 +22,7 @@ pub const SQLiteDB = struct {
 
         const rc = c.sqlite3_open(path_z.ptr, &db);
         if (rc != c.SQLITE_OK) {
+            std.debug.print("SQLite open failed. rc={d} err={s} path={s}\n", .{ rc, c.sqlite3_errmsg(db), path_z.ptr });
             if (db) |d| _ = c.sqlite3_close(d);
             return error.DatabaseOpenFailed;
         }

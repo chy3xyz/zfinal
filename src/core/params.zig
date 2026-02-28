@@ -3,8 +3,12 @@ const std = @import("std");
 /// Parse query string into a StringHashMap
 pub fn parseQuery(allocator: std.mem.Allocator, query: []const u8) !std.StringHashMap([]const u8) {
     var params = std.StringHashMap([]const u8).init(allocator);
+    try parseQueryIntoAllocator(allocator, query, &params);
+    return params;
+}
 
-    if (query.len == 0) return params;
+pub fn parseQueryIntoAllocator(allocator: std.mem.Allocator, query: []const u8, params: *std.StringHashMap([]const u8)) !void {
+    if (query.len == 0) return;
 
     var iter = std.mem.splitScalar(u8, query, '&');
     while (iter.next()) |pair| {
@@ -25,8 +29,6 @@ pub fn parseQuery(allocator: std.mem.Allocator, query: []const u8) !std.StringHa
             try params.put(decoded_key, "");
         }
     }
-
-    return params;
 }
 
 /// Simple URL decoder (handles %XX encoding)
