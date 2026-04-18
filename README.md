@@ -6,7 +6,7 @@
 
 *受 JFinal 启发，为 Zig 生态打造的现代 Web 开发框架*
 
-[![Zig](https://img.shields.io/badge/Zig-0.14.0-orange.svg)](https://ziglang.org/)
+[![Zig](https://img.shields.io/badge/Zig-0.16.0-orange.svg)](https://ziglang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
