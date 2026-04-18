@@ -78,13 +78,13 @@ pub const Frame = struct {
 
     /// 编码 WebSocket 帧
     pub fn encode(self: *const Frame, allocator: std.mem.Allocator) ![]u8 {
-        var buffer = std.ArrayList(u8).init(allocator);
-        defer buffer.deinit();
+        var buffer = std.ArrayList(u8).empty;
+        defer buffer.deinit(allocator);
 
         // Byte 1: FIN + opcode
         var byte1: u8 = @intFromEnum(self.opcode);
         if (self.fin) byte1 |= 0x80;
-        try buffer.append(byte1);
+        try buffer.append(allocator, byte1);
 
         // Byte 2: MASK + payload length
         const payload_len = self.payload.len;
@@ -92,26 +92,26 @@ pub const Frame = struct {
 
         if (payload_len < 126) {
             byte2 |= @intCast(payload_len);
-            try buffer.append(byte2);
+            try buffer.append(allocator, byte2);
         } else if (payload_len < 65536) {
             byte2 |= 126;
-            try buffer.append(byte2);
-            try buffer.append(@intCast((payload_len >> 8) & 0xFF));
-            try buffer.append(@intCast(payload_len & 0xFF));
+            try buffer.append(allocator, byte2);
+            try buffer.append(allocator, @intCast((payload_len >> 8) & 0xFF));
+            try buffer.append(allocator, @intCast(payload_len & 0xFF));
         } else {
             byte2 |= 127;
-            try buffer.append(byte2);
+            try buffer.append(allocator, byte2);
             var i: usize = 56;
             while (i >= 0) : (i -= 8) {
-                try buffer.append(@intCast((payload_len >> @intCast(i)) & 0xFF));
+                try buffer.append(allocator, @intCast((payload_len >> @intCast(i)) & 0xFF));
                 if (i == 0) break;
             }
         }
 
         // Payload
-        try buffer.appendSlice(self.payload);
+        try buffer.appendSlice(allocator, self.payload);
 
-        return buffer.toOwnedSlice();
+        return buffer.toOwnedSlice(allocator);
     }
 };
 

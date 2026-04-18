@@ -26,15 +26,15 @@ pub const StrKit = struct {
 
     /// 分割字符串
     pub fn split(allocator: std.mem.Allocator, str: []const u8, delimiter: []const u8) ![][]const u8 {
-        var result = std.ArrayList([]const u8).init(allocator);
-        defer result.deinit();
+        var result = std.ArrayList([]const u8).empty;
+        defer result.deinit(allocator);
 
         var it = std.mem.splitSequence(u8, str, delimiter);
         while (it.next()) |part| {
-            try result.append(part);
+            try result.append(allocator, part);
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(allocator);
     }
 
     /// 连接字符串数组
@@ -70,21 +70,21 @@ pub const StrKit = struct {
 
     /// 替换字符串
     pub fn replace(allocator: std.mem.Allocator, str: []const u8, old: []const u8, new: []const u8) ![]const u8 {
-        var result = std.ArrayList(u8).init(allocator);
-        defer result.deinit();
+        var result = std.ArrayList(u8).empty;
+        defer result.deinit(allocator);
 
         var pos: usize = 0;
         while (pos < str.len) {
             if (std.mem.startsWith(u8, str[pos..], old)) {
-                try result.appendSlice(new);
+                try result.appendSlice(allocator, new);
                 pos += old.len;
             } else {
-                try result.append(str[pos]);
+                try result.append(allocator, str[pos]);
                 pos += 1;
             }
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(allocator);
     }
 
     /// 填充字符串（左侧）

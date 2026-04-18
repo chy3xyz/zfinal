@@ -1,3 +1,6 @@
+// Export global Io instance
+pub const io_instance = @import("io_instance.zig");
+
 const std = @import("std");
 
 test {

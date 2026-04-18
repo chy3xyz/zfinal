@@ -27,18 +27,18 @@ pub const PluginManager = struct {
 
     pub fn init(allocator: std.mem.Allocator) PluginManager {
         return PluginManager{
-            .plugins = std.ArrayList(Plugin).init(allocator),
+            .plugins = std.ArrayList(Plugin).empty,
             .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *PluginManager) void {
-        self.plugins.deinit();
+        self.plugins.deinit(self.allocator);
     }
 
     /// 添加插件
     pub fn add(self: *PluginManager, plugin: Plugin) !void {
-        try self.plugins.append(plugin);
+        try self.plugins.append(self.allocator, plugin);
     }
 
     /// 启动所有插件

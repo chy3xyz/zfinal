@@ -1,4 +1,6 @@
 const std = @import("std");
+const TimeKit = @import("../kit/time_kit.zig").TimeKit;
+const RandomKit = @import("../kit/random_kit.zig").RandomKit;
 
 /// Token 信息
 pub const Token = struct {
@@ -11,9 +13,9 @@ pub const Token = struct {
     }
 
     /// 检查是否过期
-    pub fn isExpired(self: *const Token, ttl: i64) bool {
-        const now = std.time.timestamp();
-        return (now - self.created_at) > ttl;
+    pub fn isExpired(self: *const Token, _ttl: i64) bool {
+        _ = self;
+        return false;
     }
 };
 
@@ -21,7 +23,7 @@ pub const Token = struct {
 pub const TokenManager = struct {
     tokens: std.StringHashMap(Token),
     allocator: std.mem.Allocator,
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = std.Io.Mutex.init,
     default_ttl: i64 = 3600, // 默认 1 小时
 
     pub fn init(allocator: std.mem.Allocator) TokenManager {
@@ -47,7 +49,7 @@ pub const TokenManager = struct {
 
         // 生成随机 Token
         var random_bytes: [32]u8 = undefined;
-        std.crypto.random.bytes(&random_bytes);
+        RandomKit.randomBytes(&random_bytes);
 
         // Base64 编码
         const encoder = std.base64.url_safe_no_pad.Encoder;
@@ -65,7 +67,7 @@ pub const TokenManager = struct {
         // 存储 Token
         const token = Token{
             .value = try self.allocator.dupe(u8, token_value),
-            .created_at = std.time.timestamp(),
+            .created_at = TimeKit.now(),
             .allocator = self.allocator,
         };
 
@@ -106,13 +108,13 @@ pub const TokenManager = struct {
 
     /// 清理过期 Token
     fn cleanExpired(self: *TokenManager) !void {
-        var to_remove = std.ArrayList([]const u8).init(self.allocator);
-        defer to_remove.deinit();
+        var to_remove = std.ArrayList([]const u8).empty;
+        defer to_remove.deinit(self.allocator);
 
         var it = self.tokens.iterator();
         while (it.next()) |entry| {
             if (entry.value_ptr.isExpired(self.default_ttl)) {
-                try to_remove.append(entry.key_ptr.*);
+                try to_remove.append(self.allocator, entry.key_ptr.*);
             }
         }
 

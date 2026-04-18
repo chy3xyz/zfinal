@@ -55,7 +55,7 @@ pub const ResultSet = struct {
         return ResultSet{
             .allocator = allocator,
             .columns = columns,
-            .rows = std.ArrayList(Row).init(allocator),
+            .rows = std.ArrayList(Row).empty,
         };
     }
 
@@ -63,7 +63,7 @@ pub const ResultSet = struct {
         for (self.rows.items) |*row| {
             row.deinit();
         }
-        self.rows.deinit();
+        self.rows.deinit(self.allocator);
 
         for (self.columns) |col| {
             self.allocator.free(col);
@@ -77,7 +77,7 @@ pub const ResultSet = struct {
             .cells = cells,
             .allocator = self.allocator,
         };
-        try self.rows.append(row);
+        try self.rows.append(self.allocator, row);
     }
 
     /// Get column count

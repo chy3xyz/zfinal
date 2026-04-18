@@ -21,14 +21,14 @@ pub const CronPlugin = struct {
 
     pub fn init(allocator: std.mem.Allocator) CronPlugin {
         return CronPlugin{
-            .jobs = std.ArrayList(CronJob).init(allocator),
+            .jobs = std.ArrayList(CronJob).empty,
             .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *Self) void {
         self.stop() catch {};
-        self.jobs.deinit();
+        self.jobs.deinit(self.allocator);
     }
 
     /// 添加定时任务
@@ -38,7 +38,7 @@ pub const CronPlugin = struct {
             .schedule = cron_expr,
             .task = task,
         };
-        try self.jobs.append(job);
+        try self.jobs.append(self.allocator, job);
     }
 
     /// 启动定时任务

@@ -24,25 +24,25 @@ pub const Context = struct {
         return Context{
             .req = req,
             .allocator = allocator,
-            .attributes = std.StringHashMap([]const u8).init(allocator),
-            .response_cookies = std.ArrayList(Cookie).init(allocator),
-            .response_headers = std.StringHashMap([]const u8).init(allocator),
+            .attributes = std.StringHashMap([]const u8).empty,
+            .response_cookies = std.ArrayList(Cookie).empty,
+            .response_headers = std.StringHashMap([]const u8).empty,
         };
     }
 
     pub fn deinit(self: *Context) void {
         if (self.query_params) |*qp| {
-            qp.deinit();
+            qp.deinit(self.allocator);
         }
         if (self.path_params) |*pp| {
-            pp.deinit();
+            pp.deinit(self.allocator);
         }
-        self.attributes.deinit();
+        self.attributes.deinit(self.allocator);
         if (self.cookies) |*c| {
-            c.deinit();
+            c.deinit(self.allocator);
         }
-        self.response_cookies.deinit();
-        self.response_headers.deinit();
+        self.response_cookies.deinit(self.allocator);
+        self.response_headers.deinit(self.allocator);
     }
 
     pub fn getHeader(self: *Context, name: []const u8) ?[]const u8 {
@@ -222,13 +222,13 @@ pub const Context = struct {
     // === Rendering ===
 
     pub fn renderText(self: *Context, text: []const u8) !void {
-        var headers = std.ArrayList(std.http.Header).init(self.allocator);
-        defer headers.deinit();
+        var headers = std.ArrayList(std.http.Header).empty;
+        defer headers.deinit(self.allocator);
 
         // Add custom headers
         var header_it = self.response_headers.iterator();
         while (header_it.next()) |entry| {
-            try headers.append(.{ .name = entry.key_ptr.*, .value = entry.value_ptr.* });
+            try headers.append(self.allocator, .{ .name = entry.key_ptr.*, .value = entry.value_ptr.* });
         }
 
         // Add Set-Cookie headers
@@ -239,7 +239,7 @@ pub const Context = struct {
             else
                 try std.fmt.bufPrint(&cookie_value_buf, "{s}={s}; Path={s}", .{ cookie.name, cookie.value, cookie.path });
 
-            try headers.append(.{ .name = "Set-Cookie", .value = cookie_value });
+            try headers.append(self.allocator, .{ .name = "Set-Cookie", .value = cookie_value });
         }
 
         try self.req.respond(text, .{
@@ -249,18 +249,18 @@ pub const Context = struct {
     }
 
     pub fn renderJson(self: *Context, data: anytype) !void {
-        const json = try std.json.stringifyAlloc(self.allocator, data, .{});
+        const json = try std.json.Stringify.valueAlloc(self.allocator, data, .{});
         defer self.allocator.free(json);
 
-        var headers = std.ArrayList(std.http.Header).init(self.allocator);
-        defer headers.deinit();
+        var headers = std.ArrayList(std.http.Header).empty;
+        defer headers.deinit(self.allocator);
 
-        try headers.append(.{ .name = "Content-Type", .value = "application/json" });
+        try headers.append(self.allocator, .{ .name = "Content-Type", .value = "application/json" });
 
         // Add custom headers
         var header_it = self.response_headers.iterator();
         while (header_it.next()) |entry| {
-            try headers.append(.{ .name = entry.key_ptr.*, .value = entry.value_ptr.* });
+            try headers.append(self.allocator, .{ .name = entry.key_ptr.*, .value = entry.value_ptr.* });
         }
 
         // Add Set-Cookie headers
@@ -271,7 +271,7 @@ pub const Context = struct {
             else
                 try std.fmt.bufPrint(&cookie_value_buf, "{s}={s}; Path={s}", .{ cookie.name, cookie.value, cookie.path });
 
-            try headers.append(.{ .name = "Set-Cookie", .value = cookie_value });
+            try headers.append(self.allocator, .{ .name = "Set-Cookie", .value = cookie_value });
         }
 
         try self.req.respond(json, .{
@@ -281,15 +281,15 @@ pub const Context = struct {
     }
 
     pub fn renderHtml(self: *Context, html: []const u8) !void {
-        var headers = std.ArrayList(std.http.Header).init(self.allocator);
-        defer headers.deinit();
+        var headers = std.ArrayList(std.http.Header).empty;
+        defer headers.deinit(self.allocator);
 
-        try headers.append(.{ .name = "Content-Type", .value = "text/html; charset=utf-8" });
+        try headers.append(self.allocator, .{ .name = "Content-Type", .value = "text/html; charset=utf-8" });
 
         // Add custom headers
         var header_it = self.response_headers.iterator();
         while (header_it.next()) |entry| {
-            try headers.append(.{ .name = entry.key_ptr.*, .value = entry.value_ptr.* });
+            try headers.append(self.allocator, .{ .name = entry.key_ptr.*, .value = entry.value_ptr.* });
         }
 
         // Add Set-Cookie headers
@@ -300,7 +300,7 @@ pub const Context = struct {
             else
                 try std.fmt.bufPrint(&cookie_value_buf, "{s}={s}; Path={s}", .{ cookie.name, cookie.value, cookie.path });
 
-            try headers.append(.{ .name = "Set-Cookie", .value = cookie_value });
+            try headers.append(self.allocator, .{ .name = "Set-Cookie", .value = cookie_value });
         }
 
         try self.req.respond(html, .{
@@ -318,7 +318,7 @@ pub const Context = struct {
             for (files.items) |*file| {
                 file.deinit();
             }
-            files.deinit();
+            files.deinit(self.allocator);
         }
 
         for (files.items) |file| {
@@ -353,15 +353,15 @@ pub const Context = struct {
         }
 
         if (content_type == null or !std.mem.startsWith(u8, content_type.?, "multipart/form-data")) {
-            return std.ArrayList(@import("../upload/multipart.zig").UploadFile).init(self.allocator);
+            return std.ArrayList(@import("../upload/multipart.zig").UploadFile).empty;
         }
 
         // Read request body
-        var body_buffer = std.ArrayList(u8).init(self.allocator);
-        defer body_buffer.deinit();
+        var body_buffer = std.ArrayList(u8).empty;
+        defer body_buffer.deinit(self.allocator);
 
         var reader = try self.req.reader();
-        try reader.readAllArrayList(&body_buffer, 10 * 1024 * 1024); // 10MB max
+        try reader.readAllArrayList(self.allocator, &body_buffer, 10 * 1024 * 1024); // 10MB max
 
         // Parse multipart
         var parser = try MultipartParser.init(self.allocator, content_type.?);
@@ -370,34 +370,34 @@ pub const Context = struct {
 
     // === File Download ===
 
-    /// Render file for download
     pub fn renderFile(self: *Context, path: []const u8, download_name: ?[]const u8) !void {
-        const file = try std.fs.cwd().openFile(path, .{});
-        defer file.close();
+        const io_instance = @import("../io_instance.zig");
+        const file = try std.Io.Dir.cwd().openFile(io_instance.io, path, .{});
+        defer file.close(io_instance.io);
 
-        const stat = try file.stat();
-        const content = try file.readToEndAlloc(self.allocator, stat.size);
+        const stat = try file.stat(io_instance.io);
+        const content = try file.readToEndAlloc(io_instance.io, self.allocator, stat.size);
         defer self.allocator.free(content);
 
         self.res_status = .ok;
 
         const content_type = getContentType(path);
 
-        var headers = std.ArrayList(std.http.Header).init(self.allocator);
-        defer headers.deinit();
+        var headers = std.ArrayList(std.http.Header).empty;
+        defer headers.deinit(self.allocator);
 
-        try headers.append(.{ .name = "Content-Type", .value = content_type });
+        try headers.append(self.allocator, .{ .name = "Content-Type", .value = content_type });
 
         // Add custom headers
         var header_it = self.response_headers.iterator();
         while (header_it.next()) |entry| {
-            try headers.append(.{ .name = entry.key_ptr.*, .value = entry.value_ptr.* });
+            try headers.append(self.allocator, .{ .name = entry.key_ptr.*, .value = entry.value_ptr.* });
         }
 
         if (download_name) |name| {
             var disposition_buf: [512]u8 = undefined;
             const disposition = try std.fmt.bufPrint(&disposition_buf, "attachment; filename=\"{s}\"", .{name});
-            try headers.append(.{ .name = "Content-Disposition", .value = disposition });
+            try headers.append(self.allocator, .{ .name = "Content-Disposition", .value = disposition });
         }
 
         try self.req.respond(content, .{

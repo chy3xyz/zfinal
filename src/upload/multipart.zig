@@ -51,12 +51,12 @@ pub const MultipartParser = struct {
 
     /// 解析 multipart 数据
     pub fn parse(self: *MultipartParser, body: []const u8) !std.ArrayList(UploadFile) {
-        var files = std.ArrayList(UploadFile).init(self.allocator);
+        var files = std.ArrayList(UploadFile).empty;
         errdefer {
             for (files.items) |*file| {
                 file.deinit();
             }
-            files.deinit();
+            files.deinit(self.allocator);
         }
 
         // 构建完整的 boundary 标记
@@ -97,7 +97,7 @@ pub const MultipartParser = struct {
 
             // 解析 headers 获取文件信息
             if (try self.parseFilePart(headers, content)) |file| {
-                try files.append(file);
+                try files.append(self.allocator, file);
             }
 
             pos = content_end;
@@ -167,7 +167,7 @@ test "multipart parsing" {
         for (files.items) |*file| {
             file.deinit();
         }
-        files.deinit();
+        files.deinit(allocator);
     }
 
     try std.testing.expectEqual(@as(usize, 1), files.items.len);

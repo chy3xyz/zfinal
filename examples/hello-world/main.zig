@@ -79,11 +79,9 @@ fn attrHandler(ctx: *zfinal.Context) !void {
     });
 }
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
+pub fn main(init: std.process.Init) !void {
+    @import("zfinal").io_instance.init(init);
+    const allocator = init.gpa;
     var app = zfinal.ZFinal.init(allocator);
     defer app.deinit();
 

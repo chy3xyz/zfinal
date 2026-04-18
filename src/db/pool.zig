@@ -6,8 +6,8 @@ const DBConfig = @import("config.zig").DBConfig;
 pub const ConnectionPool = struct {
     connections: std.ArrayList(*DB),
     available: std.ArrayList(*DB),
-    mutex: std.Thread.Mutex,
-    cond: std.Thread.Condition,
+    mutex: std.Io.Mutex,
+    cond: std.Io.Condition,
     config: DBConfig,
     allocator: std.mem.Allocator,
     max_connections: usize,
@@ -15,10 +15,10 @@ pub const ConnectionPool = struct {
 
     pub fn init(allocator: std.mem.Allocator, config: DBConfig, max_connections: usize) ConnectionPool {
         return ConnectionPool{
-            .connections = std.ArrayList(*DB).init(allocator),
-            .available = std.ArrayList(*DB).init(allocator),
-            .mutex = .{},
-            .cond = .{},
+            .connections = std.ArrayList(*DB).empty,
+            .available = std.ArrayList(*DB).empty,
+            .mutex = std.Io.Mutex.init,
+            .cond = std.Io.Condition.init,
             .config = config,
             .allocator = allocator,
             .max_connections = max_connections,

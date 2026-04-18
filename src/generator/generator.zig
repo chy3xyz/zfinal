@@ -200,8 +200,8 @@ pub const Generator = struct {
 
     /// 转换为 PascalCase
     fn toPascalCase(self: *Generator, name: []const u8) ![]const u8 {
-        var result = std.ArrayList(u8).init(self.allocator);
-        defer result.deinit();
+        var result = std.ArrayList(u8).empty;
+        defer result.deinit(self.allocator);
 
         var capitalize_next = true;
         for (name) |c| {
@@ -211,20 +211,20 @@ pub const Generator = struct {
             }
 
             if (capitalize_next) {
-                try result.append(std.ascii.toUpper(c));
+                try result.append(self.allocator, std.ascii.toUpper(c));
                 capitalize_next = false;
             } else {
-                try result.append(c);
+                try result.append(self.allocator, c);
             }
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(self.allocator);
     }
 
     /// 转换为 camelCase
     fn toCamelCase(self: *Generator, name: []const u8) ![]const u8 {
-        var result = std.ArrayList(u8).init(self.allocator);
-        defer result.deinit();
+        var result = std.ArrayList(u8).empty;
+        defer result.deinit(self.allocator);
 
         var capitalize_next = false;
         var first = true;
@@ -236,17 +236,17 @@ pub const Generator = struct {
             }
 
             if (first) {
-                try result.append(std.ascii.toLower(c));
+                try result.append(self.allocator, std.ascii.toLower(c));
                 first = false;
             } else if (capitalize_next) {
-                try result.append(std.ascii.toUpper(c));
+                try result.append(self.allocator, std.ascii.toUpper(c));
                 capitalize_next = false;
             } else {
-                try result.append(c);
+                try result.append(self.allocator, c);
             }
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(self.allocator);
     }
 };
 

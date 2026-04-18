@@ -22,14 +22,14 @@ pub const FormatKit = struct {
 
     /// 格式化数字（千分位）
     pub fn formatNumber(allocator: std.mem.Allocator, number: i64) ![]const u8 {
-        var result = std.ArrayList(u8).init(allocator);
-        defer result.deinit();
+        var result = std.ArrayList(u8).empty;
+        defer result.deinit(allocator);
 
         const num_str = try std.fmt.allocPrint(allocator, "{d}", .{@abs(number)});
         defer allocator.free(num_str);
 
         if (number < 0) {
-            try result.append('-');
+            try result.append(allocator, '-');
         }
 
         var count: usize = 0;
@@ -37,13 +37,13 @@ pub const FormatKit = struct {
         while (i > 0) {
             i -= 1;
             if (count > 0 and count % 3 == 0) {
-                try result.insert(0, ',');
+                try result.insert(allocator, 0, ',');
             }
-            try result.insert(0, num_str[i]);
+            try result.insert(allocator, 0, num_str[i]);
             count += 1;
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(allocator);
     }
 
     /// 格式化百分比

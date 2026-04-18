@@ -9,20 +9,20 @@ pub const JsonKit = struct {
 
     /// 序列化为 JSON 字符串
     pub fn stringify(allocator: std.mem.Allocator, value: anytype) ![]const u8 {
-        var list = std.ArrayList(u8).init(allocator);
-        defer list.deinit();
+        var out = std.Io.Writer.Allocating.init(allocator);
+        defer out.deinit();
 
-        try std.json.stringify(value, .{}, list.writer());
-        return list.toOwnedSlice();
+        try std.json.Stringify.value(value, .{}, &out.writer);
+        return out.toOwnedSlice();
     }
 
     /// 美化 JSON 字符串
     pub fn prettify(allocator: std.mem.Allocator, value: anytype) ![]const u8 {
-        var list = std.ArrayList(u8).init(allocator);
-        defer list.deinit();
+        var out = std.Io.Writer.Allocating.init(allocator);
+        defer out.deinit();
 
-        try std.json.stringify(value, .{ .whitespace = .indent_2 }, list.writer());
-        return list.toOwnedSlice();
+        try std.json.Stringify.value(value, .{ .whitespace = .indent_2 }, &out.writer);
+        return out.toOwnedSlice();
     }
 };
 

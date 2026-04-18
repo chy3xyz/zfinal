@@ -1,4 +1,5 @@
 const std = @import("std");
+const TimeKit = @import("./time_kit.zig").TimeKit;
 
 /// 缓存工具类（简单的内存缓存）
 pub const CacheKit = struct {
@@ -12,7 +13,7 @@ pub const CacheKit = struct {
         }
 
         pub fn isExpired(self: *const CacheEntry) bool {
-            return std.time.timestamp() > self.expires_at;
+            return TimeKit.now() > self.expires_at;
         }
     };
 
@@ -45,7 +46,7 @@ pub const CacheKit = struct {
             val.deinit();
         }
 
-        const expires_at = std.time.timestamp() + (ttl orelse self.default_ttl);
+        const expires_at = TimeKit.now() + (ttl orelse self.default_ttl);
 
         const entry = CacheEntry{
             .value = try self.allocator.dupe(u8, value),

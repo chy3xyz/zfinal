@@ -1,25 +1,34 @@
 const std = @import("std");
+const io_instance = @import("../io_instance.zig");
 
 /// 随机工具类
 pub const RandomKit = struct {
     /// 生成随机整数
     pub fn randomInt(comptime T: type, min_val: T, max_val: T) T {
-        return std.crypto.random.intRangeAtMost(T, min_val, max_val);
+        var buf: [@sizeOf(T)]u8 = undefined;
+        io_instance.io.random(&buf);
+        const r = std.mem.readInt(T, &buf, .little);
+        return min_val + @rem(r, max_val - min_val + 1);
     }
 
     /// 生成随机浮点数 [0.0, 1.0)
     pub fn randomFloat() f64 {
-        return std.crypto.random.float(f64);
+        var buf: [8]u8 = undefined;
+        io_instance.io.random(&buf);
+        const r = std.mem.readInt(u64, &buf, .little);
+        return @as(f64, @floatFromInt(r)) / @as(f64, @floatFromInt(std.math.maxInt(u64)));
     }
 
     /// 生成随机布尔值
     pub fn randomBool() bool {
-        return std.crypto.random.boolean();
+        var buf: [1]u8 = undefined;
+        io_instance.io.random(&buf);
+        return buf[0] % 2 == 0;
     }
 
     /// 生成随机字节数组
     pub fn randomBytes(buffer: []u8) void {
-        std.crypto.random.bytes(buffer);
+        io_instance.io.random(buffer);
     }
 
     /// 从数组中随机选择一个元素

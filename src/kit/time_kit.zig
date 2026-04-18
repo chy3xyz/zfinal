@@ -4,12 +4,15 @@ const std = @import("std");
 pub const TimeKit = struct {
     /// 获取当前时间戳（秒）
     pub fn now() i64 {
-        return std.time.timestamp();
+        var ts: std.posix.timespec = undefined;
+        _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+        return ts.tv_sec;
     }
 
     /// 获取当前时间戳（毫秒）
     pub fn nowMillis() i64 {
-        return std.time.milliTimestamp();
+        var ts: std.posix.timespec = undefined;
+        _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
     }
 
     /// 格式化时间戳为字符串（ISO 8601）
@@ -31,7 +34,8 @@ pub const TimeKit = struct {
 
     /// 睡眠（毫秒）
     pub fn sleep(millis: u64) void {
-        std.time.sleep(millis * std.time.ns_per_ms);
+        const io_instance = @import("../io_instance.zig");
+        std.Io.sleep(io_instance.io, std.Io.Duration.fromMilliseconds(millis), .awake) catch {};
     }
 };
 

@@ -11,20 +11,20 @@ pub const SqlTemplate = struct {
     /// 渲染 SQL 模板
     /// 支持 {param} 风格的参数替换
     pub fn render(self: *SqlTemplate, template: []const u8, params: anytype) ![]const u8 {
-        var result = std.ArrayList(u8).init(self.allocator);
-        defer result.deinit();
+        var result = std.ArrayList(u8).empty;
+        defer result.deinit(self.allocator);
 
         var pos: usize = 0;
         while (pos < template.len) {
             // 查找 {
             const start = std.mem.indexOfScalarPos(u8, template, pos, '{') orelse {
                 // 没有更多参数，添加剩余部分
-                try result.appendSlice(template[pos..]);
+                try result.appendSlice(self.allocator, template[pos..]);
                 break;
             };
 
             // 添加 { 之前的内容
-            try result.appendSlice(template[pos..start]);
+            try result.appendSlice(self.allocator, template[pos..start]);
 
             // 查找 }
             const end = std.mem.indexOfScalarPos(u8, template, start, '}') orelse {
@@ -37,12 +37,12 @@ pub const SqlTemplate = struct {
             // 获取参数值并替换
             const value = try self.getParamValue(params, param_name);
             defer self.allocator.free(value);
-            try result.appendSlice(value);
+            try result.appendSlice(self.allocator, value);
 
             pos = end + 1;
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(self.allocator);
     }
 
     /// 从参数结构中获取值

@@ -1,5 +1,6 @@
 const std = @import("std");
 const Plugin = @import("plugin.zig").Plugin;
+const TimeKit = @import("../kit/time_kit.zig").TimeKit;
 
 /// 缓存条目
 const CacheEntry = struct {
@@ -13,7 +14,7 @@ const CacheEntry = struct {
 
     pub fn isExpired(self: *const CacheEntry) bool {
         if (self.expires_at) |expires| {
-            const now = std.time.timestamp();
+            const now = TimeKit.now();
             return now > expires;
         }
         return false;
@@ -66,7 +67,7 @@ pub const CachePlugin = struct {
             _ = self.cache.remove(key);
         }
 
-        const expires_at = if (ttl) |t| std.time.timestamp() + @as(i64, @intCast(t)) else null;
+        const expires_at = if (ttl) |t| TimeKit.now() + @as(i64, @intCast(t)) else null;
 
         const entry = CacheEntry{
             .value = try self.allocator.dupe(u8, value),

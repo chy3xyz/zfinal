@@ -1,11 +1,12 @@
 const std = @import("std");
 const zfinal = @import("../main.zig");
+const TimeKit = @import("../kit/time_kit.zig").TimeKit;
 
 /// 性能监控拦截器
 pub fn createPerformanceInterceptor() zfinal.Interceptor {
     const Impl = struct {
         fn before(ctx: *zfinal.Context) !bool {
-            const start_time = std.time.milliTimestamp();
+            const start_time = TimeKit.nowMillis();
             try ctx.setAttr("_start_time", try std.fmt.allocPrint(ctx.allocator, "{d}", .{start_time}));
             return true;
         }
@@ -15,7 +16,7 @@ pub fn createPerformanceInterceptor() zfinal.Interceptor {
                 defer ctx.allocator.free(start_str);
 
                 const start_time = try std.fmt.parseInt(i64, start_str, 10);
-                const end_time = std.time.milliTimestamp();
+                const end_time = TimeKit.nowMillis();
                 const duration = end_time - start_time;
 
                 const method = @tagName(ctx.req.head.method);
@@ -60,7 +61,7 @@ pub fn createExceptionInterceptor() zfinal.Interceptor {
 pub fn createAccessLogInterceptor() zfinal.Interceptor {
     const Impl = struct {
         fn before(ctx: *zfinal.Context) !bool {
-            const timestamp = std.time.timestamp();
+            const timestamp = TimeKit.now();
             try ctx.setAttr("_request_time", try std.fmt.allocPrint(ctx.allocator, "{d}", .{timestamp}));
             return true;
         }
