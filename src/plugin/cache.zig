@@ -1,11 +1,30 @@
 const std = @import("std");
 const Plugin = @import("plugin.zig").Plugin;
 const TimeKit = @import("../kit/time_kit.zig").TimeKit;
+const RedisClient = @import("redis.zig").RedisClient;
 
-/// 缓存条目
+/// Cache backend type
+pub const CacheBackend = enum {
+    memory,
+    redis,
+};
+
+/// Cache configuration
+pub const CacheConfig = struct {
+    backend: CacheBackend = .memory,
+    // Redis settings
+    redis_host: []const u8 = "127.0.0.1",
+    redis_port: u16 = 6379,
+    redis_default_ttl: u64 = 300, // 5 minutes
+    // Memory settings
+    memory_max_size: usize = 10000, // Max number of entries
+    memory_cleanup_interval: u64 = 60, // Cleanup interval in seconds
+};
+
+/// Memory cache entry
 const CacheEntry = struct {
     value: []const u8,
-    expires_at: ?i64 = null, // Unix timestamp
+    expires_at: ?i64 = null,
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: *CacheEntry) void {
@@ -14,97 +33,199 @@ const CacheEntry = struct {
 
     pub fn isExpired(self: *const CacheEntry) bool {
         if (self.expires_at) |expires| {
-            const now = TimeKit.now();
-            return now > expires;
+            return TimeKit.now() > expires;
         }
         return false;
     }
 };
 
-/// 缓存插件
+/// Enhanced cache plugin with multiple backend support
 pub const CachePlugin = struct {
-    cache: std.StringHashMap(CacheEntry),
+    backend: CacheBackend,
     allocator: std.mem.Allocator,
     name: []const u8 = "cache",
 
+    // Memory backend
+    memory_cache: ?std.StringHashMap(CacheEntry) = null,
+
+    // Redis backend
+    redis_client: ?RedisClient = null,
+
+    // Config
+    config: CacheConfig,
+
     const Self = @This();
 
+    /// Initialize with default memory backend
     pub fn init(allocator: std.mem.Allocator) CachePlugin {
         return CachePlugin{
-            .cache = std.StringHashMap(CacheEntry).init(allocator),
+            .backend = .memory,
             .allocator = allocator,
+            .memory_cache = std.StringHashMap(CacheEntry).init(allocator),
+            .config = .{},
         };
+    }
+
+    /// Initialize with custom configuration
+    pub fn initWithConfig(allocator: std.mem.Allocator, config: CacheConfig) !CachePlugin {
+        var plugin = CachePlugin{
+            .backend = config.backend,
+            .allocator = allocator,
+            .config = config,
+        };
+
+        switch (config.backend) {
+            .memory => {
+                plugin.memory_cache = std.StringHashMap(CacheEntry).init(allocator);
+            },
+            .redis => {
+                var client = try RedisClient.init(allocator, config.redis_host, config.redis_port);
+                try client.connect();
+                plugin.redis_client = client;
+            },
+        }
+
+        return plugin;
     }
 
     pub fn deinit(self: *Self) void {
-        var it = self.cache.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            entry.value_ptr.deinit();
-        }
-        self.cache.deinit();
-    }
-
-    /// 获取缓存值
-    pub fn get(self: *Self, key: []const u8) ?[]const u8 {
-        if (self.cache.get(key)) |entry| {
-            if (entry.isExpired()) {
-                // 删除过期条目
-                self.delete(key) catch {};
-                return null;
+        if (self.memory_cache) |*cache| {
+            var it = cache.iterator();
+            while (it.next()) |entry| {
+                self.allocator.free(entry.key_ptr.*);
+                entry.value_ptr.deinit();
             }
-            return entry.value;
+            cache.deinit();
         }
-        return null;
+
+        if (self.redis_client) |*client| {
+            client.deinit();
+        }
     }
 
-    /// 设置缓存值
+    /// Get cached value
+    pub fn get(self: *Self, key: []const u8) ?[]const u8 {
+        switch (self.backend) {
+            .memory => {
+                if (self.memory_cache) |*cache| {
+                    if (cache.get(key)) |entry| {
+                        if (entry.isExpired()) {
+                            self.delete(key) catch {};
+                            return null;
+                        }
+                        return entry.value;
+                    }
+                }
+                return null;
+            },
+            .redis => {
+                if (self.redis_client) |*client| {
+                    return client.get(key) catch |err| {
+                        std.debug.print("Redis get error: {}\n", .{err});
+                        return null;
+                    };
+                }
+                return null;
+            },
+        }
+    }
+
+    /// Set cache value
     pub fn set(self: *Self, key: []const u8, value: []const u8, ttl: ?u64) !void {
-        // 删除旧值
-        if (self.cache.get(key)) |old_entry| {
-            var entry = old_entry;
-            entry.deinit();
-            _ = self.cache.remove(key);
+        switch (self.backend) {
+            .memory => {
+                if (self.memory_cache) |*cache| {
+                    // Remove old value
+                    if (cache.fetchRemove(key)) |kv| {
+                        self.allocator.free(kv.key);
+                        var val = kv.value;
+                        val.deinit();
+                    }
+
+                    const expires_at = if (ttl) |t| TimeKit.now() + @as(i64, @intCast(t)) else null;
+
+                    const entry = CacheEntry{
+                        .value = try self.allocator.dupe(u8, value),
+                        .expires_at = expires_at,
+                        .allocator = self.allocator,
+                    };
+
+                    const key_copy = try self.allocator.dupe(u8, key);
+                    try cache.put(key_copy, entry);
+                }
+            },
+            .redis => {
+                if (self.redis_client) |*client| {
+                    const seconds = ttl orelse self.config.redis_default_ttl;
+                    try client.setEx(key, value, seconds);
+                }
+            },
         }
-
-        const expires_at = if (ttl) |t| TimeKit.now() + @as(i64, @intCast(t)) else null;
-
-        const entry = CacheEntry{
-            .value = try self.allocator.dupe(u8, value),
-            .expires_at = expires_at,
-            .allocator = self.allocator,
-        };
-
-        const key_copy = try self.allocator.dupe(u8, key);
-        try self.cache.put(key_copy, entry);
     }
 
-    /// 删除缓存值
+    /// Delete cache value
     pub fn delete(self: *Self, key: []const u8) !void {
-        // 删除旧值
-        if (self.cache.fetchRemove(key)) |kv| {
-            self.allocator.free(kv.key);
-            var val = kv.value;
-            val.deinit();
+        switch (self.backend) {
+            .memory => {
+                if (self.memory_cache) |*cache| {
+                    if (cache.fetchRemove(key)) |kv| {
+                        self.allocator.free(kv.key);
+                        var val = kv.value;
+                        val.deinit();
+                    }
+                }
+            },
+            .redis => {
+                if (self.redis_client) |*client| {
+                    try client.del(key);
+                }
+            },
         }
     }
 
-    /// 清空缓存
-    pub fn clear(self: *Self) void {
-        var it = self.cache.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            entry.value_ptr.deinit();
+    /// Clear all cache
+    pub fn clear(self: *Self) !void {
+        switch (self.backend) {
+            .memory => {
+                if (self.memory_cache) |*cache| {
+                    var it = cache.iterator();
+                    while (it.next()) |entry| {
+                        self.allocator.free(entry.key_ptr.*);
+                        entry.value_ptr.deinit();
+                    }
+                    cache.clearRetainingCapacity();
+                }
+            },
+            .redis => {
+                if (self.redis_client) |*client| {
+                    try client.flushDb();
+                }
+            },
         }
-        self.cache.clearRetainingCapacity();
     }
 
-    /// 获取缓存大小
+    /// Get cache size (memory only, returns 0 for Redis)
     pub fn size(self: *const Self) usize {
-        return self.cache.count();
+        switch (self.backend) {
+            .memory => {
+                if (self.memory_cache) |cache| {
+                    return cache.count();
+                }
+                return 0;
+            },
+            .redis => return 0,
+        }
     }
 
-    // Plugin 接口实现
+    /// Check if Redis is connected
+    pub fn isRedisConnected(self: *Self) bool {
+        if (self.redis_client) |*client| {
+            return client.ping() catch false;
+        }
+        return false;
+    }
+
+    // Plugin interface implementation
     pub fn asPlugin(self: *Self) Plugin {
         const vtable = Plugin.VTable{
             .start = startImpl,
@@ -120,13 +241,13 @@ pub const CachePlugin = struct {
 
     fn startImpl(ctx: *anyopaque) !void {
         const self: *Self = @ptrCast(@alignCast(ctx));
-        std.debug.print("Cache plugin started: {s}\n", .{self.name});
+        std.debug.print("Cache plugin started: {s} (backend: {s})\n", .{ self.name, @tagName(self.backend) });
     }
 
     fn stopImpl(ctx: *anyopaque) !void {
         const self: *Self = @ptrCast(@alignCast(ctx));
         std.debug.print("Cache plugin stopped: {s}\n", .{self.name});
-        self.clear();
+        self.clear() catch {};
     }
 };
 
@@ -136,13 +257,13 @@ test "cache plugin basic" {
     var cache = CachePlugin.init(allocator);
     defer cache.deinit();
 
-    // 设置和获取
+    // Set and get
     try cache.set("key1", "value1", null);
     const value = cache.get("key1");
     try std.testing.expect(value != null);
     try std.testing.expectEqualStrings("value1", value.?);
 
-    // 删除
+    // Delete
     try cache.delete("key1");
     try std.testing.expect(cache.get("key1") == null);
 }
@@ -153,12 +274,9 @@ test "cache plugin ttl" {
     var cache = CachePlugin.init(allocator);
     defer cache.deinit();
 
-    // 设置 TTL 为 1 秒
+    // Set TTL to 1 second
     try cache.set("key1", "value1", 1);
 
-    // 立即获取应该成功
+    // Should succeed immediately
     try std.testing.expect(cache.get("key1") != null);
-
-    // 等待 2 秒后应该过期（在实际测试中可能需要调整）
-    // 注意：这个测试在快速 CI 环境中可能不稳定
 }

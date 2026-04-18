@@ -25,13 +25,13 @@ pub fn build(b: *std.Build) void {
     // Benchmark tool
     const bench_mod = b.createModule(.{
         .root_source_file = b.path("benchmark/main.zig"),
+        .target = target,
+        .optimize = optimize,
         .imports = &.{.{ .name = "zfinal", .module = zfinal_mod }},
     });
     const bench_exe = b.addExecutable(.{
         .name = "zbench",
         .root_module = bench_mod,
-        .target = target,
-        .optimize = optimize,
     });
     b.installArtifact(bench_exe);
 

@@ -41,6 +41,10 @@ pub const MultipartParser = @import("upload/multipart.zig").MultipartParser;
 pub const Plugin = @import("plugin/plugin.zig").Plugin;
 pub const PluginManager = @import("plugin/plugin.zig").PluginManager;
 pub const CachePlugin = @import("plugin/cache.zig").CachePlugin;
+pub const CacheConfig = @import("plugin/cache.zig").CacheConfig;
+pub const CacheBackend = @import("plugin/cache.zig").CacheBackend;
+pub const RedisClient = @import("plugin/redis.zig").RedisClient;
+pub const RedisCache = @import("plugin/redis.zig").RedisCache;
 pub const CronPlugin = @import("plugin/cron.zig").CronPlugin;
 pub const MqttPlugin = @import("plugin/mqtt.zig").MqttPlugin;
 pub const AgentPlugin = @import("plugin/agent.zig").AgentPlugin;
@@ -48,8 +52,10 @@ pub const DidPlugin = @import("plugin/did.zig").DidPlugin;
 pub const P2pPlugin = @import("plugin/p2p.zig").P2pPlugin;
 
 // Export config and i18n modules
-pub const Config = @import("config/config.zig").Config;
 pub const I18n = @import("i18n/i18n.zig").I18n;
+pub const LocaleInfo = @import("i18n/i18n.zig").LocaleInfo;
+pub const PluralRule = @import("i18n/i18n.zig").PluralRule;
+pub const detectLocale = @import("i18n/i18n.zig").detectLocale;
 
 // Export generator module
 pub const Generator = @import("generator/generator.zig").Generator;
