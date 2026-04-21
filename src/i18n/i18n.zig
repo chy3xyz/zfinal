@@ -293,7 +293,7 @@ pub const I18n = struct {
             pos = end + 2;
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(self.allocator);
     }
 
     /// Translate with pluralization and interpolation
@@ -335,7 +335,7 @@ pub const I18n = struct {
             pos = end + 2;
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(self.allocator);
     }
 
     /// Add a translation
@@ -425,7 +425,7 @@ pub const I18n = struct {
                 }
                 return null;
             },
-            .optional => |opt| {
+            .optional => {
                 if (value) |v| {
                     return try formatValue(allocator, v);
                 } else {

@@ -4,15 +4,16 @@ const std = @import("std");
 pub const TimeKit = struct {
     /// 获取当前时间戳（秒）
     pub fn now() i64 {
-        var ts: std.posix.timespec = undefined;
+        var ts: std.c.timespec = undefined;
         _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
-        return ts.tv_sec;
+        return @as(i64, ts.sec);
     }
 
     /// 获取当前时间戳（毫秒）
     pub fn nowMillis() i64 {
-        var ts: std.posix.timespec = undefined;
+        var ts: std.c.timespec = undefined;
         _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+        return @as(i64, ts.sec) * 1000 + @divTrunc(@as(i64, ts.nsec), std.time.ns_per_ms);
     }
 
     /// 格式化时间戳为字符串（ISO 8601）

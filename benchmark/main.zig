@@ -72,15 +72,13 @@ fn worker(allocator: std.mem.Allocator, config: Config, stats: *Stats, wg: *std.
 pub fn main(init: std.process.Init) !void {
     zfinal.io_instance.init(init);
     const allocator = init.gpa;
-
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    var args_iter = std.process.Args.Iterator.init(init.minimal.args);
+    _ = args_iter.next(); // skip exe name
 
     var config = Config{};
-    if (args.len > 1) config.url = args[1];
-    if (args.len > 2) config.requests = try std.fmt.parseInt(usize, args[2], 10);
-    if (args.len > 3) config.concurrency = try std.fmt.parseInt(usize, args[3], 10);
-
+    if (args_iter.next()) |a| config.url = a;
+    if (args_iter.next()) |a| config.requests = try std.fmt.parseInt(usize, a, 10);
+    if (args_iter.next()) |a| config.concurrency = try std.fmt.parseInt(usize, a, 10);
     std.debug.print("\n🚀 Starting Zig Benchmark\n", .{});
     std.debug.print("URL:         {s}\n", .{config.url});
     std.debug.print("Requests:    {d}\n", .{config.requests});

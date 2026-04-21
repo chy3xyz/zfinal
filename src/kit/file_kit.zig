@@ -9,13 +9,11 @@ pub const FileKit = struct {
         defer file.close(io_instance.io);
 
         const stat = try file.stat(io_instance.io);
-        const buf = try allocator.alloc(u8, stat.size);
-        var pos: usize = 0;
-        while (pos < stat.size) {
-            const bytes_read = try file.read(io_instance.io, buf[pos..]);
-            pos += bytes_read;
-        }
-        return buf;
+        const buf = try allocator.alloc(u8, @as(usize, @intCast(stat.size)));
+        errdefer allocator.free(buf);
+
+        const bytes_read = try std.Io.File.readPositionalAll(file, io_instance.io, buf, 0);
+        return buf[0..bytes_read];
     }
 
     /// 写入文件
@@ -23,7 +21,7 @@ pub const FileKit = struct {
         const file = try std.Io.Dir.cwd().createFile(io_instance.io, path, .{});
         defer file.close(io_instance.io);
 
-        try file.writeStreamingAll(io_instance.io, content);
+        try std.Io.File.writeStreamingAll(file, io_instance.io, content);
     }
 
     /// 追加到文件
@@ -32,7 +30,7 @@ pub const FileKit = struct {
         defer file.close(io_instance.io);
 
         try file.seekFromEnd(io_instance.io, 0);
-        try file.writeStreamingAll(io_instance.io, content);
+        try std.Io.File.writeStreamingAll(file, io_instance.io, content);
     }
 
     /// 复制文件
@@ -61,7 +59,7 @@ pub const FileKit = struct {
         defer dir.close(io_instance.io);
 
         var result = std.ArrayList([]const u8).empty;
-        defer result.deinit(allocator);
+        errdefer result.deinit(allocator);
 
         var it = dir.iterate(io_instance.io);
         while (try it.next()) |entry| {

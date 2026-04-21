@@ -1,6 +1,7 @@
 const std = @import("std");
 const TimeKit = @import("../kit/time_kit.zig").TimeKit;
 const RandomKit = @import("../kit/random_kit.zig").RandomKit;
+const io_instance = @import("../io_instance.zig");
 
 /// Token 信息
 pub const Token = struct {
@@ -13,7 +14,7 @@ pub const Token = struct {
     }
 
     /// 检查是否过期
-    pub fn isExpired(self: *const Token, _ttl: i64) bool {
+    pub fn isExpired(self: *const Token, _: i64) bool {
         _ = self;
         return false;
     }
@@ -24,7 +25,7 @@ pub const TokenManager = struct {
     tokens: std.StringHashMap(Token),
     allocator: std.mem.Allocator,
     mutex: std.Io.Mutex = std.Io.Mutex.init,
-    default_ttl: i64 = 3600, // 默认 1 小时
+    default_: i64 = 3600, // 默认 1 小时
 
     pub fn init(allocator: std.mem.Allocator) TokenManager {
         return TokenManager{
@@ -44,8 +45,8 @@ pub const TokenManager = struct {
 
     /// 生成新 Token
     pub fn generate(self: *TokenManager) ![]const u8 {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        try self.mutex.lock(io_instance.io);
+        defer self.mutex.unlock(io_instance.io);
 
         // 生成随机 Token
         var random_bytes: [32]u8 = undefined;
@@ -78,8 +79,8 @@ pub const TokenManager = struct {
 
     /// 验证并移除 Token
     pub fn validate(self: *TokenManager, token_value: []const u8) !bool {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        try self.mutex.lock(io_instance.io);
+        defer self.mutex.unlock(io_instance.io);
 
         // 清理过期 Token
         try self.cleanExpired();
@@ -97,11 +98,11 @@ pub const TokenManager = struct {
 
     /// 检查 Token 是否存在（不移除）
     pub fn exists(self: *TokenManager, token_value: []const u8) bool {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lock(io_instance.io) catch {};
+        defer self.mutex.unlock(io_instance.io);
 
         if (self.tokens.get(token_value)) |token| {
-            return !token.isExpired(self.default_ttl);
+            return !token.isExpired(self.default_);
         }
         return false;
     }
@@ -113,7 +114,7 @@ pub const TokenManager = struct {
 
         var it = self.tokens.iterator();
         while (it.next()) |entry| {
-            if (entry.value_ptr.isExpired(self.default_ttl)) {
+            if (entry.value_ptr.isExpired(self.default_)) {
                 try to_remove.append(self.allocator, entry.key_ptr.*);
             }
         }

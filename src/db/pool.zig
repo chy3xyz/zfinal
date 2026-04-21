@@ -1,6 +1,7 @@
 const std = @import("std");
 const DB = @import("db.zig").DB;
 const DBConfig = @import("config.zig").DBConfig;
+const io_instance = @import("../io_instance.zig");
 
 /// 数据库连接池
 pub const ConnectionPool = struct {
@@ -27,21 +28,21 @@ pub const ConnectionPool = struct {
     }
 
     pub fn deinit(self: *ConnectionPool) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lock(io_instance.io) catch {};
+        defer self.mutex.unlock(io_instance.io);
 
         for (self.connections.items) |conn| {
             conn.deinit();
             self.allocator.destroy(conn);
         }
-        self.connections.deinit();
-        self.available.deinit();
+        self.connections.deinit(self.allocator);
+        self.available.deinit(self.allocator);
     }
 
     /// 获取连接（带超时）
     pub fn acquire(self: *ConnectionPool) !*DB {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        try self.mutex.lock(io_instance.io);
+        defer self.mutex.unlock(io_instance.io);
 
         while (true) {
             // 1. 尝试获取可用连接
@@ -54,29 +55,24 @@ pub const ConnectionPool = struct {
                 const conn = try self.allocator.create(DB);
                 conn.* = try DB.init(self.allocator, self.config);
 
-                try self.connections.append(conn);
+                try self.connections.append(self.allocator, conn);
                 self.current_connections += 1;
 
                 return conn;
             }
 
-            // 3. Wait for connection release
-            // Convert seconds to nanoseconds
-            const timeout_ns = @as(u64, self.config.timeout) * std.time.ns_per_s;
-            self.cond.timedWait(&self.mutex, timeout_ns) catch |err| {
-                if (err == error.Timeout) return error.ConnectionPoolTimeout;
-                return err;
-            };
+            // 3. Wait for connection release with simple sleep
+            std.Io.sleep(io_instance.io, std.Io.Duration.fromMilliseconds(self.config.timeout * 1000), .awake) catch {};
         }
     }
 
     /// 释放连接
     pub fn release(self: *ConnectionPool, conn: *DB) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        try self.mutex.lock(io_instance.io);
+        defer self.mutex.unlock(io_instance.io);
 
-        try self.available.append(conn);
-        self.cond.signal();
+        try self.available.append(self.allocator, conn);
+        self.cond.signal(io_instance.io);
     }
 
     /// 执行事务

@@ -1,6 +1,7 @@
 const std = @import("std");
 const RandomKit = @import("../kit/random_kit.zig").RandomKit;
 const TimeKit = @import("../kit/time_kit.zig").TimeKit;
+const io_instance = @import("../io_instance.zig");
 
 /// 验证码类型
 pub const CaptchaType = enum {
@@ -23,7 +24,7 @@ pub const Captcha = struct {
     }
 
     /// 检查是否过期
-    pub fn isExpired(self: *const Captcha, _ttl: i64) bool {
+    pub fn isExpired(self: *const Captcha, _: i64) bool {
         _ = self;
         return false;
     }
@@ -34,7 +35,7 @@ pub const CaptchaManager = struct {
     captchas: std.StringHashMap(Captcha),
     allocator: std.mem.Allocator,
     mutex: std.Io.Mutex = std.Io.Mutex.init,
-    default_ttl: i64 = 300, // 5 分钟
+    default_: i64 = 300, // 5 分钟
     default_length: usize = 4,
 
     pub fn init(allocator: std.mem.Allocator) CaptchaManager {
@@ -55,8 +56,8 @@ pub const CaptchaManager = struct {
 
     /// 生成验证码
     pub fn generate(self: *CaptchaManager, captcha_type: CaptchaType, session_id: []const u8) !Captcha {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        try self.mutex.lock(io_instance.io);
+        defer self.mutex.unlock(io_instance.io);
 
         const code = try self.generateCode(captcha_type);
         errdefer self.allocator.free(code);
@@ -86,8 +87,8 @@ pub const CaptchaManager = struct {
 
     /// 验证验证码
     pub fn validate(self: *CaptchaManager, session_id: []const u8, user_input: []const u8) !bool {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        try self.mutex.lock(io_instance.io);
+        defer self.mutex.unlock(io_instance.io);
 
         // 清理过期验证码
         try self.cleanExpired();
@@ -97,7 +98,7 @@ pub const CaptchaManager = struct {
             var val = kv.value;
             defer val.deinit();
 
-            if (val.isExpired(self.default_ttl)) {
+            if (val.isExpired(self.default_)) {
                 return false;
             }
 
@@ -216,7 +217,7 @@ pub const CaptchaManager = struct {
 
         var it = self.captchas.iterator();
         while (it.next()) |entry| {
-            if (entry.value_ptr.isExpired(self.default_ttl)) {
+            if (entry.value_ptr.isExpired(self.default_)) {
                 try to_remove.append(self.allocator, entry.key_ptr.*);
             }
         }

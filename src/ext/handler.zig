@@ -114,7 +114,7 @@ pub const RateLimitHandler = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const now = std.time.timestamp();
+        const now: i64 = @as(i64, @intCast(std.time.Clock.timestamp()));
 
         if (self.requests.getPtr(client_ip)) |info| {
             // 检查是否在同一时间窗口

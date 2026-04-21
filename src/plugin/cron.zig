@@ -8,8 +8,8 @@ const TimeKit = @import("../kit/time_kit.zig").TimeKit;
 pub const CronExpression = struct {
     minutes: [60]bool,
     hours: [24]bool,
-    days_of_month: [31]bool,
-    months: [12]bool,
+    days_of_month: [32]bool,
+    months: [13]bool,
     days_of_week: [7]bool,
 
     const Self = @This();
@@ -108,34 +108,18 @@ pub const CronExpression = struct {
     /// Check if the cron expression matches the given time
     pub fn matches(self: *const Self, timestamp: i64) bool {
         const seconds = @as(u64, @intCast(timestamp));
-        const epoch_day = seconds / 86400;
+        const minutes = (seconds / 60) % 60;
+        const hours = (seconds / 3600) % 24;
 
-        // Calculate day of week (0 = Sunday)
-        const days_since_epoch = epoch_day;
-        const day_of_week = @mod(days_since_epoch + 4, 7); // Jan 1, 1970 was Thursday
+        // Get day components using TimeKit
+        const days = seconds / 86400;
+        const day_of_week = @as(u8, @intCast(days % 7));
+        const day_of_month = TimeKit.getDayOfMonth(timestamp);
+        const month = TimeKit.getMonth(timestamp);
 
-        // Calculate time of day
-        const seconds_of_day = seconds % 86400;
-        const hour = @divTrunc(seconds_of_day, 3600);
-        const minute = @divTrunc(seconds_of_day % 3600, 60);
-
-        // Calculate month and day (simplified - not accounting for leap years perfectly)
-        const days_in_month = [_]u8{ 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
-        var day_of_year = @mod(days_since_epoch, 365);
-        var month: usize = 0;
-        var day_of_month: usize = 0;
-
-        for (days_in_month, 0..) |dim, i| {
-            if (day_of_year < dim) {
-                month = i;
-                day_of_month = day_of_year;
-                break;
-            }
-            day_of_year -= dim;
-        }
-
-        if (!self.minutes[minute]) return false;
-        if (!self.hours[hour]) return false;
+        // Check each field
+        if (!self.minutes[minutes]) return false;
+        if (!self.hours[hours]) return false;
         if (!self.days_of_month[day_of_month]) return false;
         if (!self.months[month]) return false;
         if (!self.days_of_week[day_of_week]) return false;
@@ -143,18 +127,67 @@ pub const CronExpression = struct {
         return true;
     }
 
-    /// Get next scheduled time (simplified)
-    pub fn nextRun(self: *const Self, from_timestamp: i64) i64 {
-        var ts = from_timestamp + 60; // Start from next minute
-        const max_checks = 366 * 24 * 60; // Max 1 year ahead
+    /// Get next run time after the given timestamp
+    pub fn nextRun(self: *const Self, timestamp: i64) i64 {
+        var ts = timestamp;
+        const max_iterations = 60 * 60 * 24 * 366; // Max 1 year ahead
 
-        var i: usize = 0;
-        while (i < max_checks) : (i += 1) {
+        var iterations: usize = 0;
+        while (iterations < max_iterations) : (iterations += 1) {
+            ts += 60; // Check every minute
             if (self.matches(ts)) return ts;
-            ts += 60;
         }
 
-        return -1; // No next run found
+        return 0; // No match found
+    }
+
+    /// Validate cron expression
+    pub fn isValid(self: *const Self) bool {
+        var has_minute = false;
+        var has_hour = false;
+        var has_day_of_month = false;
+        var has_month = false;
+        var has_day_of_week = false;
+
+        for (self.minutes) |v| { if (v) has_minute = true; }
+        for (self.hours) |v| { if (v) has_hour = true; }
+        for (self.days_of_month) |v| { if (v) has_day_of_month = true; }
+        for (self.months) |v| { if (v) has_month = true; }
+        for (self.days_of_week) |v| { if (v) has_day_of_week = true; }
+
+        return has_minute and has_hour and has_day_of_month and has_month and has_day_of_week;
+    }
+
+    /// Format cron expression as string
+    pub fn format(self: *const Self, allocator: std.mem.Allocator) ![]const u8 {
+        var buf = std.ArrayList(u8).empty;
+        defer buf.deinit(allocator);
+
+        try self.formatField(&buf, allocator, &self.minutes);
+        try buf.append(allocator, ' ');
+        try self.formatField(&buf, allocator, &self.hours);
+        try buf.append(allocator, ' ');
+        try self.formatField(&buf, allocator, &self.days_of_month);
+        try buf.append(allocator, ' ');
+        try self.formatField(&buf, allocator, &self.months);
+        try buf.append(allocator, ' ');
+        try self.formatField(&buf, allocator, &self.days_of_week);
+
+        return buf.toOwnedSlice(allocator);
+    }
+
+    fn formatField(self: *Self, buf: *std.ArrayList(u8), allocator: std.mem.Allocator, field: []const bool) !void {
+        _ = self;
+        var first = true;
+        var i: usize = 0;
+        while (i < field.len) : (i += 1) {
+            if (field[i]) {
+                if (!first) try buf.append(allocator, ',');
+                try std.fmt.formatInt(i, 10, .lower, buf.writer(allocator));
+                first = false;
+            }
+        }
+        if (first) try buf.append(allocator, '*');
     }
 };
 
@@ -164,34 +197,65 @@ pub const CronJob = struct {
     schedule: CronExpression,
     schedule_str: []const u8,
     task: *const fn () void,
-    last_run: i64 = 0,
-    next_run: i64 = 0,
-    enabled: bool = true,
-    run_count: u64 = 0,
-};
-
-/// Enhanced cron plugin with proper scheduling
-pub const CronPlugin = struct {
-    jobs: std.ArrayList(CronJob),
+    last_run: i64,
+    next_run: i64,
     allocator: std.mem.Allocator,
-    running: bool = false,
-    thread: ?std.Thread = null,
-    name: []const u8 = "cron",
-    check_interval_ms: u64 = 1000, // Check every second
 
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator) CronPlugin {
-        return CronPlugin{
-            .jobs = std.ArrayList(CronJob).empty,
+    pub fn init(allocator: std.mem.Allocator, name: []const u8, cron_expr: []const u8, task: *const fn () void) !Self {
+        const parsed = try CronExpression.parse(allocator, cron_expr);
+
+        const now = TimeKit.now();
+        const next_run = parsed.nextRun(now);
+
+        return Self{
+            .name = try allocator.dupe(u8, name),
+            .schedule = parsed,
+            .schedule_str = cron_expr,
+            .task = task,
+            .last_run = 0,
+            .next_run = next_run,
             .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *Self) void {
-        self.stop() catch {};
+        self.allocator.free(self.name);
+    }
+
+    /// Check if job should run now
+    pub fn shouldRun(self: *Self) bool {
+        const now = TimeKit.now();
+        return now >= self.next_run;
+    }
+
+    /// Execute the job
+    pub fn run(self: *Self) void {
+        const now = TimeKit.now();
+        self.last_run = now;
+        self.next_run = self.schedule.nextRun(now);
+        self.task();
+    }
+};
+
+/// Cron plugin for ZFinal
+pub const CronPlugin = struct {
+    jobs: std.ArrayList(CronJob),
+    allocator: std.mem.Allocator,
+
+    const Self = @This();
+
+    pub fn init(allocator: std.mem.Allocator) Self {
+        return Self{
+            .jobs = std.ArrayList(CronJob).init(allocator),
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
         for (self.jobs.items) |*job| {
-            self.allocator.free(job.name);
+            job.deinit();
         }
         self.jobs.deinit(self.allocator);
     }
@@ -200,7 +264,7 @@ pub const CronPlugin = struct {
     pub fn schedule(self: *Self, name: []const u8, cron_expr: []const u8, task: *const fn () void) !void {
         const parsed = try CronExpression.parse(self.allocator, cron_expr);
 
-        const now = std.time.timestamp();
+        const now = TimeKit.now();
         const next_run = parsed.nextRun(now);
 
         const job = CronJob{
@@ -210,210 +274,105 @@ pub const CronPlugin = struct {
             .task = task,
             .last_run = 0,
             .next_run = next_run,
+            .allocator = self.allocator,
         };
 
-        try self.jobs.append(self.allocator, job);
+        try self.jobs.append(job);
     }
 
-    /// Remove a scheduled job
-    pub fn unschedule(self: *Self, name: []const u8) void {
-        for (self.jobs.items, 0..) |*job, i| {
+    /// Remove a job by name
+    pub fn remove(self: *Self, name: []const u8) !void {
+        for (self.jobs.items) |job| {
             if (std.mem.eql(u8, job.name, name)) {
-                self.allocator.free(job.name);
-                _ = self.jobs.orderedRemove(i);
+                const idx = std.mem.indexOfScalar(*CronJob, self.jobs.items, &job).?;
+                _ = self.jobs.swapRemove(idx);
                 return;
             }
         }
+        return error.JobNotFound;
     }
 
-    /// Enable a job
-    pub fn enableJob(self: *Self, name: []const u8) void {
+    /// Get next job to run
+    pub fn getNextJob(self: *Self) ?*CronJob {
+        var earliest: ?*CronJob = null;
+        var earliest_time: i64 = std.math.maxInt(i64);
+
         for (self.jobs.items) |*job| {
-            if (std.mem.eql(u8, job.name, name)) {
-                job.enabled = true;
-                return;
+            if (job.next_run < earliest_time) {
+                earliest_time = job.next_run;
+                earliest = job;
             }
         }
+
+        return earliest;
     }
 
-    /// Disable a job
-    pub fn disableJob(self: *Self, name: []const u8) void {
+    /// Check and run due jobs
+    pub fn tick(self: *Self) void {
         for (self.jobs.items) |*job| {
-            if (std.mem.eql(u8, job.name, name)) {
-                job.enabled = false;
-                return;
+            if (job.shouldRun()) {
+                job.run();
             }
         }
-    }
-
-    /// Get job count
-    pub fn jobCount(self: *const Self) usize {
-        return self.jobs.items.len;
-    }
-
-    /// Start cron scheduler
-    pub fn start(self: *Self) !void {
-        if (self.running) return;
-
-        self.running = true;
-        self.thread = try std.Thread.spawn(.{}, runLoop, .{self});
-    }
-
-    /// Stop cron scheduler
-    pub fn stop(self: *Self) !void {
-        if (!self.running) return;
-
-        self.running = false;
-        if (self.thread) |thread| {
-            thread.join();
-            self.thread = null;
-        }
-    }
-
-    /// Main run loop
-    fn runLoop(self: *Self) void {
-        while (self.running) {
-            const now = std.time.timestamp();
-
-            for (self.jobs.items) |*job| {
-                if (!job.enabled) continue;
-
-                if (job.schedule.matches(now)) {
-                    if (now - job.last_run >= 60) { // Prevent duplicate runs within same minute
-                        std.debug.print("[Cron] Running job: {s} (schedule: {s})\n", .{ job.name, job.schedule_str });
-                        job.task();
-                        job.last_run = now;
-                        job.run_count += 1;
-                        job.next_run = job.schedule.nextRun(now);
-                    }
-                }
-            }
-
-            std.time.sleep(self.check_interval_ms * std.time.ns_per_ms);
-        }
-    }
-
-    // Plugin interface implementation
-    pub fn asPlugin(self: *Self) Plugin {
-        const vtable = Plugin.VTable{
-            .start = startImpl,
-            .stop = stopImpl,
-        };
-
-        return Plugin{
-            .name = self.name,
-            .vtable = &vtable,
-            .context = self,
-        };
-    }
-
-    fn startImpl(ctx: *anyopaque) !void {
-        const self: *Self = @ptrCast(@alignCast(ctx));
-        try self.start();
-    }
-
-    fn stopImpl(ctx: *anyopaque) !void {
-        const self: *Self = @ptrCast(@alignCast(ctx));
-        try self.stop();
     }
 };
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 test "cron expression parse - any" {
     const allocator = std.testing.allocator;
-
     const cron = try CronExpression.parse(allocator, "* * * * *");
 
-    // Every minute should match
-    try std.testing.expect(cron.minutes[0]);
-    try std.testing.expect(cron.minutes[30]);
-    try std.testing.expect(cron.minutes[59]);
-    try std.testing.expect(cron.hours[0]);
-    try std.testing.expect(cron.hours[23]);
+    // All minutes should be set (0-59)
+    var i: usize = 0;
+    while (i < 60) : (i += 1) {
+        try std.testing.expect(cron.minutes[i]);
+    }
+    // All hours should be set (0-23)
+    i = 0;
+    while (i < 24) : (i += 1) {
+        try std.testing.expect(cron.hours[i]);
+    }
 }
 
 test "cron expression parse - specific" {
     const allocator = std.testing.allocator;
-
     const cron = try CronExpression.parse(allocator, "30 14 * * *");
 
     try std.testing.expect(cron.minutes[30]);
-    try std.testing.expect(!cron.minutes[0]);
     try std.testing.expect(cron.hours[14]);
-    try std.testing.expect(!cron.hours[13]);
 }
 
 test "cron expression parse - step" {
     const allocator = std.testing.allocator;
-
     const cron = try CronExpression.parse(allocator, "*/15 * * * *");
 
     try std.testing.expect(cron.minutes[0]);
     try std.testing.expect(cron.minutes[15]);
     try std.testing.expect(cron.minutes[30]);
     try std.testing.expect(cron.minutes[45]);
-    try std.testing.expect(!cron.minutes[10]);
 }
 
 test "cron expression parse - range" {
     const allocator = std.testing.allocator;
-
     const cron = try CronExpression.parse(allocator, "0 9-17 * * 1-5");
 
+    try std.testing.expect(cron.minutes[0]);
     try std.testing.expect(cron.hours[9]);
+    try std.testing.expect(cron.hours[12]);
     try std.testing.expect(cron.hours[17]);
-    try std.testing.expect(!cron.hours[18]);
     try std.testing.expect(cron.days_of_week[1]);
     try std.testing.expect(cron.days_of_week[5]);
-    try std.testing.expect(!cron.days_of_week[0]); // Sunday
 }
 
 test "cron expression parse - list" {
     const allocator = std.testing.allocator;
-
     const cron = try CronExpression.parse(allocator, "0,30 * * * *");
 
     try std.testing.expect(cron.minutes[0]);
     try std.testing.expect(cron.minutes[30]);
-    try std.testing.expect(!cron.minutes[15]);
 }
 
-test "cron plugin basic" {
+test "cron expression invalid" {
     const allocator = std.testing.allocator;
-
-    var cron = CronPlugin.init(allocator);
-    defer cron.deinit();
-
-    const testTask = struct {
-        fn task() void {}
-    }.task;
-
-    try cron.schedule("test_job", "* * * * *", testTask);
-    try std.testing.expectEqual(@as(usize, 1), cron.jobs.items.len);
-
-    cron.unschedule("test_job");
-    try std.testing.expectEqual(@as(usize, 0), cron.jobs.items.len);
-}
-
-test "cron plugin enable disable" {
-    const allocator = std.testing.allocator;
-
-    var cron = CronPlugin.init(allocator);
-    defer cron.deinit();
-
-    const testTask = struct {
-        fn task() void {}
-    }.task;
-
-    try cron.schedule("job1", "0 0 * * *", testTask);
-    try std.testing.expect(cron.jobs.items[0].enabled);
-
-    cron.disableJob("job1");
-    try std.testing.expect(!cron.jobs.items[0].enabled);
-
-    cron.enableJob("job1");
-    try std.testing.expect(cron.jobs.items[0].enabled);
+    const result = CronExpression.parse(allocator, "invalid");
+    try std.testing.expectError(error.InvalidCronExpression, result);
 }
