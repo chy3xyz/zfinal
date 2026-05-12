@@ -12,7 +12,11 @@ pub const ServerConfig = struct {
     port: u16 = 8080,
     thread_count: u32 = 0, // 0 = cpu_count * 2
     max_connections: usize = 10000,
+    /// Maximum time (ms) to wait for a request head after accepting a connection.
+    /// Connection is closed if the client sends no data within this window.
     read_timeout_ms: u64 = 30000,
+    /// Maximum request body size in bytes (default: 10MB).
+    max_body_size: usize = 10 * 1024 * 1024,
 };
 
 pub const Server = struct {

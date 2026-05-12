@@ -12,6 +12,8 @@ pub const Context = struct {
     res_status: std.http.Status = .ok,
     /// Remote address of the client (set by Server/AsyncServer at accept time).
     remote_addr: ?std.Io.net.IpAddress = null,
+    /// Maximum request body size in bytes (default 10MB).
+    max_body_size: usize = 10 * 1024 * 1024,
     query_params: ?std.StringHashMap([]const u8) = null,
     path_params: ?std.StringHashMap([]const u8) = null,
     attributes: std.StringHashMap([]const u8),
@@ -101,7 +103,7 @@ pub const Context = struct {
 
                 var read_buf: [4096]u8 = undefined;
                 var reader = self.req.readerExpectNone(&read_buf);
-                try reader.appendRemaining(self.allocator, &body_buffer, .limited(2 * 1024 * 1024)); // 2MB max for form
+                try reader.appendRemaining(self.allocator, &body_buffer, .limited(self.max_body_size));
                 if (body_buffer.items.len > 0) {
                     try params.parseQueryIntoAllocator(self.allocator, body_buffer.items, &map);
                 }
@@ -387,7 +389,7 @@ pub const Context = struct {
         defer body_buffer.deinit(self.allocator);
 
         var reader = try self.req.reader();
-        try reader.readAllArrayList(self.allocator, &body_buffer, 10 * 1024 * 1024); // 10MB max
+        try reader.readAllArrayList(self.allocator, &body_buffer, self.max_body_size);
 
         // Parse multipart
         var parser = try MultipartParser.init(self.allocator, content_type.?);

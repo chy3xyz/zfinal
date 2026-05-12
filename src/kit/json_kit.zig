@@ -1,10 +1,35 @@
 const std = @import("std");
 
+/// Maximum JSON nesting depth to prevent stack overflow from malicious input.
+pub const MAX_JSON_DEPTH = 64;
+
 /// JSON 工具类
 pub const JsonKit = struct {
-    /// 解析 JSON 字符串
+    /// 解析 JSON 字符串 (with depth limit)
     pub fn parse(comptime T: type, allocator: std.mem.Allocator, json_str: []const u8) !std.json.Parsed(T) {
+        if (!validateDepth(json_str, MAX_JSON_DEPTH)) return error.JsonNestingTooDeep;
         return std.json.parseFromSlice(T, allocator, json_str, .{});
+    }
+
+    /// Validate JSON nesting depth without full parsing.
+    pub fn validateDepth(json_str: []const u8, max_depth: usize) bool {
+        var depth: usize = 0;
+        var in_string = false;
+        var escaped = false;
+        for (json_str) |c| {
+            if (escaped) { escaped = false; continue; }
+            if (c == '\\' and in_string) { escaped = true; continue; }
+            if (c == '"') { in_string = !in_string; continue; }
+            if (in_string) continue;
+            if (c == '{' or c == '[') {
+                depth += 1;
+                if (depth > max_depth) return false;
+            }
+            if (c == '}' or c == ']') {
+                if (depth > 0) depth -= 1;
+            }
+        }
+        return true;
     }
 
     /// 序列化为 JSON 字符串

@@ -106,12 +106,14 @@ pub const Validator = struct {
         }
     }
 
-    /// Validate regex pattern (simplified)
+    /// Validate regex pattern
     pub fn validatePattern(self: *Validator, field: []const u8, value: ?[]const u8, pattern: []const u8) !void {
-        _ = pattern; // TODO: Implement regex matching
-        if (value) |_| {
-            // Placeholder for regex validation
-            // In a real implementation, you'd use a regex library
+        if (value) |v| {
+            if (!@import("../kit/regex_kit.zig").RegexKit.match(pattern, v)) {
+                var buf: [128]u8 = undefined;
+                const msg = try std.fmt.bufPrint(&buf, "Value does not match pattern", .{});
+                try self.addError(field, msg);
+            }
         } else {
             try self.addError(field, "Value does not match pattern");
         }

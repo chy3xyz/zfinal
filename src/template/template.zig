@@ -513,10 +513,14 @@ const RenderEngine = struct {
     /// Load template file
     fn loadTemplateFile(self: *Self, name: []const u8) ![]const u8 {
         if (self.template_dir) |dir| {
-            const path = try std.fs.path.join(self.allocator, &.{ dir, name });
-            defer self.allocator.free(path);
+            // Prevent path traversal — resolved path must stay within template_dir
+            const resolved = try std.fs.path.resolve(self.allocator, &.{ dir, name });
+            defer self.allocator.free(resolved);
+            if (!std.mem.startsWith(u8, resolved, dir) or resolved.len <= dir.len) {
+                return error.PathTraversal;
+            }
 
-            const file = try std.Io.Dir.cwd().openFile(io_instance.io, path, .{});
+            const file = try std.Io.Dir.cwd().openFile(io_instance.io, resolved, .{});
             defer file.close(io_instance.io);
 
             return try file.readToEndAlloc(io_instance.io, self.allocator, 10 * 1024 * 1024);
