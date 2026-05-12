@@ -1,111 +1,327 @@
 const std = @import("std");
 const DBConfig = @import("../config.zig").DBConfig;
 const ResultSet = @import("../result.zig").ResultSet;
+const SqlParam = @import("../sql_param.zig").SqlParam;
 
 const c = @cImport({
     @cInclude("mysql/mysql.h");
 });
 
-/// MySQL database driver using libmysqlclient
 pub const MySQLDB = struct {
     conn: ?*c.MYSQL,
     allocator: std.mem.Allocator,
     last_affected: u64 = 0,
 
-    /// Connect to MySQL database
     pub fn connect(allocator: std.mem.Allocator, config: DBConfig) !MySQLDB {
-        const conn = c.mysql_init(null);
-        if (conn == null) {
-            return error.InitFailed;
-        }
+        const conn = c.mysql_init(null) orelse return error.InitFailed;
 
-        // Convert strings to null-terminated
-        var host_buf: [256]u8 = undefined;
-        var user_buf: [256]u8 = undefined;
-        var pass_buf: [256]u8 = undefined;
-        var db_buf: [256]u8 = undefined;
+        var h_buf: [256]u8 = undefined;
+        var u_buf: [256]u8 = undefined;
+        var p_buf: [256]u8 = undefined;
+        var d_buf: [256]u8 = undefined;
 
-        const host_z = try std.fmt.bufPrintZ(&host_buf, "{s}", .{config.host orelse "localhost"});
-        const user_z = try std.fmt.bufPrintZ(&user_buf, "{s}", .{config.username orelse "root"});
-        const pass_z = try std.fmt.bufPrintZ(&pass_buf, "{s}", .{config.password orelse ""});
-        const db_z = try std.fmt.bufPrintZ(&db_buf, "{s}", .{config.database});
+        const h = try std.fmt.bufPrintZ(&h_buf, "{s}", .{config.host orelse "localhost"});
+        const u = try std.fmt.bufPrintZ(&u_buf, "{s}", .{config.username orelse "root"});
+        const pw = try std.fmt.bufPrintZ(&p_buf, "{s}", .{config.password orelse ""});
+        const db = try std.fmt.bufPrintZ(&d_buf, "{s}", .{config.database});
 
-        const result = c.mysql_real_connect(conn, host_z.ptr, user_z.ptr, pass_z.ptr, db_z.ptr, config.port orelse 3306, null, 0);
-
-        if (result == null) {
-            const err_msg = c.mysql_error(conn);
-            std.debug.print("MySQL connection failed: {s}\n", .{err_msg});
+        if (c.mysql_real_connect(conn, h.ptr, u.ptr, pw.ptr, db.ptr, config.port orelse 3306, null, 0) == null) {
+            const msg = c.mysql_error(conn);
+            std.debug.print("MySQL connect failed: {s}\n", .{msg});
             c.mysql_close(conn);
             return error.ConnectionFailed;
         }
 
-        return MySQLDB{
-            .conn = conn,
-            .allocator = allocator,
-        };
+        return .{ .conn = conn, .allocator = allocator };
     }
 
-    /// Close connection
     pub fn close(self: *MySQLDB) void {
-        if (self.conn) |conn| {
-            c.mysql_close(conn);
+        if (self.conn) |cxn| {
+            c.mysql_close(cxn);
             self.conn = null;
         }
     }
 
-    /// Execute SQL statement
+    pub fn ping(self: *MySQLDB) bool {
+        if (self.conn == null) return false;
+        return c.mysql_ping(self.conn) == 0;
+    }
+
     pub fn exec(self: *MySQLDB, sql: [:0]const u8) !void {
-        const rc = c.mysql_query(self.conn, sql.ptr);
-        if (rc != 0) {
-            const err_msg = c.mysql_error(self.conn);
-            std.debug.print("MySQL exec failed: {s}\n", .{err_msg});
+        if (c.mysql_query(self.conn, sql.ptr) != 0) {
+            std.debug.print("MySQL exec failed: {s}\n", .{c.mysql_error(self.conn)});
             return error.ExecFailed;
         }
-
         self.last_affected = c.mysql_affected_rows(self.conn);
     }
 
-    /// Execute query and return result set
+    pub fn execParams(self: *MySQLDB, sql: [:0]const u8, params: []const SqlParam) !void {
+        var stmt = c.mysql_stmt_init(self.conn) orelse return error.StmtInitFailed;
+        defer c.mysql_stmt_close(stmt);
+
+        if (c.mysql_stmt_prepare(stmt, sql.ptr, sql.len) != 0) {
+            std.debug.print("MySQL stmt prepare failed: {s}\n", .{c.mysql_stmt_error(stmt)});
+            return error.PrepareFailed;
+        }
+
+        const bind = try buildMysqlBind(self.allocator, params);
+        defer freeMysqlBind(self.allocator, bind);
+
+        if (c.mysql_stmt_bind_param(stmt, bind.bind.ptr) != 0) {
+            std.debug.print("MySQL bind failed: {s}\n", .{c.mysql_stmt_error(stmt)});
+            return error.BindFailed;
+        }
+
+        if (c.mysql_stmt_execute(stmt) != 0) {
+            std.debug.print("MySQL stmt execute failed: {s}\n", .{c.mysql_stmt_error(stmt)});
+            return error.ExecFailed;
+        }
+
+        self.last_affected = c.mysql_stmt_affected_rows(stmt);
+    }
+
     pub fn query(self: *MySQLDB, sql: [:0]const u8) !ResultSet {
-        const rc = c.mysql_query(self.conn, sql.ptr);
-        if (rc != 0) {
-            const err_msg = c.mysql_error(self.conn);
-            std.debug.print("MySQL query failed: {s}\n", .{err_msg});
+        if (c.mysql_query(self.conn, sql.ptr) != 0) {
+            std.debug.print("MySQL query failed: {s}\n", .{c.mysql_error(self.conn)});
             return error.QueryFailed;
         }
 
-        const result = c.mysql_store_result(self.conn);
-        if (result == null) {
-            return error.StoreResultFailed;
+        const res = c.mysql_store_result(self.conn) orelse {
+            // Some queries (e.g. CALL) may return no result set
+            return ResultSet.init(self.allocator, &.{});
+        };
+        defer c.mysql_free_result(res);
+
+        return readResult(self.allocator, res);
+    }
+
+    pub fn queryParams(self: *MySQLDB, sql: [:0]const u8, params: []const SqlParam) !ResultSet {
+        var stmt = c.mysql_stmt_init(self.conn) orelse return error.StmtInitFailed;
+        defer c.mysql_stmt_close(stmt);
+
+        if (c.mysql_stmt_prepare(stmt, sql.ptr, sql.len) != 0) {
+            std.debug.print("MySQL stmt prepare failed: {s}\n", .{c.mysql_stmt_error(stmt)});
+            return error.PrepareFailed;
         }
-        defer c.mysql_free_result(result);
 
-        // Get column names
-        const n_fields = c.mysql_num_fields(result);
-        var columns = try self.allocator.alloc([]const u8, @intCast(n_fields));
+        const bind = try buildMysqlBind(self.allocator, params);
+        defer freeMysqlBind(self.allocator, bind);
 
-        const fields = c.mysql_fetch_fields(result);
-        for (0..@intCast(n_fields)) |i| {
-            const field = fields[i];
-            const field_name_len = field.name_length;
-            columns[i] = try self.allocator.dupe(u8, field.name[0..field_name_len]);
+        if (c.mysql_stmt_bind_param(stmt, bind.bind.ptr) != 0) {
+            std.debug.print("MySQL bind failed: {s}\n", .{c.mysql_stmt_error(stmt)});
+            return error.BindFailed;
         }
 
-        const result_set = ResultSet.init(self.allocator, columns);
+        if (c.mysql_stmt_execute(stmt) != 0) {
+            std.debug.print("MySQL stmt execute failed: {s}\n", .{c.mysql_stmt_error(stmt)});
+            return error.ExecFailed;
+        }
 
-        // Note: In a real implementation, we'd iterate through rows here
-        // TODO: Implement row iteration
+        // Fetch result metadata
+        const meta = c.mysql_stmt_result_metadata(stmt) orelse {
+            return ResultSet.init(self.allocator, &.{});
+        };
+        defer c.mysql_free_result(meta);
+
+        const n_cols: usize = @intCast(c.mysql_num_fields(meta));
+        var columns = try self.allocator.alloc([]const u8, n_cols);
+        errdefer self.allocator.free(columns);
+
+        const fields = c.mysql_fetch_fields(meta);
+        for (0..n_cols) |i| {
+            columns[i] = try self.allocator.dupe(u8, fields[i].name[0..@intCast(fields[i].name_length)]);
+        }
+
+        var result_set = ResultSet.init(self.allocator, columns);
+        errdefer result_set.deinit();
+
+        // Allocate per-column buffers for text results
+        var col_bufs = try self.allocator.alloc([4096]u8, n_cols);
+        defer self.allocator.free(col_bufs);
+        var col_lengths = try self.allocator.alloc(c_ulong, n_cols);
+        defer self.allocator.free(col_lengths);
+        var col_is_null = try self.allocator.alloc(c_my_bool, n_cols);
+        defer self.allocator.free(col_is_null);
+        var col_err = try self.allocator.alloc(c_my_bool, n_cols);
+        defer self.allocator.free(col_err);
+
+        // Build MYSQL_BIND output array
+        var out_bind = try self.allocator.alloc(c.MYSQL_BIND, n_cols);
+        defer self.allocator.free(out_bind);
+        for (0..n_cols) |i| {
+            out_bind[i] = .{
+                .buffer_type = c.MYSQL_TYPE_STRING,
+                .buffer = &col_bufs[i],
+                .buffer_length = 4096,
+                .length = &col_lengths[i],
+                .is_null = &col_is_null[i],
+                .error = &col_err[i],
+            };
+        }
+        if (c.mysql_stmt_bind_result(stmt, out_bind.ptr) != 0) {
+            return error.BindFailed;
+        }
+
+        // Fetch rows
+        while (true) {
+            const rc = c.mysql_stmt_fetch(stmt);
+            if (rc == c.MYSQL_NO_DATA) break;
+            if (rc == c.MYSQL_DATA_TRUNCATED) {} // continue
+            if (rc != 0 and rc != c.MYSQL_DATA_TRUNCATED) {
+                std.debug.print("MySQL fetch failed: {s}\n", .{c.mysql_stmt_error(stmt)});
+                return error.FetchFailed;
+            }
+
+            var cells = try self.allocator.alloc(?[]const u8, n_cols);
+            errdefer {
+                for (cells) |c_| if (c_) |v| self.allocator.free(v);
+                self.allocator.free(cells);
+            }
+            for (0..n_cols) |i| {
+                if (col_is_null[i] != 0) {
+                    cells[i] = null;
+                } else {
+                    cells[i] = try self.allocator.dupe(u8, col_bufs[i][0..@intCast(col_lengths[i])]);
+                }
+            }
+            try result_set.addRow(cells);
+        }
 
         return result_set;
     }
 
-    /// Get last insert ID
-    pub fn lastInsertId(self: *MySQLDB) !i64 {
+    pub fn lastInsertId(self: *MySQLDB) i64 {
         return @intCast(c.mysql_insert_id(self.conn));
     }
 
-    /// Get number of affected rows
-    pub fn affectedRows(self: *MySQLDB) !i64 {
+    pub fn affectedRows(self: *MySQLDB) i64 {
         return @intCast(self.last_affected);
+    }
+
+    const MysqlBindData = struct {
+        bind: std.ArrayList(c.MYSQL_BIND),
+        ints: std.ArrayList(i64),
+        reals: std.ArrayList(f64),
+        strings: std.ArrayList([]const u8),
+        lengths: std.ArrayList(c_ulong),
+        is_nulls: std.ArrayList(c_my_bool),
+    };
+
+    fn buildMysqlBind(allocator: std.mem.Allocator, params: []const SqlParam) !MysqlBindData {
+        var data = MysqlBindData{
+            .bind = std.ArrayList(c.MYSQL_BIND).empty,
+            .ints = std.ArrayList(i64).empty,
+            .reals = std.ArrayList(f64).empty,
+            .strings = std.ArrayList([]const u8).empty,
+            .lengths = std.ArrayList(c_ulong).empty,
+            .is_nulls = std.ArrayList(c_my_bool).empty,
+        };
+
+        for (params) |p| {
+            switch (p) {
+                .null => {
+                    try data.is_nulls.append(allocator, 1);
+                    try data.ints.append(allocator, 0);
+                    try data.reals.append(allocator, 0);
+                    try data.strings.append(allocator, "");
+                    try data.lengths.append(allocator, 0);
+                    try data.bind.append(allocator, .{
+                        .buffer_type = c.MYSQL_TYPE_NULL,
+                        .buffer = @constCast(@ptrCast(&data.ints.items[data.ints.items.len - 1])),
+                        .buffer_length = 8,
+                        .is_null = &data.is_nulls.items[data.is_nulls.items.len - 1],
+                        .length = &data.lengths.items[data.lengths.items.len - 1],
+                    });
+                },
+                .int => |v| {
+                    try data.is_nulls.append(allocator, 0);
+                    try data.ints.append(allocator, v);
+                    try data.reals.append(allocator, 0);
+                    try data.strings.append(allocator, "");
+                    try data.lengths.append(allocator, 0);
+                    try data.bind.append(allocator, .{
+                        .buffer_type = c.MYSQL_TYPE_LONGLONG,
+                        .buffer = @constCast(@ptrCast(&data.ints.items[data.ints.items.len - 1])),
+                        .buffer_length = 8,
+                        .is_null = &data.is_nulls.items[data.is_nulls.items.len - 1],
+                        .length = &data.lengths.items[data.lengths.items.len - 1],
+                    });
+                },
+                .real => |v| {
+                    try data.is_nulls.append(allocator, 0);
+                    try data.ints.append(allocator, 0);
+                    try data.reals.append(allocator, v);
+                    try data.strings.append(allocator, "");
+                    try data.lengths.append(allocator, 0);
+                    try data.bind.append(allocator, .{
+                        .buffer_type = c.MYSQL_TYPE_DOUBLE,
+                        .buffer = @constCast(@ptrCast(&data.reals.items[data.reals.items.len - 1])),
+                        .buffer_length = 8,
+                        .is_null = &data.is_nulls.items[data.is_nulls.items.len - 1],
+                        .length = &data.lengths.items[data.lengths.items.len - 1],
+                    });
+                },
+                .text, .blob => |v| {
+                    try data.is_nulls.append(allocator, 0);
+                    try data.ints.append(allocator, 0);
+                    try data.reals.append(allocator, 0);
+                    try data.strings.append(allocator, v);
+                    try data.lengths.append(allocator, @intCast(v.len));
+                    try data.bind.append(allocator, .{
+                        .buffer_type = c.MYSQL_TYPE_STRING,
+                        .buffer = @constCast(@ptrCast(v.ptr)),
+                        .buffer_length = @intCast(v.len),
+                        .is_null = &data.is_nulls.items[data.is_nulls.items.len - 1],
+                        .length = &data.lengths.items[data.lengths.items.len - 1],
+                    });
+                },
+            }
+        }
+        return data;
+    }
+
+    fn freeMysqlBind(allocator: std.mem.Allocator, data: MysqlBindData) void {
+        data.strings.deinit(allocator);
+        data.ints.deinit(allocator);
+        data.reals.deinit(allocator);
+        data.lengths.deinit(allocator);
+        data.is_nulls.deinit(allocator);
+        data.bind.deinit(allocator);
+    }
+
+    fn readResult(allocator: std.mem.Allocator, res: *c.MYSQL_RES) !ResultSet {
+        const n_cols: usize = @intCast(c.mysql_num_fields(res));
+        var columns = try allocator.alloc([]const u8, n_cols);
+        errdefer allocator.free(columns);
+
+        const fields = c.mysql_fetch_fields(res);
+        for (0..n_cols) |i| {
+            columns[i] = try allocator.dupe(u8, fields[i].name[0..@intCast(fields[i].name_length)]);
+        }
+
+        var result_set = ResultSet.init(allocator, columns);
+        errdefer result_set.deinit();
+
+        while (true) {
+            const row = c.mysql_fetch_row(res) orelse break;
+            const lengths = c.mysql_fetch_lengths(res);
+
+            var cells = try allocator.alloc(?[]const u8, n_cols);
+            errdefer {
+                for (cells) |c_| if (c_) |v| allocator.free(v);
+                allocator.free(cells);
+            }
+            for (0..n_cols) |i| {
+                if (row[i] == null) {
+                    cells[i] = null;
+                } else {
+                    const len: usize = @intCast(lengths[i]);
+                    cells[i] = try allocator.dupe(u8, row[i][0..len]);
+                }
+            }
+            try result_set.addRow(cells);
+        }
+
+        return result_set;
     }
 };

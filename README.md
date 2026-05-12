@@ -222,6 +222,8 @@ const uptime = metrics.uptime();
 |--------|--------|-------------|
 | Cache (memory) | ✅ Stable | In-memory cache with TTL, thread-safe |
 | Cron | ✅ Stable | Cron expression parser, job scheduling |
+| PostgreSQL | 🔧 Opt-in | Full libpq driver in `drivers/` — requires `libpq` |
+| MySQL | 🔧 Opt-in | Full mysqlclient driver in `drivers/` — requires `libmysqlclient` |
 | Cache (Redis) | 🟡 Stub | Redis backend — API defined, network layer pending |
 | MQTT | 🟡 Stub | MQTT 3.1.1 client — IoT protocol, not core framework |
 | Agent (MCP) | 🔧 Experimental | Model Context Protocol agent — early development |
@@ -287,7 +289,7 @@ Security hardening, structured logging, health endpoints, concurrency fixes, tem
 ### v1.0 — Stable Release
 
 - [ ] Stable API surface (no breaking changes without major version)
-- [ ] PostgreSQL and MySQL driver implementations
+- [x] PostgreSQL and MySQL driver implementations (opt-in, in `drivers/`)
 - [ ] Comprehensive integration test suite
 - [ ] Production deployment guide
 - [ ] gRPC support (optional module)

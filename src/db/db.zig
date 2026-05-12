@@ -4,66 +4,30 @@ const DBType = @import("config.zig").DBType;
 const ResultSet = @import("result.zig").ResultSet;
 const SqlParam = @import("sql_param.zig").SqlParam;
 
-// Conditional driver imports based on build configuration
-// Only import drivers if their libraries are available
 const builtin = @import("builtin");
-
-// For now, we'll use a simple approach: only import SQLite by default
-// Users can enable other drivers by installing the libraries
 const SQLiteDB = @import("drivers/sqlite.zig").SQLiteDB;
 
-// Stub types for disabled drivers
-const PostgresDB = struct {
-    pub fn connect(_: std.mem.Allocator, _: DBConfig) !PostgresDB {
-        return error.DriverNotEnabled;
-    }
-    pub fn close(_: *PostgresDB) void {}
-    pub fn exec(_: *PostgresDB, _: [:0]const u8) !void {
-        return error.DriverNotEnabled;
-    }
-    pub fn execParams(_: *PostgresDB, _: [:0]const u8, _: []const SqlParam) !void {
-        return error.DriverNotEnabled;
-    }
-    pub fn query(_: *PostgresDB, _: [:0]const u8) !ResultSet {
-        return error.DriverNotEnabled;
-    }
-    pub fn queryParams(_: *PostgresDB, _: [:0]const u8, _: []const SqlParam) !ResultSet {
-        return error.DriverNotEnabled;
-    }
-    pub fn affectedRows(_: *PostgresDB) !i64 {
-        return error.DriverNotEnabled;
-    }
-    pub fn ping(_: *PostgresDB) bool {
-        return false;
-    }
-};
+// PostgreSQL and MySQL full driver implementations live in drivers/.
+// To use them, install the C client library (libpq / libmysqlclient),
+// link it in your build.zig, and import the driver directly:
+//   const PG = @import("zfinal/db/drivers/postgres.zig").PostgresDB;
+//
+// The stubs below keep the DB wrapper compilable without native deps.
+const PostgresDB = DriverStub;
+const MySQLDB = DriverStub;
 
-const MySQLDB = struct {
-    pub fn connect(_: std.mem.Allocator, _: DBConfig) !MySQLDB {
-        return error.DriverNotEnabled;
-    }
-    pub fn close(_: *MySQLDB) void {}
-    pub fn exec(_: *MySQLDB, _: [:0]const u8) !void {
-        return error.DriverNotEnabled;
-    }
-    pub fn execParams(_: *MySQLDB, _: [:0]const u8, _: []const SqlParam) !void {
-        return error.DriverNotEnabled;
-    }
-    pub fn query(_: *MySQLDB, _: [:0]const u8) !ResultSet {
-        return error.DriverNotEnabled;
-    }
-    pub fn queryParams(_: *MySQLDB, _: [:0]const u8, _: []const SqlParam) !ResultSet {
-        return error.DriverNotEnabled;
-    }
-    pub fn lastInsertId(_: *MySQLDB) !i64 {
-        return error.DriverNotEnabled;
-    }
-    pub fn affectedRows(_: *MySQLDB) !i64 {
-        return error.DriverNotEnabled;
-    }
-    pub fn ping(_: *MySQLDB) bool {
-        return false;
-    }
+const DriverStub = struct {
+    conn: ?*anyopaque = null,
+    allocator: std.mem.Allocator = undefined,
+    pub fn connect(_: std.mem.Allocator, _: DBConfig) !@This() { return error.DriverNotEnabled; }
+    pub fn close(_: *@This()) void {}
+    pub fn ping(_: *@This()) bool { return false; }
+    pub fn exec(_: *@This(), _: [:0]const u8) !void { return error.DriverNotEnabled; }
+    pub fn execParams(_: *@This(), _: [:0]const u8, _: []const SqlParam) !void { return error.DriverNotEnabled; }
+    pub fn query(_: *@This(), _: [:0]const u8) !ResultSet { return error.DriverNotEnabled; }
+    pub fn queryParams(_: *@This(), _: [:0]const u8, _: []const SqlParam) !ResultSet { return error.DriverNotEnabled; }
+    pub fn lastInsertId(_: *@This()) !i64 { return error.DriverNotEnabled; }
+    pub fn affectedRows(_: *@This()) i64 { return 0; }
 };
 
 /// Unified database interface
