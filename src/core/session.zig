@@ -87,7 +87,9 @@ pub const SessionStore = struct {
 
         if (self.sessions.getPtr(session_id)) |session| {
             const key_copy = try self.allocator.dupe(u8, key);
+            errdefer self.allocator.free(key_copy);
             const value_copy = try self.allocator.dupe(u8, value);
+            errdefer self.allocator.free(value_copy);
 
             // Free old value if exists
             if (session.data.fetchRemove(key)) |old| {
@@ -100,14 +102,17 @@ pub const SessionStore = struct {
         }
     }
 
-    /// Get attribute from session (thread-safe)
-    pub fn getAttr(self: *SessionStore, session_id: []const u8, key: []const u8) ?[]const u8 {
+    /// Get attribute from session (thread-safe).
+    /// Returns an owned copy — caller must free with store.allocator.
+    pub fn getAttr(self: *SessionStore, session_id: []const u8, key: []const u8) !?[]const u8 {
         self.mutex.lock(io_instance.io) catch {};
         defer self.mutex.unlock(io_instance.io);
 
         if (self.sessions.getPtr(session_id)) |session| {
             session.last_accessed = std.Io.Timestamp.now(io_instance.io, .real).toSeconds();
-            return session.data.get(key);
+            if (session.data.get(key)) |value| {
+                return try self.allocator.dupe(u8, value);
+            }
         }
         return null;
     }
@@ -150,13 +155,16 @@ test "session store basic operations" {
 
     // Set and get attribute
     try store.setAttr(session_id, "user", "john");
-    const value = store.getAttr(session_id, "user");
+    const value = try store.getAttr(session_id, "user");
+    defer if (value) |v| allocator.free(v);
     try std.testing.expect(value != null);
     try std.testing.expectEqualStrings("john", value.?);
 
     // Remove attribute
     store.removeAttr(session_id, "user");
-    try std.testing.expect(store.getAttr(session_id, "user") == null);
+    const removed = try store.getAttr(session_id, "user");
+    defer if (removed) |v| allocator.free(v);
+    try std.testing.expect(removed == null);
 
     // Destroy session
     store.destroySession(session_id);

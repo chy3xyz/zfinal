@@ -138,21 +138,29 @@ const RenderEngine = struct {
     template_dir: ?[]const u8 = null,
     layout: ?[]const u8 = null,
     blocks: std.StringHashMap([]const u8),
+    depth: usize = 0,
     pos: usize = 0,
     line: usize = 1,
     column: usize = 1,
 
     const Self = @This();
 
+    pub const MAX_DEPTH: usize = 32;
+
     pub fn init(allocator: std.mem.Allocator, source: []const u8) Self {
         return .{
             .allocator = allocator,
             .source = source,
             .blocks = std.StringHashMap([]const u8).init(allocator),
+            .depth = 0,
         };
     }
 
     pub fn deinit(self: *Self) void {
+        self.deinitBlocks();
+    }
+
+    fn deinitBlocks(self: *Self) void {
         var it = self.blocks.iterator();
         while (it.next()) |entry| {
             self.allocator.free(entry.key_ptr.*);
@@ -178,10 +186,14 @@ const RenderEngine = struct {
 
             var layout_engine = RenderEngine.init(self.allocator, layout_content);
             layout_engine.template_dir = self.template_dir;
+            // Transfer blocks: free empty layout_engine.blocks first, then take ownership
+            layout_engine.deinitBlocks();
             layout_engine.blocks = self.blocks;
-            // Move blocks ownership
+            // Reset self.blocks to empty so self.deinit() won't double-free
+            self.blocks = std.StringHashMap([]const u8).init(self.allocator);
+
             const render_result = try layout_engine.renderInternal(data);
-            // Don't deinit layout_engine.blocks since we transferred ownership
+            defer layout_engine.deinitBlocks();
             return render_result;
         }
 
@@ -439,6 +451,7 @@ const RenderEngine = struct {
 
     /// Render include tag
     fn renderInclude(self: *Self, result: *std.ArrayList(u8), data: anytype) !void {
+        if (self.depth >= MAX_DEPTH) return error.TemplateRecursionLimit;
         self.skipWhitespace();
         const template_name = try self.parseString();
         defer self.allocator.free(template_name);
@@ -450,6 +463,7 @@ const RenderEngine = struct {
         defer self.allocator.free(include_content);
 
         var include_engine = RenderEngine.init(self.allocator, include_content);
+        include_engine.depth = self.depth + 1;
         include_engine.template_dir = self.template_dir;
         include_engine.blocks = self.blocks;
         const include_result = try include_engine.renderInternal(data);
@@ -620,35 +634,47 @@ const RenderEngine = struct {
                     if (child_info == .@"struct") {
                         for (collection) |item| {
                             var item_engine = RenderEngine.init(self.allocator, body);
+                            item_engine.depth = self.depth + 1;
                             item_engine.blocks = self.blocks;
                             const item_result = try item_engine.renderInternal(item);
                             try result.appendSlice(self.allocator, item_result);
                             self.allocator.free(item_result);
                         }
                     } else {
-                        // Simple array (strings, ints, etc.)
+                        // Simple array (strings, ints, etc.) — render body with variable substitution.
                         for (collection) |item| {
-                            var item_engine = RenderEngine.init(self.allocator, body);
-                            item_engine.blocks = self.blocks;
-
-                            // Create a struct with the item as the loop variable
-                            var loop_data = std.StringHashMap([]const u8).init(self.allocator);
-                            defer {
-                                var it = loop_data.iterator();
-                                while (it.next()) |entry| {
-                                    self.allocator.free(entry.key_ptr.*);
-                                    self.allocator.free(entry.value_ptr.*);
-                                }
-                                loop_data.deinit();
-                            }
-
                             const item_str = try self.formatValue(item);
                             defer if (item_str) |s| self.allocator.free(s);
-                            if (item_str) |s| {
-                                const key = try self.allocator.dupe(u8, var_name);
-                                const val = try self.allocator.dupe(u8, s);
-                                try loop_data.put(key, val);
+
+                            const value = item_str orelse "";
+
+                            // Render body by replacing {{ var_name }} with the item value
+                            var body_result = std.ArrayList(u8).empty;
+                            defer body_result.deinit(self.allocator);
+
+                            var search_pos: usize = 0;
+                            while (search_pos < body.len) {
+                                const pattern = "{{" ++ " " ++ var_name ++ " " ++ "}}";
+                                if (std.mem.indexOfPos(u8, body, search_pos, "{{")) |start| {
+                                    try body_result.appendSlice(self.allocator, body[search_pos..start]);
+                                    const end = std.mem.indexOfPos(u8, body, start, "}}") orelse {
+                                        try body_result.appendSlice(self.allocator, body[search_pos..]);
+                                        break;
+                                    };
+                                    const found_name = std.mem.trim(u8, body[start + 2 .. end], &std.ascii.whitespace);
+                                    if (std.mem.eql(u8, found_name, var_name)) {
+                                        try body_result.appendSlice(self.allocator, value);
+                                    } else {
+                                        try body_result.appendSlice(self.allocator, body[start .. end + 2]);
+                                    }
+                                    search_pos = end + 2;
+                                } else {
+                                    try body_result.appendSlice(self.allocator, body[search_pos..]);
+                                    break;
+                                }
                             }
+
+                            try result.appendSlice(self.allocator, body_result.items);
                         }
                     }
                 }

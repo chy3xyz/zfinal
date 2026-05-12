@@ -118,10 +118,10 @@ pub fn Model(comptime T: type, comptime table_name: []const u8) type {
             return list.toOwnedSlice(allocator);
         }
 
-        /// Find records with parameterized WHERE clause
-        /// where_sql: e.g. "age > ? AND name = ?"
-        /// params: bound values for the placeholders
-        pub fn findWhere(db: *DB, where_sql: [:0]const u8, params: []const SqlParam, allocator: std.mem.Allocator) ![]Instance {
+        /// Find records with parameterized WHERE clause.
+        /// where_sql must be comptime-known to prevent SQL injection.
+        /// e.g. findWhere(db, "age > ? AND name = ?", &params, allocator)
+        pub fn findWhere(db: *DB, comptime where_sql: [:0]const u8, params: []const SqlParam, allocator: std.mem.Allocator) ![]Instance {
             const sql = try std.fmt.allocPrintSentinel(allocator, "SELECT * FROM {s} WHERE {s}", .{ table_name, where_sql }, 0);
             defer allocator.free(sql);
 

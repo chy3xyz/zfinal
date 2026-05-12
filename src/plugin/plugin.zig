@@ -1,4 +1,5 @@
 const std = @import("std");
+const getLog = @import("../core/logger.zig").getLogger;
 
 /// Plugin 接口
 pub const Plugin = struct {
@@ -33,6 +34,9 @@ pub const PluginManager = struct {
     }
 
     pub fn deinit(self: *PluginManager) void {
+        for (self.plugins.items) |*plugin| {
+            plugin.stop() catch {};
+        }
         self.plugins.deinit(self.allocator);
     }
 
@@ -41,19 +45,27 @@ pub const PluginManager = struct {
         try self.plugins.append(self.allocator, plugin);
     }
 
-    /// 启动所有插件
+    /// 启动所有插件。If a plugin fails to start, previously started plugins are stopped.
     pub fn startAll(self: *PluginManager) !void {
-        for (self.plugins.items) |*plugin| {
-            std.debug.print("Starting plugin: {s}\n", .{plugin.name});
+        var started: usize = 0;
+        errdefer {
+            // Rollback: stop all plugins that were successfully started
+            for (self.plugins.items[0..started]) |*plugin| {
+                plugin.stop() catch {};
+            }
+        }
+        for (self.plugins.items, 0..) |*plugin, i| {
+            getLog().infoFmt("Starting plugin: {s}", .{plugin.name});
             try plugin.start();
+            started = i + 1;
         }
     }
 
-    /// 停止所有插件
-    pub fn stopAll(self: *PluginManager) !void {
+    /// 停止所有插件。Continues stopping remaining plugins even if one fails.
+    pub fn stopAll(self: *PluginManager) void {
         for (self.plugins.items) |*plugin| {
             std.debug.print("Stopping plugin: {s}\n", .{plugin.name});
-            try plugin.stop();
+            plugin.stop() catch {};
         }
     }
 

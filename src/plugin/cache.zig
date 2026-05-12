@@ -53,6 +53,8 @@ pub const CachePlugin = struct {
 
     // Config
     config: CacheConfig,
+    // Thread safety for memory backend
+    mutex: std.Io.Mutex = std.Io.Mutex.init,
 
     const Self = @This();
 

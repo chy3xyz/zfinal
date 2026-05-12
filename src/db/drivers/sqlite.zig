@@ -42,6 +42,14 @@ pub const SQLiteDB = struct {
         }
     }
 
+    /// Health check: returns true if the database handle is alive and responsive.
+    pub fn ping(self: *SQLiteDB) bool {
+        if (self.db == null) return false;
+        // sqlite3_db_readonly returns 0 if the db is read-write, 1 if read-only, -1 if not a db
+        const rc = c.sqlite3_db_readonly(self.db, null);
+        return rc >= 0;
+    }
+
     /// Execute SQL statement (legacy, prefer execParams)
     pub fn exec(self: *SQLiteDB, sql: [:0]const u8) !void {
         var errmsg: [*c]u8 = null;

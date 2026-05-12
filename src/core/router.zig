@@ -160,6 +160,10 @@ pub const Router = struct {
     /// 添加指定方法和带拦截器的路由
     pub fn addWithMethodAndInterceptors(self: *Router, path: []const u8, method: HttpMethod, handler: Handler, interceptors: InterceptorChain) !void {
         const parsed = try parseRoute(path, self.allocator);
+        errdefer {
+            self.allocator.free(parsed.segments);
+            self.allocator.free(parsed.param_names);
+        }
 
         const route = Route{
             .pattern = path,

@@ -33,6 +33,9 @@ const PostgresDB = struct {
     pub fn affectedRows(_: *PostgresDB) !i64 {
         return error.DriverNotEnabled;
     }
+    pub fn ping(_: *PostgresDB) bool {
+        return false;
+    }
 };
 
 const MySQLDB = struct {
@@ -57,6 +60,9 @@ const MySQLDB = struct {
     }
     pub fn affectedRows(_: *MySQLDB) !i64 {
         return error.DriverNotEnabled;
+    }
+    pub fn ping(_: *MySQLDB) bool {
+        return false;
     }
 };
 
@@ -91,6 +97,15 @@ pub const DB = struct {
             .postgres => |*pg| pg.close(),
             .mysql => |*my| my.close(),
             .sqlite => |*sq| sq.close(),
+        }
+    }
+
+    /// Health check: returns true if the connection is alive.
+    pub fn ping(self: *DB) bool {
+        switch (self.driver) {
+            .postgres => |*pg| return pg.ping(),
+            .mysql => |*my| return my.ping(),
+            .sqlite => |*sq| return sq.ping(),
         }
     }
 

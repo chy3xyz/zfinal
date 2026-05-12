@@ -54,9 +54,21 @@ pub const ConnectionPool = struct {
         const deadline = std.Io.Timestamp.now(getIo(), .real).toMilliseconds() + @as(i64, @intCast(self.acquire_timeout_ms));
 
         while (true) {
-            // 1. 尝试获取可用连接
-            if (self.available.items.len > 0) {
-                return self.available.pop().?;
+            // 1. 尝试获取可用连接 (with health check)
+            while (self.available.items.len > 0) {
+                const conn = self.available.pop().?;
+                if (conn.ping()) return conn;
+                // Dead connection — discard and try next
+                conn.deinit();
+                self.allocator.destroy(conn);
+                // Remove from connections list
+                for (self.connections.items, 0..) |c, i| {
+                    if (c == conn) {
+                        _ = self.connections.swapRemove(i);
+                        break;
+                    }
+                }
+                self.current_connections -= 1;
             }
 
             // 2. 尝试创建新连接

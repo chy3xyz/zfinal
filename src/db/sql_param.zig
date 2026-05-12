@@ -70,10 +70,12 @@ pub const ParamQuery = struct {
         try self.params.append(self.allocator, .null);
     }
 
-    /// Format parameters into the SQL template for drivers that do not support
-    /// native prepared statements. This is a fallback and less secure than true
-    /// parameter binding.
+    /// Format parameters into the SQL template for DEBUG/TESTING only.
+    /// This performs string interpolation and is NOT safe for production with
+    /// untrusted input. Always prefer native parameter binding (execParams).
+    /// Only compiles in Debug mode.
     pub fn toSql(self: *ParamQuery) ![:0]const u8 {
+        if (@import("builtin").mode != .Debug) @compileError("toSql() is only available in Debug mode. Use native parameter binding in production.");
         var result = std.ArrayList(u8).empty;
         defer result.deinit(self.allocator);
 

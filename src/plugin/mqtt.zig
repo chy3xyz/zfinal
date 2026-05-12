@@ -18,7 +18,7 @@ pub const MqttPlugin = struct {
     allocator: std.mem.Allocator,
     config: MqttConfig,
     socket: ?std.Io.net.Stream = null,
-    running: bool = false,
+    running: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     read_thread: ?std.Thread = null,
 
     pub fn init(allocator: std.mem.Allocator, config: MqttConfig) MqttPlugin {
@@ -55,9 +55,9 @@ pub const MqttPlugin = struct {
 
     fn stop(ctx: *anyopaque) !void {
         const self: *MqttPlugin = @ptrCast(@alignCast(ctx));
-        if (!self.running) return;
+        if (!self.running.load(.monotonic)) return;
 
-        self.running = false;
+        self.running.store(false, .monotonic);
         if (self.socket) |sock| {
             sock.close(io_instance.io);
             self.socket = null;
@@ -72,17 +72,17 @@ pub const MqttPlugin = struct {
 
     fn readLoop(self: *MqttPlugin) void {
         var buffer: [4096]u8 = undefined;
-        while (self.running) {
+        while (self.running.load(.monotonic)) {
             if (self.socket) |sock| {
                 const bytes_read = sock.read(&buffer) catch |err| {
                     std.debug.print("MQTT read error: {}\n", .{err});
-                    self.running = false;
+                    self.running.store(false, .monotonic);
                     break;
                 };
 
                 if (bytes_read == 0) {
                     std.debug.print("MQTT connection closed by broker.\n", .{});
-                    self.running = false;
+                    self.running.store(false, .monotonic);
                     break;
                 }
 

@@ -3,7 +3,23 @@ const io_instance = @import("../io_instance.zig");
 
 /// 文件工具类
 pub const FileKit = struct {
-    /// 读取整个文件
+    /// Validate that `path` does not escape `base_dir` via path traversal.
+    /// Resolves the combined path and checks it starts with the base directory.
+    pub fn validatePath(allocator: std.mem.Allocator, base_dir: []const u8, path: []const u8) ![]const u8 {
+        const resolved = try std.fs.path.resolve(allocator, &.{ base_dir, path });
+        if (!std.mem.startsWith(u8, resolved, base_dir)) {
+            allocator.free(resolved);
+            return error.PathTraversal;
+        }
+        // Also reject if the resolved path equals base_dir exactly (empty path)
+        if (resolved.len <= base_dir.len) {
+            allocator.free(resolved);
+            return error.PathTraversal;
+        }
+        return resolved;
+    }
+
+    /// 读取整个文件 (relative to cwd)
     pub fn readFile(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
         const file = try std.Io.Dir.cwd().openFile(io_instance.io, path, .{});
         defer file.close(io_instance.io);

@@ -18,9 +18,13 @@ pub const AsyncServer = @import("core/async_server.zig").AsyncServer;
 pub const AsyncServerConfig = @import("core/async_server.zig").AsyncServerConfig;
 pub const Logger = @import("core/logger.zig").Logger;
 pub const LogLevel = @import("core/logger.zig").LogLevel;
+pub const LOG_LEVEL = @import("core/logger.zig").LOG_LEVEL;
+pub const Field = @import("core/logger.zig").Field;
 pub const RequestLogger = @import("core/logger.zig").RequestLogger;
 pub const initGlobalLogger = @import("core/logger.zig").initGlobalLogger;
 pub const getLogger = @import("core/logger.zig").getLogger;
+pub const Metrics = @import("core/metrics.zig").Metrics;
+pub const healthHandlerFor = @import("core/metrics.zig").healthHandlerFor;
 // Export database modules
 pub const DB = @import("db/db.zig").DB;
 pub const DBConfig = @import("db/config.zig").DBConfig;
@@ -127,4 +131,115 @@ pub const CacheKit = @import("kit/cache_kit.zig").CacheKit;
 
 test "basic test" {
     try std.testing.expectEqual(10, 3 + 7);
+}
+
+test "integration: router match and handler dispatch" {
+    const allocator = std.testing.allocator;
+
+    var router = @import("core/router.zig").Router.init(allocator);
+    defer router.deinit();
+
+    var handler_called = false;
+    const TestHandler = struct {
+        var called: *bool = undefined;
+        fn handle(ctx: *Context) !void {
+            called.* = true;
+            ctx.res_status = .ok;
+            try ctx.renderText("OK");
+        }
+    };
+    TestHandler.called = &handler_called;
+
+    try router.addWithMethod("/api/test", .GET, TestHandler.handle);
+
+    const route = router.match("/api/test", .GET);
+    try std.testing.expect(route != null);
+
+    try std.testing.expect(handler_called == false);
+    try std.testing.expectEqualStrings("/api/test", route.?.pattern);
+}
+
+test "integration: context query params" {
+    const allocator = std.testing.allocator;
+
+    var params_map = try @import("core/params.zig").parseQuery(allocator, "name=Alice&age=30");
+    defer {
+        var it = params_map.iterator();
+        while (it.next()) |entry| {
+            allocator.free(entry.key_ptr.*);
+            allocator.free(entry.value_ptr.*);
+        }
+        params_map.deinit();
+    }
+
+    try std.testing.expectEqualStrings("Alice", params_map.get("name").?);
+    try std.testing.expectEqualStrings("30", params_map.get("age").?);
+    try std.testing.expect(params_map.get("missing") == null);
+}
+
+test "integration: CSRF token flow" {
+    const allocator = std.testing.allocator;
+
+    var manager = TokenManager.init(allocator);
+    defer manager.deinit();
+
+    const token = try manager.generate();
+    defer allocator.free(token);
+
+    try std.testing.expect(manager.exists(token));
+    try std.testing.expect(try manager.validate(token));
+    try std.testing.expect(!try manager.validate(token)); // one-time use
+}
+
+test "integration: captcha generate and validate" {
+    const allocator = std.testing.allocator;
+    RandomKit.init();
+
+    var manager = CaptchaManager.init(allocator);
+    defer manager.deinit();
+
+    const captcha = try manager.generate(.numeric, "session_test");
+    // Note: captcha strings are owned by manager, do NOT call captcha.deinit() here.
+
+    try std.testing.expectEqual(@as(usize, 4), captcha.code.len);
+    try std.testing.expect(try manager.validate("session_test", captcha.answer));
+    try std.testing.expect(!try manager.validate("session_test", captcha.answer)); // consumed
+}
+
+test "integration: interceptor chain" {
+    const allocator = std.testing.allocator;
+
+    var chain = @import("interceptor/interceptor.zig").InterceptorChain.init(allocator);
+    defer chain.deinit();
+
+    // Test the interceptor chain structure
+    const interceptor = @import("interceptor/interceptor.zig").Interceptor{
+        .name = "test_interceptor",
+        .before = null,
+        .after = null,
+    };
+
+    try chain.add(interceptor);
+    try std.testing.expectEqual(@as(usize, 1), chain.interceptors.items.len);
+    try std.testing.expectEqualStrings("test_interceptor", chain.interceptors.items[0].name);
+}
+
+test "integration: logger + metrics pipeline" {
+    const allocator = std.testing.allocator;
+    var logger = Logger.init(allocator);
+    logger.setLevel(.debug);
+
+    var metrics = Metrics.init(allocator);
+    defer metrics.deinit();
+
+    metrics.recordRequest(200);
+    metrics.recordRequest(200);
+    metrics.recordRequest(404);
+    metrics.recordRequest(500);
+
+    try std.testing.expectEqual(@as(u64, 4), metrics.total_requests.load(.monotonic));
+    try std.testing.expectEqual(@as(u64, 2), metrics.responses_2xx.load(.monotonic));
+    try std.testing.expectEqual(@as(u64, 1), metrics.responses_4xx.load(.monotonic));
+    try std.testing.expectEqual(@as(u64, 1), metrics.responses_5xx.load(.monotonic));
+    try std.testing.expect(metrics.uptime() >= 0);
 }

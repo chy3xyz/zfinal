@@ -110,6 +110,11 @@ pub const RateLimitHandler = struct {
     mutex: std.Io.Mutex = std.Io.Mutex.init,
     max_requests: usize = 100,
     window_seconds: i64 = 60,
+    /// Set to true when behind a trusted reverse proxy (nginx, haproxy).
+    trust_proxy_headers: bool = false,
+    /// Controls how often stale entries are cleaned up (every N handle() calls).
+    cleanup_counter: usize = 0,
+    cleanup_interval: usize = 1000,
 
     const RequestInfo = struct {
         count: usize,
@@ -132,15 +137,29 @@ pub const RateLimitHandler = struct {
     }
 
     pub fn handle(self: *RateLimitHandler, ctx: *zfinal.Context) !void {
-        const client_ip = ctx.getHeader("X-Real-IP") orelse ctx.getHeader("X-Forwarded-For") orelse "unknown";
+        // Build client key: prefer real socket address.
+        // Only use proxy headers when trust_proxy_headers is explicitly enabled.
+        var key_buf: [64]u8 = undefined;
+        const client_key = if (ctx.remote_addr) |addr|
+            try std.fmt.bufPrint(&key_buf, "{}", .{addr})
+        else if (self.trust_proxy_headers)
+            ctx.getHeader("X-Real-IP") orelse ctx.getHeader("X-Forwarded-For") orelse "unknown"
+        else
+            "unknown";
 
         self.mutex.lock(io_instance.io) catch {};
         defer self.mutex.unlock(io_instance.io);
 
         const now: i64 = std.Io.Timestamp.now(io_instance.io, .real).toSeconds();
 
-        if (self.requests.getPtr(client_ip)) |info| {
-            // 检查是否在同一时间窗口
+        // Periodic cleanup of stale entries
+        self.cleanup_counter += 1;
+        if (self.cleanup_counter >= self.cleanup_interval) {
+            self.cleanup_counter = 0;
+            self.cleanupStale(now);
+        }
+
+        if (self.requests.getPtr(client_key)) |info| {
             if (now - info.window_start < self.window_seconds) {
                 if (info.count >= self.max_requests) {
                     ctx.res_status = .too_many_requests;
@@ -149,17 +168,34 @@ pub const RateLimitHandler = struct {
                 }
                 info.count += 1;
             } else {
-                // 新的时间窗口
                 info.count = 1;
                 info.window_start = now;
             }
         } else {
-            // 新客户端
-            const ip_copy = try self.allocator.dupe(u8, client_ip);
-            try self.requests.put(ip_copy, RequestInfo{
+            const key_copy = try self.allocator.dupe(u8, client_key);
+            try self.requests.put(key_copy, RequestInfo{
                 .count = 1,
                 .window_start = now,
             });
+        }
+    }
+
+    fn cleanupStale(self: *RateLimitHandler, now: i64) void {
+        const cutoff = now - self.window_seconds * 2;
+        var to_remove = std.ArrayList([]const u8).empty;
+        defer to_remove.deinit(self.allocator);
+
+        var it = self.requests.iterator();
+        while (it.next()) |entry| {
+            if (entry.value_ptr.window_start < cutoff) {
+                to_remove.append(self.allocator, entry.key_ptr.*) catch {};
+            }
+        }
+
+        for (to_remove.items) |key| {
+            if (self.requests.fetchRemove(key)) |kv| {
+                self.allocator.free(kv.key);
+            }
         }
     }
 };

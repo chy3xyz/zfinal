@@ -5,6 +5,7 @@ const HttpMethod = @import("router.zig").HttpMethod;
 const Context = @import("context.zig").Context;
 const ThreadPool = @import("thread_pool.zig").ThreadPool;
 const io_instance = @import("../io_instance.zig");
+const getLog = @import("logger.zig").getLogger;
 
 pub const ServerConfig = struct {
     host: []const u8 = "127.0.0.1",
@@ -45,7 +46,7 @@ pub const Server = struct {
         });
         defer server.deinit(io_instance.io);
 
-        std.debug.print("Server listening on {s}:{d} (threads: {d}, max_conn: {d})\n", .{
+        getLog().infoFmt("Server listening on {s}:{d} (threads: {d}, max_conn: {d})", .{
             self.config.host, self.config.port, thread_count, self.config.max_connections,
         });
 

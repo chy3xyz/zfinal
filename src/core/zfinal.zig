@@ -26,9 +26,7 @@ pub const ZFinal = struct {
     }
 
     pub fn deinit(self: *ZFinal) void {
-        self.plugin_manager.stopAll() catch |err| {
-            std.debug.print("Error stopping plugins: {}\n", .{err});
-        };
+        self.plugin_manager.stopAll();
         self.plugin_manager.deinit();
         self.router.deinit();
     }

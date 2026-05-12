@@ -2,12 +2,11 @@ const std = @import("std");
 const io_instance = @import("../io_instance.zig");
 
 fn getIo() std.Io {
-    if (@import("builtin").is_test) return std.testing.io;
-    return getIo();
+    return io_instance.io;
 }
 
-/// A simple fixed-size thread pool for request handling.
-/// Tasks are queued and picked up by worker threads.
+/// A fixed-size thread pool for request handling.
+/// Workers block on a condition variable when idle (no busy-spin).
 pub const ThreadPool = struct {
     allocator: std.mem.Allocator,
     threads: []std.Thread,
@@ -26,6 +25,7 @@ pub const ThreadPool = struct {
         cond: std.Io.Condition,
         items: std.ArrayList(Task),
         allocator: std.mem.Allocator,
+        shutting_down: bool = false,
 
         pub fn init(allocator: std.mem.Allocator) TaskQueue {
             return .{
@@ -47,22 +47,25 @@ pub const ThreadPool = struct {
             self.cond.signal(getIo());
         }
 
+        /// Blocking pop. Waits on condition variable when queue is empty.
+        /// Returns null when shutting down.
         pub fn pop(self: *TaskQueue) ?Task {
             self.mutex.lock(getIo()) catch {};
             defer self.mutex.unlock(getIo());
 
-            while (self.items.items.len == 0) {
+            while (self.items.items.len == 0 and !self.shutting_down) {
                 self.cond.waitUncancelable(getIo(), &self.mutex);
             }
 
+            if (self.shutting_down and self.items.items.len == 0) return null;
             return self.items.pop();
         }
 
-        pub fn tryPop(self: *TaskQueue) ?Task {
+        pub fn signalShutdown(self: *TaskQueue) void {
             self.mutex.lock(getIo()) catch {};
             defer self.mutex.unlock(getIo());
-            if (self.items.items.len == 0) return null;
-            return self.items.pop();
+            self.shutting_down = true;
+            self.cond.broadcast(getIo());
         }
     };
 
@@ -84,13 +87,10 @@ pub const ThreadPool = struct {
     }
 
     pub fn deinit(self: *ThreadPool) void {
-        self.running = false;
+        // Signal shutdown to all waiting threads
+        self.queue.signalShutdown();
 
-        // Wake up all waiting threads
-        for (0..self.threads.len) |_| {
-            self.queue.cond.broadcast(getIo());
-        }
-
+        // Join all threads
         for (self.threads) |thread| {
             thread.join();
         }
@@ -100,7 +100,6 @@ pub const ThreadPool = struct {
     }
 
     pub fn submit(self: *ThreadPool, comptime Func: type, context: *anyopaque) !void {
-        // Check if we're at max concurrent connections
         const current = self.active_count.load(.monotonic);
         if (current >= self.max_concurrent) {
             return error.TooManyRequests;
@@ -133,12 +132,9 @@ pub const ThreadPool = struct {
 
     fn workerLoop(self: *ThreadPool, worker_id: usize) void {
         _ = worker_id;
-        while (self.running) {
-            const task = self.queue.tryPop() orelse {
-                // Yield to avoid busy-waiting when empty
-                std.Thread.yield() catch {};
-                continue;
-            };
+        while (true) {
+            // Blocking pop — waits on condition variable, zero CPU when idle.
+            const task = self.queue.pop() orelse break;
 
             _ = self.active_count.fetchAdd(1, .monotonic);
             task.func(task.context);
@@ -170,7 +166,6 @@ test "thread pool basic" {
         try pool.submit(Context, &ctx);
     }
 
-    // Give workers time to process
     std.Io.sleep(std.testing.io, std.Io.Duration.fromMilliseconds(50), .real) catch {};
 
     try std.testing.expect(ctx.counter.load(.monotonic) >= 1);

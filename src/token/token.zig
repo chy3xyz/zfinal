@@ -14,9 +14,9 @@ pub const Token = struct {
     }
 
     /// 检查是否过期
-    pub fn isExpired(self: *const Token, _: i64) bool {
-        _ = self;
-        return false;
+    pub fn isExpired(self: *const Token, ttl: i64) bool {
+        const elapsed = TimeKit.now() - self.created_at;
+        return elapsed > ttl;
     }
 };
 

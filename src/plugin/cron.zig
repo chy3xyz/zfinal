@@ -106,20 +106,24 @@ pub const CronExpression = struct {
     }
 
     /// Check if the cron expression matches the given time
-    /// Note: day_of_month and month checks are simplified due to lack of calendar library
     pub fn matches(self: *const Self, timestamp: i64) bool {
-        const seconds = @as(u64, @intCast(timestamp));
-        const minutes = (seconds / 60) % 60;
-        const hours = (seconds / 3600) % 24;
+        if (timestamp < 0) return false;
 
-        // Get day components (simplified: use epoch-based modulo)
-        const days = seconds / 86400;
-        const day_of_week = @as(u8, @intCast(days % 7));
-        // Simplified: assume 30-day months for basic cron matching
-        const day_of_month = @as(u8, @intCast((days % 30) + 1));
-        const month = @as(u8, @intCast(@as(u32, @intCast((days / 30) % 12)) + 1));
+        const secs: u64 = @intCast(timestamp);
+        const minutes = (secs / 60) % 60;
+        const hours = (secs / 3600) % 24;
 
-        // Check each field
+        // Use proper calendar math via std lib
+        const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = @intCast(timestamp) };
+        const year_day = epoch_seconds.getEpochDay().calculateYearDay();
+        const month_day = year_day.calculateMonthDay();
+        const month = month_day.month.numeric();
+        const day_of_month = month_day.day_index + 1;
+
+        // Cron day-of-week: 0=Sun, 1=Mon, ..., 6=Sat.
+        // EpochDay(0) = 1970-01-01 = Thursday. Thu=4 in cron notation.
+        const day_of_week: u8 = @intCast((@as(u64, @intCast(epoch_seconds.getEpochDay().sinceEpoch())) + 4) % 7);
+
         if (!self.minutes[minutes]) return false;
         if (!self.hours[hours]) return false;
         if (!self.days_of_month[day_of_month]) return false;
@@ -129,8 +133,8 @@ pub const CronExpression = struct {
         return true;
     }
 
-    /// Get next run time after the given timestamp
-    pub fn nextRun(self: *const Self, timestamp: i64) i64 {
+    /// Get next run time after the given timestamp. Returns null if no match found.
+    pub fn nextRun(self: *const Self, timestamp: i64) ?i64 {
         var ts = timestamp;
         const max_iterations = 60 * 60 * 24 * 366; // Max 1 year ahead
 
@@ -140,7 +144,7 @@ pub const CronExpression = struct {
             if (self.matches(ts)) return ts;
         }
 
-        return 0; // No match found
+        return null; // No match found
     }
 
     /// Validate cron expression
@@ -200,7 +204,7 @@ pub const CronJob = struct {
     schedule_str: []const u8,
     task: *const fn () void,
     last_run: i64,
-    next_run: i64,
+    next_run: ?i64,
     allocator: std.mem.Allocator,
 
     const Self = @This();
@@ -209,7 +213,7 @@ pub const CronJob = struct {
         const parsed = try CronExpression.parse(allocator, cron_expr);
 
         const now = TimeKit.now();
-        const next_run = parsed.nextRun(now);
+        const next_run = parsed.nextRun(now) orelse return error.InvalidCronExpression;
 
         return Self{
             .name = try allocator.dupe(u8, name),
@@ -228,8 +232,9 @@ pub const CronJob = struct {
 
     /// Check if job should run now
     pub fn shouldRun(self: *Self) bool {
+        const next = self.next_run orelse return false;
         const now = TimeKit.now();
-        return now >= self.next_run;
+        return now >= next;
     }
 
     /// Execute the job
@@ -267,7 +272,7 @@ pub const CronPlugin = struct {
         const parsed = try CronExpression.parse(self.allocator, cron_expr);
 
         const now = TimeKit.now();
-        const next_run = parsed.nextRun(now);
+        const next_run = parsed.nextRun(now) orelse return error.InvalidCronExpression;
 
         const job = CronJob{
             .name = try self.allocator.dupe(u8, name),
@@ -297,11 +302,12 @@ pub const CronPlugin = struct {
     /// Get next job to run
     pub fn getNextJob(self: *Self) ?*CronJob {
         var earliest: ?*CronJob = null;
-        var earliest_time: i64 = std.math.maxInt(i64);
+        var earliest_time: ?i64 = null;
 
         for (self.jobs.items) |*job| {
-            if (job.next_run < earliest_time) {
-                earliest_time = job.next_run;
+            const run_time = job.next_run orelse continue;
+            if (earliest_time == null or run_time < earliest_time.?) {
+                earliest_time = run_time;
                 earliest = job;
             }
         }

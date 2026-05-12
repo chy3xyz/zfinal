@@ -3,6 +3,7 @@ const http = std.http;
 const Router = @import("router.zig").Router;
 const HttpMethod = @import("router.zig").HttpMethod;
 const Context = @import("context.zig").Context;
+const getLog = @import("logger.zig").getLogger;
 
 /// Async HTTP Server configuration
 pub const AsyncServerConfig = struct {
@@ -40,7 +41,7 @@ pub const AsyncServer = struct {
         else
             self.config.thread_count;
 
-        std.debug.print("Starting AsyncServer with {d} threads on http://{s}:{d}\n", .{
+        getLog().infoFmt("AsyncServer starting with {d} threads on http://{s}:{d}", .{
             thread_count, self.config.host, self.config.port,
         });
 
@@ -69,12 +70,20 @@ fn serverLoop(io: *std.Io, server: *AsyncServer, address: std.Io.net.IpAddress, 
     });
     defer listener.deinit();
 
-    std.debug.print("AsyncServer listening on http://{s}:{d}\n", .{ server.config.host, server.config.port });
+    getLog().infoFmt("AsyncServer listening on http://{s}:{d}", .{ server.config.host, server.config.port });
 
+    var accept_backoff: u64 = 1; // ms
     while (true) {
-        // Accept connection - yields in fiber, doesn't block OS thread
-        const conn = try listener.accept();
-        std.debug.print("[AsyncServer] Connection from {}\n", .{conn.address});
+        // Accept connection - yields in fiber, doesn't block OS thread.
+        // Transient errors (e.g. fd exhaustion) get a brief backoff + retry.
+        const conn = listener.accept() catch |err| {
+            getLog().warnFmt("[AsyncServer] Accept error: {}, retrying in {d}ms", .{ err, accept_backoff });
+            io.sleep(std.Io.Duration.fromMilliseconds(accept_backoff), .awake) catch {};
+            accept_backoff = @min(accept_backoff * 2, 1000);
+            continue;
+        };
+        accept_backoff = 1; // reset on success
+        getLog().debugFmt("[AsyncServer] Connection from {}", .{conn.address});
 
         // Spawn connection handler fiber managed by Group (no memory leak)
         conn_group.async(handleConnectionFiber, .{ io, conn, server }) catch |err| {
@@ -106,7 +115,7 @@ fn handleConnectionFiber(io: *std.Io, conn: std.Io.net.Server.Connection, server
         });
 
         // Create context and dispatch to router (errors handled internally)
-        dispatch(request, server) catch {
+        dispatch(request, server, conn.address) catch {
             // Fatal error in dispatch (e.g. OOM), close connection
             break;
         };
@@ -120,7 +129,7 @@ fn handleConnectionFiber(io: *std.Io, conn: std.Io.net.Server.Connection, server
 }
 
 /// Dispatch request to router
-fn dispatch(request: http.Server.Request, server: *AsyncServer) !void {
+fn dispatch(request: http.Server.Request, server: *AsyncServer, remote_addr: std.Io.net.IpAddress) !void {
     const target = request.head.target;
 
     // Strip query string from path for routing
@@ -134,6 +143,7 @@ fn dispatch(request: http.Server.Request, server: *AsyncServer) !void {
 
     // Create context and execute handler
     var ctx = Context.init(&request, server.allocator);
+    ctx.remote_addr = remote_addr;
     defer ctx.deinit();
 
     server.router.execute(path, method, &ctx) catch |err| {

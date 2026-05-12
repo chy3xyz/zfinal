@@ -24,9 +24,9 @@ pub const Captcha = struct {
     }
 
     /// 检查是否过期
-    pub fn isExpired(self: *const Captcha, _: i64) bool {
-        _ = self;
-        return false;
+    pub fn isExpired(self: *const Captcha, ttl: i64) bool {
+        const elapsed = TimeKit.now() - self.created_at;
+        return elapsed > ttl;
     }
 };
 
@@ -102,13 +102,12 @@ pub const CaptchaManager = struct {
                 return false;
             }
 
-            // 不区分大小写比较
+            // Case-insensitive comparison
+            if (user_input.len != val.answer.len) return false;
             const lower_input = try std.ascii.allocLowerString(self.allocator, user_input);
             defer self.allocator.free(lower_input);
-
             const lower_answer = try std.ascii.allocLowerString(self.allocator, val.answer);
             defer self.allocator.free(lower_answer);
-
             return std.mem.eql(u8, lower_input, lower_answer);
         }
 

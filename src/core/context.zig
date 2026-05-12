@@ -1,10 +1,17 @@
 const std = @import("std");
 const params = @import("params.zig");
 
+/// HTTP request/response context. Wraps the raw std.http.Server.Request
+/// with convenience methods for query params, path params, cookies,
+/// headers, attributes, file uploads, and response rendering.
+///
+/// Created per-request by Server/AsyncServer. Call `deinit()` after use.
 pub const Context = struct {
     req: *std.http.Server.Request,
     allocator: std.mem.Allocator,
     res_status: std.http.Status = .ok,
+    /// Remote address of the client (set by Server/AsyncServer at accept time).
+    remote_addr: ?std.Io.net.IpAddress = null,
     query_params: ?std.StringHashMap([]const u8) = null,
     path_params: ?std.StringHashMap([]const u8) = null,
     attributes: std.StringHashMap([]const u8),
@@ -32,13 +39,25 @@ pub const Context = struct {
 
     pub fn deinit(self: *Context) void {
         if (self.query_params) |*qp| {
+            var it = qp.iterator();
+            while (it.next()) |entry| {
+                self.allocator.free(entry.key_ptr.*);
+                self.allocator.free(entry.value_ptr.*);
+            }
             qp.deinit();
         }
         if (self.path_params) |*pp| {
+            // Path params borrow from route/target; only free the map itself.
             pp.deinit();
+        }
+        var attr_it = self.attributes.iterator();
+        while (attr_it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            self.allocator.free(entry.value_ptr.*);
         }
         self.attributes.deinit();
         if (self.cookies) |*c| {
+            // Cookie values borrow from request headers; only free the map.
             c.deinit();
         }
         self.response_cookies.deinit(self.allocator);
@@ -222,9 +241,33 @@ pub const Context = struct {
 
     // === Rendering ===
 
+    fn appendSetCookieHeaders(self: *Context, headers: *std.ArrayList(std.http.Header)) !void {
+        // Pre-build cookie strings on the heap so they outlive the for-loop scope.
+        // The caller must free these after respond() via freeSetCookieDupes.
+        for (self.response_cookies.items) |cookie| {
+            const cookie_value = if (cookie.max_age) |max_age|
+                try std.fmt.allocPrint(self.allocator, "{s}={s}; Path={s}; Max-Age={d}", .{ cookie.name, cookie.value, cookie.path, max_age })
+            else
+                try std.fmt.allocPrint(self.allocator, "{s}={s}; Path={s}", .{ cookie.name, cookie.value, cookie.path });
+
+            try headers.append(self.allocator, .{ .name = "Set-Cookie", .value = cookie_value });
+        }
+    }
+
+    fn freeSetCookieDupes(self: *Context, headers: std.ArrayList(std.http.Header)) void {
+        for (headers.items) |h| {
+            if (std.mem.eql(u8, h.name, "Set-Cookie")) {
+                self.allocator.free(h.value);
+            }
+        }
+    }
+
     pub fn renderText(self: *Context, text: []const u8) !void {
         var headers = std.ArrayList(std.http.Header).empty;
-        defer headers.deinit(self.allocator);
+        defer {
+            self.freeSetCookieDupes(headers);
+            headers.deinit(self.allocator);
+        }
 
         // Add custom headers
         var header_it = self.response_headers.iterator();
@@ -232,16 +275,8 @@ pub const Context = struct {
             try headers.append(self.allocator, .{ .name = entry.key_ptr.*, .value = entry.value_ptr.* });
         }
 
-        // Add Set-Cookie headers
-        for (self.response_cookies.items) |cookie| {
-            var cookie_value_buf: [512]u8 = undefined;
-            const cookie_value = if (cookie.max_age) |max_age|
-                try std.fmt.bufPrint(&cookie_value_buf, "{s}={s}; Path={s}; Max-Age={d}", .{ cookie.name, cookie.value, cookie.path, max_age })
-            else
-                try std.fmt.bufPrint(&cookie_value_buf, "{s}={s}; Path={s}", .{ cookie.name, cookie.value, cookie.path });
-
-            try headers.append(self.allocator, .{ .name = "Set-Cookie", .value = cookie_value });
-        }
+        // Add Set-Cookie headers (heap-allocated, freed in defer above)
+        try self.appendSetCookieHeaders(&headers);
 
         try self.req.respond(text, .{
             .status = self.res_status,
@@ -254,7 +289,10 @@ pub const Context = struct {
         defer self.allocator.free(json);
 
         var headers = std.ArrayList(std.http.Header).empty;
-        defer headers.deinit(self.allocator);
+        defer {
+            self.freeSetCookieDupes(headers);
+            headers.deinit(self.allocator);
+        }
 
         try headers.append(self.allocator, .{ .name = "Content-Type", .value = "application/json" });
 
@@ -264,16 +302,8 @@ pub const Context = struct {
             try headers.append(self.allocator, .{ .name = entry.key_ptr.*, .value = entry.value_ptr.* });
         }
 
-        // Add Set-Cookie headers
-        for (self.response_cookies.items) |cookie| {
-            var cookie_value_buf: [512]u8 = undefined;
-            const cookie_value = if (cookie.max_age) |max_age|
-                try std.fmt.bufPrint(&cookie_value_buf, "{s}={s}; Path={s}; Max-Age={d}", .{ cookie.name, cookie.value, cookie.path, max_age })
-            else
-                try std.fmt.bufPrint(&cookie_value_buf, "{s}={s}; Path={s}", .{ cookie.name, cookie.value, cookie.path });
-
-            try headers.append(self.allocator, .{ .name = "Set-Cookie", .value = cookie_value });
-        }
+        // Add Set-Cookie headers (heap-allocated, freed in defer above)
+        try self.appendSetCookieHeaders(&headers);
 
         try self.req.respond(json, .{
             .status = self.res_status,
@@ -283,7 +313,10 @@ pub const Context = struct {
 
     pub fn renderHtml(self: *Context, html: []const u8) !void {
         var headers = std.ArrayList(std.http.Header).empty;
-        defer headers.deinit(self.allocator);
+        defer {
+            self.freeSetCookieDupes(headers);
+            headers.deinit(self.allocator);
+        }
 
         try headers.append(self.allocator, .{ .name = "Content-Type", .value = "text/html; charset=utf-8" });
 
@@ -293,16 +326,8 @@ pub const Context = struct {
             try headers.append(self.allocator, .{ .name = entry.key_ptr.*, .value = entry.value_ptr.* });
         }
 
-        // Add Set-Cookie headers
-        for (self.response_cookies.items) |cookie| {
-            var cookie_value_buf: [512]u8 = undefined;
-            const cookie_value = if (cookie.max_age) |max_age|
-                try std.fmt.bufPrint(&cookie_value_buf, "{s}={s}; Path={s}; Max-Age={d}", .{ cookie.name, cookie.value, cookie.path, max_age })
-            else
-                try std.fmt.bufPrint(&cookie_value_buf, "{s}={s}; Path={s}", .{ cookie.name, cookie.value, cookie.path });
-
-            try headers.append(self.allocator, .{ .name = "Set-Cookie", .value = cookie_value });
-        }
+        // Add Set-Cookie headers (heap-allocated, freed in defer above)
+        try self.appendSetCookieHeaders(&headers);
 
         try self.req.respond(html, .{
             .status = self.res_status,

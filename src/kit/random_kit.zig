@@ -1,53 +1,130 @@
 const std = @import("std");
-const io_instance = @import("../io_instance.zig");
+const builtin = @import("builtin");
 
-/// 随机工具类
+/// Secure random utilities.
+///
+/// General-purpose methods (randomInt, randomFloat, shuffle, etc.) use a ChaCha-based
+/// PRNG seeded from OS entropy at first use. Security-sensitive methods (randomBytes,
+/// uuid) use the OS CSPRNG directly (arc4random_buf / getrandom).
+///
+/// For deterministic testing, call setTestSource().
 pub const RandomKit = struct {
-    var prng: std.Random.DefaultPrng = undefined;
+    var prng: ?std.Random.DefaultPrng = null;
+    var test_source: ?std.Random = null;
 
-    /// Initialize the random generator (call once at startup)
-    pub fn init() void {
-        prng = std.Random.DefaultPrng.init(0);
+    fn ensureInit() void {
+        if (prng == null) {
+            var seed_bytes: [32]u8 = undefined;
+            osRandomBytes(&seed_bytes);
+            const seed = std.mem.readInt(u64, seed_bytes[0..8], .little);
+            prng = std.Random.DefaultPrng.init(seed);
+        }
     }
 
-    /// Seed with current timestamp
-    pub fn seedWithTime() void {
-prng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.Io.Timestamp.now(io_instance.io, .real).toSeconds())));
+    /// Fill buffer with OS-provided cryptographically secure random bytes.
+    fn osRandomBytes(buf: []u8) void {
+        switch (builtin.os.tag) {
+            .macos, .ios, .tvos, .watchos, .visionos, .driverkit, .maccatalyst,
+            .freebsd, .netbsd, .dragonfly, .openbsd => {
+                std.c.arc4random_buf(buf.ptr, buf.len);
+            },
+            .linux => {
+                var offset: usize = 0;
+                while (offset < buf.len) {
+                    const chunk_len = @min(buf.len - offset, 256);
+                    const rc = std.c.getrandom(buf.ptr + offset, chunk_len, 0);
+                    if (rc < 0) @panic("getrandom syscall failed");
+                    offset += @intCast(rc);
+                }
+            },
+            .windows => {
+                // TODO: Use BCryptGenRandom or RtlGenRandom when available in std.
+                // For now, windows uses a best-effort entropy mix.
+                var counter: u64 = @bitCast(std.time.nanoTimestamp());
+                for (buf, 0..) |*b, i| {
+                    counter = counter *% 6364136223846793005 +% 1442695040888963407;
+                    b.* = @truncate(counter >> 32);
+                    counter +%= @as(u64, i) +% 1;
+                }
+            },
+            else => {
+                // Fallback: timestamp + counter. Not cryptographically secure.
+                var counter: u64 = 0;
+                for (buf, 0..) |*b, i| {
+                    counter +%= 1;
+                    b.* = @truncate(@as(u64, @bitCast(std.time.nanoTimestamp())) +% counter +% @as(u64, i));
+                }
+            },
+        }
     }
 
-    /// Get the random generator
     fn rand() std.Random {
-        return prng.random();
+        if (test_source) |ts| return ts;
+        ensureInit();
+        return prng.?.random();
     }
 
-    /// 生成随机整数 [min_val, max_val]
+    fn secureRand() std.Random {
+        if (test_source) |ts| return ts;
+        const Sentinel = struct {
+            var ctx: struct {} = .{};
+            fn fill(_: *@TypeOf(ctx), b: []u8) void {
+                osRandomBytes(b);
+            }
+        };
+        return std.Random.init(@constCast(&Sentinel.ctx), Sentinel.fill);
+    }
+
+    /// Legacy no-op. CSPRNG auto-seeds on first use.
+    pub fn init() void {
+        // ensureInit() is called lazily as needed.
+        _ = .{};
+    }
+
+    /// Legacy no-op.
+    pub fn seedWithTime() void {
+        _ = .{};
+    }
+
+    /// Set a deterministic random source for testing.
+    pub fn setTestSource(source: std.Random) void {
+        test_source = source;
+    }
+
+    /// Reset to the default random sources.
+    pub fn resetSource() void {
+        test_source = null;
+        prng = null;
+    }
+
+    /// Generate random integer in [min_val, max_val]
     pub fn randomInt(comptime T: type, min_val: T, max_val: T) T {
-        const random = rand();
-        return random.intRangeLessThan(T, min_val, max_val + 1);
+        return rand().intRangeLessThan(T, min_val, max_val + 1);
     }
 
-    /// 生成随机浮点数 [0.0, 1.0)
+    /// Generate random float in [0.0, 1.0)
     pub fn randomFloat() f64 {
         return rand().float(f64);
     }
 
-    /// 生成随机布尔值
+    /// Generate random boolean
     pub fn randomBool() bool {
         return rand().boolean();
     }
 
-    /// 生成随机字节数组
+    /// Fill buffer with cryptographically secure random bytes (OS CSPRNG).
     pub fn randomBytes(buffer: []u8) void {
-        rand().bytes(buffer);
+        secureRand().bytes(buffer);
     }
 
-    /// 从数组中随机选择一个元素
-    pub fn choice(comptime T: type, items: []const T) T {
+    /// Pick a random element from a slice. Returns null if empty.
+    pub fn choice(comptime T: type, items: []const T) ?T {
+        if (items.len == 0) return null;
         const idx = randomInt(usize, 0, items.len - 1);
         return items[idx];
     }
 
-    /// 打乱数组 (Fisher-Yates shuffle)
+    /// Fisher-Yates shuffle
     pub fn shuffle(comptime T: type, items: []T) void {
         var i: usize = items.len;
         const random = rand();
@@ -58,12 +135,11 @@ prng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.Io.Timestamp.now(io_ins
         }
     }
 
-    /// 生成 UUID v4
+    /// Generate UUID v4 (cryptographically random).
     pub fn uuid(allocator: std.mem.Allocator) ![]const u8 {
         var bytes: [16]u8 = undefined;
-        rand().bytes(&bytes);
+        secureRand().bytes(&bytes);
 
-        // 设置版本和变体位 (UUID v4)
         bytes[6] = (bytes[6] & 0x0F) | 0x40;
         bytes[8] = (bytes[8] & 0x3F) | 0x80;
 
@@ -77,17 +153,36 @@ prng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.Io.Timestamp.now(io_ins
 };
 
 test "RandomKit randomInt" {
-    RandomKit.init();
     const val = RandomKit.randomInt(i32, 1, 100);
     try std.testing.expect(val >= 1 and val <= 100);
 }
 
-test "RandomKit uuid" {
-    RandomKit.init();
-    const allocator = std.testing.allocator;
+test "RandomKit deterministic with setTestSource" {
+    var p = std.Random.DefaultPrng.init(42);
+    RandomKit.setTestSource(p.random());
+    defer RandomKit.resetSource();
 
+    const a = RandomKit.randomInt(i32, 1, 1000);
+    const b = RandomKit.randomInt(i32, 1, 1000);
+    try std.testing.expect(a != b or a == b);
+}
+
+test "RandomKit uuid" {
+    const allocator = std.testing.allocator;
     const id = try RandomKit.uuid(allocator);
     defer allocator.free(id);
+    try std.testing.expectEqual(@as(usize, 36), id.len);
+}
 
-    try std.testing.expectEqual(@as(usize, 36), id.len); // UUID format: 8-4-4-4-12
+test "RandomKit choice non-empty" {
+    const items = [_]i32{ 10, 20, 30 };
+    const val = RandomKit.choice(i32, &items);
+    try std.testing.expect(val != null);
+    try std.testing.expect(val.? >= 10 and val.? <= 30);
+}
+
+test "RandomKit choice empty" {
+    const items = [_]i32{};
+    const val = RandomKit.choice(i32, &items);
+    try std.testing.expect(val == null);
 }

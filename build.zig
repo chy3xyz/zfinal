@@ -32,6 +32,13 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // --- Log level build option ---
+    const log_level = b.option(
+        []const u8,
+        "log-level",
+        "Minimum log level: debug, info, warn, err (default: info)",
+    ) orelse "info";
+
     // Define the zfinal module
     const zfinal_mod = b.addModule("zfinal", .{
         .root_source_file = b.path("src/main.zig"),
@@ -40,6 +47,11 @@ pub fn build(b: *std.Build) void {
     });
     zfinal_mod.link_libc = true;
     zfinal_mod.linkSystemLibrary("sqlite3", .{});
+
+    // Inject compile-time log level via a generated options module
+    const log_opts = b.addOptions();
+    log_opts.addOption([]const u8, "log_level", log_level);
+    zfinal_mod.addImport("build_options", log_opts.createModule());
 
     // Tests
     const lib_unit_tests = b.addTest(.{
@@ -57,6 +69,7 @@ pub fn build(b: *std.Build) void {
     addExample(b, zfinal_mod, "edge", "examples/edge/main.zig", "Run edge computing demo");
     addExample(b, zfinal_mod, "auth", "examples/auth/main.zig", "Run auth demo");
     addExample(b, zfinal_mod, "captcha", "examples/captcha/main.zig", "Run captcha demo");
+    addExample(b, zfinal_mod, "production", "examples/production/main.zig", "Run production example");
 
     // PocketBase demo (more complex, has its own src/ tree)
     const pb_mod = b.createModule(.{
