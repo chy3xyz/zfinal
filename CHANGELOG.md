@@ -22,7 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Plugin maturity tiers**: Stable/stub/experimental classification in README.
 
 ### Changed
-- **ThreadPool**: Workers now use blocking `pop()` with condition variable instead of busy-spinning (100% CPU idle → near-zero).
+- **Server architecture**: Merged SyncServer + AsyncServer into a single fiber-based async server. Uses `Io.Threaded` + `Group.async` with error-isolation pattern. Zero heap allocation per connection. Keep-alive support. Removed `async_server.zig`.
+- **ThreadPool**: Workers now use blocking `pop()` with condition variable instead of busy-spinning (100% CPU idle → near-zero). ThreadPool remains as standalone utility for CPU-bound tasks.
 - **Logger**: Replaced all `std.debug.print` calls in core modules with structured Logger calls.
 - **Rate limiter**: Uses real socket address by default; proxy headers require explicit `trust_proxy_headers = true`.
 - **FileKit**: Added `validatePath()` for path traversal prevention.
