@@ -224,7 +224,7 @@ const uptime = metrics.uptime();
 | Cron | ✅ Stable | Cron expression parser, job scheduling |
 | PostgreSQL | 🔧 Opt-in | Full libpq driver in `drivers/` — requires `libpq` |
 | MySQL | 🔧 Opt-in | Full mysqlclient driver in `drivers/` — requires `libmysqlclient` |
-| Cache (Redis) | 🟡 Stub | Redis backend — API defined, network layer pending |
+| Cache (Redis) | ✅ Stable | Full Redis client with RESP protocol over TCP |
 | MQTT | 🟡 Stub | MQTT 3.1.1 client — IoT protocol, not core framework |
 | Agent (MCP) | 🔧 Experimental | Model Context Protocol agent — early development |
 | P2P | 🔧 Experimental | Peer-to-peer networking — early development |
@@ -279,7 +279,7 @@ Security hardening, structured logging, health endpoints, concurrency fixes, tem
 
 ### v0.4 (next) — Ecosystem & Polish
 
-- [ ] Redis client network implementation
+- [x] Redis client network implementation (RESP protocol, TCP)
 - [ ] Template engine: advanced filters, macros
 - [ ] WebSocket: frame fragmentation, ping/pong
 - [ ] Admin dashboard (metrics, health, recent errors)

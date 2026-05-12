@@ -60,11 +60,10 @@ fn echoHandler(ws: *zfinal.WebSocket) !void {
         };
         defer frame.deinit();
 
+        // receive() handles ping/pong/close internally; only text/binary frames are returned
         switch (frame.opcode) {
             .text => {
                 std.debug.print("Received: {s}\n", .{frame.payload});
-
-                // Echo 回消息
                 var response_buf: [1024]u8 = undefined;
                 const response = try std.fmt.bufPrint(&response_buf, "Echo: {s}", .{frame.payload});
                 try ws.sendText(response);
@@ -72,13 +71,6 @@ fn echoHandler(ws: *zfinal.WebSocket) !void {
             .binary => {
                 std.debug.print("Received binary: {} bytes\n", .{frame.payload.len});
                 try ws.sendBinary(frame.payload);
-            },
-            .ping => {
-                try ws.sendPong(frame.payload);
-            },
-            .close => {
-                std.debug.print("Close frame received\n", .{});
-                break;
             },
             else => {},
         }

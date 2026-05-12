@@ -121,83 +121,87 @@ pub const WebSocket = struct {
     allocator: std.mem.Allocator,
     stream: std.Io.net.Stream,
     closed: bool = false,
+    close_sent: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, stream: std.Io.net.Stream) WebSocket {
-        return WebSocket{
-            .allocator = allocator,
-            .stream = stream,
-        };
+        return .{ .allocator = allocator, .stream = stream };
+    }
+
+    fn writeFrame(self: *WebSocket, opcode: OpCode, data: []const u8) !void {
+        if (self.closed) return error.ConnectionClosed;
+        const frame = Frame{ .fin = true, .opcode = opcode, .masked = false, .payload = data, .allocator = self.allocator };
+        const encoded = try frame.encode(self.allocator);
+        defer self.allocator.free(encoded);
+        var write_buf: [4096]u8 = undefined;
+        var writer = self.stream.writer(io_instance.io, &write_buf);
+        try writer.interface.writeAll(encoded);
     }
 
     /// 发送文本消息
     pub fn sendText(self: *WebSocket, text: []const u8) !void {
-        const frame = Frame{
-            .fin = true,
-            .opcode = .text,
-            .masked = false,
-            .payload = text,
-            .allocator = self.allocator,
-        };
-
-        const encoded = try frame.encode(self.allocator);
-        defer self.allocator.free(encoded);
-
-        var write_buf: [4096]u8 = undefined;
-        var writer = self.stream.writer(io_instance.io, &write_buf);
-        try writer.interface.writeAll(encoded);
+        try self.writeFrame(.text, text);
     }
 
     /// 发送二进制消息
     pub fn sendBinary(self: *WebSocket, data: []const u8) !void {
-        const frame = Frame{
-            .fin = true,
-            .opcode = .binary,
-            .masked = false,
-            .payload = data,
-            .allocator = self.allocator,
-        };
-
-        const encoded = try frame.encode(self.allocator);
-        defer self.allocator.free(encoded);
-
-        var write_buf: [4096]u8 = undefined;
-        var writer = self.stream.writer(io_instance.io, &write_buf);
-        try writer.interface.writeAll(encoded);
+        try self.writeFrame(.binary, data);
     }
 
-    /// 发送 Pong
-    pub fn sendPong(self: *WebSocket, data: []const u8) !void {
-        const frame = Frame{
-            .fin = true,
-            .opcode = .pong,
-            .masked = false,
-            .payload = data,
-            .allocator = self.allocator,
-        };
-
-        const encoded = try frame.encode(self.allocator);
-        defer self.allocator.free(encoded);
-
-        var write_buf: [4096]u8 = undefined;
-        var writer = self.stream.writer(io_instance.io, &write_buf);
-        try writer.interface.writeAll(encoded);
+    /// 发送 Ping (best-effort, errors silently ignored)
+    pub fn sendPing(self: *WebSocket, data: []const u8) void {
+        self.writeFrame(.ping, data) catch {};
     }
 
-    /// 接收消息
+    /// 发送 Pong (best-effort, errors silently ignored)
+    pub fn sendPong(self: *WebSocket, data: []const u8) void {
+        self.writeFrame(.pong, data) catch {};
+    }
+
+    /// Send close frame with status code and optional reason.
+    pub fn sendClose(self: *WebSocket, code: u16, reason: []const u8) void {
+        if (self.close_sent) return;
+        self.close_sent = true;
+
+        var buf: [125]u8 = undefined;
+        std.mem.writeInt(u16, buf[0..2], code, .big);
+        const len = @min(reason.len, buf.len - 2);
+        @memcpy(buf[2..][0..len], reason[0..len]);
+        self.writeFrame(.close, buf[0 .. 2 + len]) catch {};
+    }
+
+    /// 接收消息. Returns Frame on success. Caller must frame.deinit().
+    /// Returns null for control frames (ping/pong/close) that are handled internally.
     pub fn receive(self: *WebSocket) !Frame {
-        var buffer: [8192]u8 = undefined;
-        var read_buf: [8192]u8 = undefined;
-        var reader = self.stream.reader(io_instance.io, &read_buf);
-        const n = reader.interface.readSliceShort(&buffer) catch |err| switch (err) {
-            error.ReadFailed => return reader.err.?,
-        };
+        while (true) {
+            var buf: [8192]u8 = undefined;
+            var read_buf: [8192]u8 = undefined;
+            var reader = self.stream.reader(io_instance.io, &read_buf);
+            const n = reader.interface.readSliceShort(&buf) catch |err| switch (err) {
+                error.ReadFailed => return reader.err.?,
+            };
+            if (n == 0) { self.closed = true; return error.ConnectionClosed; }
 
-        if (n == 0) {
-            self.closed = true;
-            return error.ConnectionClosed;
+            var frame = try Frame.parse(buf[0..n], self.allocator);
+
+            switch (frame.opcode) {
+                .ping => {
+                    self.sendPong(frame.payload);
+                    frame.deinit();
+                    continue;
+                },
+                .pong => {
+                    frame.deinit();
+                    continue;
+                },
+                .close => {
+                    self.sendClose(1000, "");
+                    self.close();
+                    frame.deinit();
+                    return error.ConnectionClosed;
+                },
+                else => return frame,
+            }
         }
-
-        return try Frame.parse(buffer[0..n], self.allocator);
     }
 
     /// 关闭连接
