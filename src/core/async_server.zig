@@ -55,7 +55,7 @@ pub const AsyncServer = struct {
         var conn_group = std.Io.Group.init(io);
         defer conn_group.await();
 
-        const address = try std.Io.net.IpAddress.parseIp(self.config.host, self.config.port);
+        const address = try std.Io.net.IpAddress.parseIp4(self.config.host, self.config.port);
 
         try io.run(serverLoop, .{ io, self, address, &conn_group });
     }
@@ -105,11 +105,9 @@ fn handleConnectionFiber(io: *std.Io, conn: std.Io.net.Server.Connection, server
             @tagName(request.head.method), request.head.target, conn.address,
         });
 
-        // Create context and dispatch to router
-        dispatch(request, server) catch |err| {
-            std.debug.print("[AsyncServer] Dispatch error: {} for {} {}\n", .{
-                err, @tagName(request.head.method), request.head.target,
-            });
+        // Create context and dispatch to router (errors handled internally)
+        dispatch(request, server) catch {
+            // Fatal error in dispatch (e.g. OOM), close connection
             break;
         };
 
@@ -134,24 +132,15 @@ fn dispatch(request: http.Server.Request, server: *AsyncServer) !void {
     // Get HTTP method
     const method = HttpMethod.fromString(@tagName(request.head.method)) orelse .GET;
 
-    // Find matching route
-    const route = server.router.match(path, method) orelse {
-        request.respond("Not Found", .{
-            .status = .not_found,
-            .content_type = .plain,
-        }) catch {};
-        return;
-    };
-
-    // Create context
+    // Create context and execute handler
     var ctx = Context.init(&request, server.allocator);
     defer ctx.deinit();
 
-    // Extract path parameters
-    if (route.param_names.len > 0) {
-        ctx.path_params = try route.extractParams(path, server.allocator);
-    }
-
-    // Execute interceptors and handler
-    try server.router.execute(path, method, &ctx);
+    server.router.execute(path, method, &ctx) catch |err| {
+        std.debug.print("[AsyncServer] Handler error: {} for {} {}\n", .{
+            err, @tagName(request.head.method), target,
+        });
+        ctx.res_status = .internal_server_error;
+        ctx.renderText("Internal Server Error") catch {};
+    };
 }

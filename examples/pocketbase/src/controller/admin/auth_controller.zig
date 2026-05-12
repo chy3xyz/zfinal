@@ -61,10 +61,10 @@ pub fn login(ctx: *zfinal.Context) !void {
     var hash_str: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(password, &hash_str, .{});
     var hash_buf: [64]u8 = undefined;
-    const password_hash = std.fmt.bufPrint(&hash_buf, "{s}", .{std.fmt.fmtSliceHexLower(&hash_str)}) catch "";
+    const password_hash = std.fmt.bufPrint(&hash_buf, "{s}", .{std.fmt.bytesToHex(&hash_str, .lower)}) catch "";
 
     const db = getDb();
-    const sql = try std.fmt.allocPrintZ(State.global_state.?.allocator, "SELECT id FROM _admins WHERE email = '{s}' AND password_hash = '{s}' LIMIT 1", .{ email, password_hash });
+    const sql = try std.fmt.allocPrintSentinel(State.global_state.?.allocator, "SELECT id FROM _admins WHERE email = '{s}' AND password_hash = '{s}' LIMIT 1", .{ email, password_hash }, 0);
     defer State.global_state.?.allocator.free(sql);
 
     var rs = try db.query(sql);

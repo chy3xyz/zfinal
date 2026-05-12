@@ -130,7 +130,7 @@ pub const TokenManager = struct {
 
     /// 设置 TTL
     pub fn setTTL(self: *TokenManager, ttl: i64) void {
-        self.default_ttl = ttl;
+        self.default_ = ttl;
     }
 
     /// 获取 Token 数量

@@ -16,33 +16,47 @@ const Command = enum {
     help,
 };
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+var io: std.Io = undefined;
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+pub fn main(init: std.process.Init) !void {
+    io = init.io;
+    const allocator = init.gpa;
 
-    if (args.len < 2) {
-        printHelp(args[0]);
+    var args_iter = init.minimal.args.iterate();
+    defer args_iter.deinit();
+
+    const argv0 = args_iter.next() orelse {
+        std.debug.print("Usage: zf <command>\n", .{});
         return;
-    }
+    };
 
-    const command_str = args[1];
+    // Collect remaining args for compatibility with existing code
+    var args_list = std.ArrayList([]const u8).empty;
+    defer args_list.deinit(allocator);
+    try args_list.append(allocator, argv0);
+    while (args_iter.next()) |arg| {
+        try args_list.append(allocator, arg);
+    }
+    const args = args_list.items;
+
+    const command_str = if (args.len > 1) args[1] else {
+        printHelp(argv0);
+        return;
+    };
+
     const command = parseCommand(command_str) orelse {
         std.debug.print("Unknown command: {s}\n\n", .{command_str});
-        printHelp(args[0]);
+        printHelp(argv0);
         return;
     };
 
     switch (command) {
         .new => {
-            if (args.len < 3) {
-                std.debug.print("Usage: {s} new <project_name>\n", .{args[0]});
+            const project_name = args_iter.next() orelse {
+                std.debug.print("Usage: {s} new <project_name>\n", .{argv0});
                 return;
-            }
-            try createProject(allocator, args[2]);
+            };
+            try createProject(allocator, project_name);
         },
         .generate => {
             if (args.len < 3) {
@@ -83,14 +97,13 @@ pub fn main() !void {
         },
         .build_cmd => {
             std.debug.print("Building release binary...\n", .{});
-            const result = try std.process.Child.run(.{
-                .allocator = allocator,
+            const result = try std.process.run(allocator, io, .{
                 .argv = &[_][]const u8{ "zig", "build", "-Doptimize=ReleaseSafe" },
             });
             defer allocator.free(result.stdout);
             defer allocator.free(result.stderr);
 
-            if (result.term.Exited == 0) {
+            if (result.term == .exited and result.term.exited == 0) {
                 std.debug.print("✅ Build successful! Binary: zig-out/bin/<app_name>\n", .{});
             } else {
                 std.debug.print("❌ Build failed:\n{s}\n", .{result.stderr});
@@ -164,12 +177,12 @@ fn printHelp(exe_name: []const u8) void {
 }
 
 fn createProject(allocator: std.mem.Allocator, project_name: []const u8) !void {
-    const cwd = std.fs.cwd();
+    const cwd = std.Io.Dir.cwd();
 
     // Create project directory
-    try cwd.makeDir(project_name);
-    var project_dir = try cwd.openDir(project_name, .{});
-    defer project_dir.close();
+    try cwd.createDirPath(io, project_name);
+    var project_dir = try cwd.openDir(io, project_name, .{});
+    defer project_dir.close(io);
 
     std.debug.print("Creating project: {s}\n", .{project_name});
 
@@ -184,37 +197,37 @@ fn createProject(allocator: std.mem.Allocator, project_name: []const u8) !void {
     try writeFile(project_dir, "build.zig.zon", build_zon_content);
 
     // Create src directory
-    try project_dir.makeDir("src");
-    var src_dir = try project_dir.openDir("src", .{});
-    defer src_dir.close();
+    try project_dir.createDirPath(io, "src");
+    var src_dir = try project_dir.openDir(io, "src", .{});
+    defer src_dir.close(io);
 
     // src/main.zig
     try writeFile(src_dir, "main.zig", templates.main_zig);
 
     // src/config
-    try src_dir.makeDir("config");
-    var config_dir = try src_dir.openDir("config", .{});
-    defer config_dir.close();
+    try src_dir.createDirPath(io, "config");
+    var config_dir = try src_dir.openDir(io, "config", .{});
+    defer config_dir.close(io);
     try writeFile(config_dir, "config.zig", templates.config_config_zig);
     try writeFile(config_dir, "routes.zig", templates.config_routes_zig);
     try writeFile(config_dir, "db_init.zig", templates.config_db_init_zig);
 
     // src/controller
-    try src_dir.makeDir("controller");
-    var controller_dir = try src_dir.openDir("controller", .{});
-    defer controller_dir.close();
+    try src_dir.createDirPath(io, "controller");
+    var controller_dir = try src_dir.openDir(io, "controller", .{});
+    defer controller_dir.close(io);
     try writeFile(controller_dir, "index_controller.zig", templates.controller_index_controller_zig);
 
     // src/model
-    try src_dir.makeDir("model");
-    var model_dir = try src_dir.openDir("model", .{});
-    defer model_dir.close();
+    try src_dir.createDirPath(io, "model");
+    var model_dir = try src_dir.openDir(io, "model", .{});
+    defer model_dir.close(io);
     try writeFile(model_dir, "user.zig", templates.model_user_zig);
 
     // src/interceptor
-    try src_dir.makeDir("interceptor");
-    var interceptor_dir = try src_dir.openDir("interceptor", .{});
-    defer interceptor_dir.close();
+    try src_dir.createDirPath(io, "interceptor");
+    var interceptor_dir = try src_dir.openDir(io, "interceptor", .{});
+    defer interceptor_dir.close(io);
     try writeFile(interceptor_dir, "interceptors.zig", templates.interceptor_interceptors_zig);
 
     std.debug.print("✅ Project '{s}' created successfully!\n", .{project_name});
@@ -247,7 +260,7 @@ fn generateCode(allocator: std.mem.Allocator, gen_type: []const u8, name: []cons
 
 fn generateController(allocator: std.mem.Allocator, name: []const u8, is_api: bool) !void {
     // Check if src/controller directory exists
-    std.fs.cwd().access("src/controller", .{}) catch {
+    std.Io.Dir.cwd().access(io, "src/controller", .{}) catch {
         std.debug.print("Error: src/controller directory not found. Are you in a ZFinal project?\n", .{});
         return;
     };
@@ -330,21 +343,21 @@ fn generateController(allocator: std.mem.Allocator, name: []const u8, is_api: bo
     , .{ controller_type_comment, controller_name, name_lower, name_lower, name_lower, name_lower, name_lower, name_lower, name_lower, name_lower, name_lower, name_lower });
     defer allocator.free(content);
 
-    try std.fs.cwd().writeFile(.{ .sub_path = filename, .data = content });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = filename, .data = content });
     const mode_str = if (is_api) "API" else "HTMX";
     std.debug.print("✅ Generated {s} controller: {s}\n", .{ mode_str, filename });
 
     if (!is_api) {
         // Generate HTMX template
         const templates_path = "src/templates";
-        std.fs.cwd().makeDir(templates_path) catch |err| {
+        std.Io.Dir.cwd().createDirPath(io, templates_path) catch |err| {
             if (err != error.PathAlreadyExists) return err;
         };
 
         const view_dir_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ templates_path, name_lower });
         defer allocator.free(view_dir_path);
 
-        std.fs.cwd().makeDir(view_dir_path) catch |err| {
+        std.Io.Dir.cwd().createDirPath(io, view_dir_path) catch |err| {
             if (err != error.PathAlreadyExists) return err;
         };
 
@@ -367,14 +380,14 @@ fn generateController(allocator: std.mem.Allocator, name: []const u8, is_api: bo
         , .{ name_lower, controller_name, name_lower, name_lower, controller_name });
         defer allocator.free(view_content);
 
-        try std.fs.cwd().writeFile(.{ .sub_path = view_file_path, .data = view_content });
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = view_file_path, .data = view_content });
         std.debug.print("✅ Generated HTMX template: {s}\n", .{view_file_path});
     }
 }
 
 fn generateModel(allocator: std.mem.Allocator, name: []const u8) !void {
     // Check if src/model directory exists
-    std.fs.cwd().access("src/model", .{}) catch {
+    std.Io.Dir.cwd().access(io, "src/model", .{}) catch {
         std.debug.print("Error: src/model directory not found. Are you in a ZFinal project?\n", .{});
         return;
     };
@@ -405,13 +418,13 @@ fn generateModel(allocator: std.mem.Allocator, name: []const u8) !void {
     , .{ model_name, model_name, model_name, table_name });
     defer allocator.free(content);
 
-    try std.fs.cwd().writeFile(.{ .sub_path = filename, .data = content });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = filename, .data = content });
     std.debug.print("✅ Generated: {s}\n", .{filename});
 }
 
 fn generateInterceptor(allocator: std.mem.Allocator, name: []const u8) !void {
     // Check if src/interceptor directory exists
-    std.fs.cwd().access("src/interceptor", .{}) catch {
+    std.Io.Dir.cwd().access(io, "src/interceptor", .{}) catch {
         std.debug.print("Error: src/interceptor directory not found. Are you in a ZFinal project?\n", .{});
         return;
     };
@@ -447,14 +460,14 @@ fn generateInterceptor(allocator: std.mem.Allocator, name: []const u8) !void {
     , .{ name_lower, interceptor_name, name_lower, interceptor_name, interceptor_name, name_lower, name_lower, name_lower });
     defer allocator.free(content);
 
-    try std.fs.cwd().writeFile(.{ .sub_path = filename, .data = content });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = filename, .data = content });
     std.debug.print("✅ Generated: {s}\n", .{filename});
 }
 
-fn writeFile(dir: std.fs.Dir, path: []const u8, content: []const u8) !void {
-    const file = try dir.createFile(path, .{});
-    defer file.close();
-    try file.writeAll(content);
+fn writeFile(dir: std.Io.Dir, path: []const u8, content: []const u8) !void {
+    const file = try dir.createFile(io, path, .{});
+    defer file.close(io);
+    try file.writeStreamingAll(io, content);
 }
 
 fn capitalizeOwned(allocator: std.mem.Allocator, str: []const u8) ![]const u8 {
@@ -473,11 +486,11 @@ fn handleMigrate(allocator: std.mem.Allocator, action: []const u8, name: []const
         }
 
         const migrations_dir = "migrations";
-        std.fs.cwd().makeDir(migrations_dir) catch |err| {
+        std.Io.Dir.cwd().createDirPath(io, migrations_dir) catch |err| {
             if (err != error.PathAlreadyExists) return err;
         };
 
-        const timestamp = std.time.timestamp();
+        const timestamp = std.Io.Timestamp.now(io, .real).toSeconds();
         const filename = try std.fmt.allocPrint(allocator, "{s}/{d}_{s}.sql", .{ migrations_dir, timestamp, name });
         defer allocator.free(filename);
 
@@ -499,7 +512,7 @@ fn handleMigrate(allocator: std.mem.Allocator, action: []const u8, name: []const
         const file_content = try std.fmt.allocPrint(allocator, content, .{ name, timestamp, name, name });
         defer allocator.free(file_content);
 
-        try std.fs.cwd().writeFile(.{ .sub_path = filename, .data = file_content });
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = filename, .data = file_content });
         std.debug.print("✅ Created migration: {s}\n", .{filename});
     } else if (std.mem.eql(u8, action, "run")) {
         std.debug.print("Running migrations...\n", .{});
@@ -514,7 +527,7 @@ fn handleMigrate(allocator: std.mem.Allocator, action: []const u8, name: []const
 
 fn generateTest(allocator: std.mem.Allocator, name: []const u8) !void {
     const test_dir = "test";
-    std.fs.cwd().makeDir(test_dir) catch |err| {
+    std.Io.Dir.cwd().createDirPath(io, test_dir) catch |err| {
         if (err != error.PathAlreadyExists) return err;
     };
 
@@ -532,8 +545,8 @@ fn generateTest(allocator: std.mem.Allocator, name: []const u8) !void {
         \\test "{s} basic functionality" {{
         \\    // Setup
         \\    var gpa = std.heap.GeneralPurposeAllocator(.{{}}){{}};
-        \\    defer _ = gpa.deinit();
-        \\    const allocator = gpa.allocator();
+        \\    
+        \\    const allocator = std.heap.smp_allocator;
         \\
         \\    // Test logic here
         \\    try testing.expect(true);
@@ -542,7 +555,7 @@ fn generateTest(allocator: std.mem.Allocator, name: []const u8) !void {
     , .{name});
     defer allocator.free(content);
 
-    try std.fs.cwd().writeFile(.{ .sub_path = filename, .data = content });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = filename, .data = content });
     std.debug.print("✅ Generated test file: {s}\n", .{filename});
 }
 
@@ -569,7 +582,7 @@ fn generateDocker(allocator: std.mem.Allocator) !void {
         \\
     ;
 
-    try std.fs.cwd().writeFile(.{ .sub_path = "Dockerfile", .data = dockerfile_content });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = "Dockerfile", .data = dockerfile_content });
     std.debug.print("✅ Generated Dockerfile\n", .{});
 
     const dockerignore_content =
@@ -581,7 +594,7 @@ fn generateDocker(allocator: std.mem.Allocator) !void {
         \\
     ;
 
-    try std.fs.cwd().writeFile(.{ .sub_path = ".dockerignore", .data = dockerignore_content });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ".dockerignore", .data = dockerignore_content });
     std.debug.print("✅ Generated .dockerignore\n", .{});
 }
 
@@ -589,7 +602,7 @@ fn handleDeploy(allocator: std.mem.Allocator) !void {
     const deploy_script = "deploy.sh";
 
     // Check if deploy script exists
-    std.fs.cwd().access(deploy_script, .{}) catch {
+    std.Io.Dir.cwd().access(io, deploy_script, .{}) catch {
         // Create default deploy script if not exists
         const content =
             \\#!/bin/bash
@@ -607,11 +620,10 @@ fn handleDeploy(allocator: std.mem.Allocator) !void {
             \\echo "Deployment script finished."
             \\
         ;
-        try std.fs.cwd().writeFile(.{ .sub_path = deploy_script, .data = content });
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = deploy_script, .data = content });
 
         // Make executable
-        _ = try std.process.Child.run(.{
-            .allocator = allocator,
+        _ = try std.process.run(allocator, io, .{
             .argv = &[_][]const u8{ "chmod", "+x", deploy_script },
         });
 
@@ -622,8 +634,7 @@ fn handleDeploy(allocator: std.mem.Allocator) !void {
 
     // Run existing deploy script
     std.debug.print("Running deployment script...\n", .{});
-    const result = try std.process.Child.run(.{
-        .allocator = allocator,
+    const result = try std.process.run(allocator, io, .{
         .argv = &[_][]const u8{"./deploy.sh"},
     });
     defer allocator.free(result.stdout);
@@ -638,7 +649,7 @@ fn handleDeploy(allocator: std.mem.Allocator) !void {
 fn generatePlugin(allocator: std.mem.Allocator, name: []const u8) !void {
     // Check if src/plugin directory exists
     const plugin_dir = "src/plugin";
-    std.fs.cwd().makeDir(plugin_dir) catch |err| {
+    std.Io.Dir.cwd().createDirPath(io, plugin_dir) catch |err| {
         if (err != error.PathAlreadyExists) return err;
     };
 
@@ -702,7 +713,7 @@ fn generatePlugin(allocator: std.mem.Allocator, name: []const u8) !void {
         , .{ plugin_name, plugin_name, plugin_name, plugin_name, plugin_name, plugin_name, plugin_name, plugin_name });
         defer allocator.free(content);
 
-        try std.fs.cwd().writeFile(.{ .sub_path = filename, .data = content });
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = filename, .data = content });
         std.debug.print("✅ Generated generic plugin: {s}\n", .{filename});
     }
 }
@@ -715,12 +726,12 @@ fn copyPluginFile(allocator: std.mem.Allocator, filename: []const u8) !void {
     const src_path = try std.fmt.allocPrint(allocator, "src/plugin/{s}", .{filename});
     defer allocator.free(src_path);
 
-    std.fs.cwd().access(src_path, .{}) catch {
+    std.Io.Dir.cwd().access(io, src_path, .{}) catch {
         std.debug.print("⚠️  Could not find source plugin file: {s}\n", .{src_path});
         std.debug.print("Please ensure you are running this from the ZFinal repository root for now.\n", .{});
         return;
     };
 
-    try std.fs.cwd().copyFile(src_path, std.fs.cwd(), dest_path, .{});
+    try std.Io.Dir.cwd().copyFile(src_path, std.Io.Dir.cwd(), dest_path, io, .{});
     std.debug.print("✅ Installed plugin: {s}\n", .{dest_path});
 }

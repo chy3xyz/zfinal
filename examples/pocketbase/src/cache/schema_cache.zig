@@ -29,31 +29,31 @@ pub const SchemaCache = struct {
         }
 
         // Fetch from DB
-        const sql = try std.fmt.allocPrintZ(self.allocator, "PRAGMA table_info({s})", .{table});
+        const sql = try std.fmt.allocPrintSentinel(self.allocator, "PRAGMA table_info({s})", .{table}, 0);
         defer self.allocator.free(sql);
 
         var rs = try db.query(sql);
         defer rs.deinit();
 
         // Build schema JSON
-        var schema_json = std.ArrayList(u8).init(self.allocator);
+        var schema_json = std.ArrayList(u8).empty;
         defer schema_json.deinit();
 
-        try schema_json.writer().writeAll("[");
+        try schema_json.appendSlice(ctx.allocator, "[");
         var first = true;
 
         while (rs.next()) {
-            if (!first) try schema_json.writer().writeAll(",");
+            if (!first) try schema_json.appendSlice(ctx.allocator, ",");
             first = false;
 
             const row = rs.getCurrentRowMap().?;
-            try schema_json.writer().writeAll("{");
-            try schema_json.writer().print("\"name\":\"{s}\",", .{row.get("name").?});
-            try schema_json.writer().print("\"type\":\"{s}\"", .{row.get("type").?});
-            try schema_json.writer().writeAll("}");
+            try schema_json.appendSlice(ctx.allocator, "{");
+            try schema_json.print(ctx.allocator, "\"name\":\"{s}\",", .{row.get("name").?});
+            try schema_json.print(ctx.allocator, "\"type\":\"{s}\"", .{row.get("type").?});
+            try schema_json.appendSlice(ctx.allocator, "}");
         }
 
-        try schema_json.writer().writeAll("]");
+        try schema_json.appendSlice(ctx.allocator, "]");
 
         const schema_str = try schema_json.toOwnedSlice();
 

@@ -37,13 +37,13 @@ pub const BaseModel = struct {
 
     /// Get schema for this table
     pub fn getSchema(self: *const BaseModel) !Schema {
-        const sql = try std.fmt.allocPrintZ(self.allocator, "PRAGMA table_info({s})", .{self.table_name});
+        const sql = try std.fmt.allocPrintSentinel(self.allocator, "PRAGMA table_info({s})", .{self.table_name}, 0);
         defer self.allocator.free(sql);
 
         var rs = try self.db.query(sql);
         defer rs.deinit();
 
-        var columns = std.ArrayList(ColumnInfo).init(self.allocator);
+        var columns = std.ArrayList(ColumnInfo).empty;
         defer columns.deinit();
 
         while (rs.next()) {
@@ -67,11 +67,11 @@ pub const BaseModel = struct {
 
     /// Find record by ID
     pub fn findById(self: *const BaseModel, id: []const u8) !?zfinal.ResultSet {
-        const query = try std.fmt.allocPrintZ(
+        const query = try std.fmt.allocPrintSentinel(
             self.allocator,
             "SELECT * FROM {s} WHERE id = '{s}' LIMIT 1",
-            .{ self.table_name, id },
-        );
+            .{ self.table_name, id }, 0);
+        
         defer self.allocator.free(query);
 
         return try self.db.query(query);
@@ -79,11 +79,11 @@ pub const BaseModel = struct {
 
     /// Find all records with limit
     pub fn findAll(self: *const BaseModel, limit: usize) !zfinal.ResultSet {
-        const sql = try std.fmt.allocPrintZ(
+        const sql = try std.fmt.allocPrintSentinel(
             self.allocator,
             "SELECT * FROM {s} ORDER BY created_at DESC LIMIT {d}",
-            .{ self.table_name, limit },
-        );
+            .{ self.table_name, limit }, 0);
+        
         defer self.allocator.free(sql);
 
         return try self.db.query(sql);
@@ -91,11 +91,11 @@ pub const BaseModel = struct {
 
     /// Delete record by ID
     pub fn deleteById(self: *const BaseModel, id: []const u8) !void {
-        const sql = try std.fmt.allocPrintZ(
+        const sql = try std.fmt.allocPrintSentinel(
             self.allocator,
             "DELETE FROM {s} WHERE id = '{s}'",
-            .{ self.table_name, id },
-        );
+            .{ self.table_name, id }, 0);
+        
         defer self.allocator.free(sql);
 
         try self.db.exec(sql);
@@ -103,11 +103,11 @@ pub const BaseModel = struct {
 
     /// Count total records
     pub fn count(self: *const BaseModel) !i64 {
-        const sql = try std.fmt.allocPrintZ(
+        const sql = try std.fmt.allocPrintSentinel(
             self.allocator,
             "SELECT COUNT(*) as count FROM {s}",
-            .{self.table_name},
-        );
+            .{self.table_name}, 0);
+        
         defer self.allocator.free(sql);
 
         var rs = try self.db.query(sql);

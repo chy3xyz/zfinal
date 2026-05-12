@@ -233,7 +233,7 @@ pub const CaptchaManager = struct {
 
     /// 设置 TTL
     pub fn setTTL(self: *CaptchaManager, ttl: i64) void {
-        self.default_ttl = ttl;
+        self.default_ = ttl;
     }
 
     /// 设置验证码长度
@@ -243,21 +243,23 @@ pub const CaptchaManager = struct {
 };
 
 test "captcha numeric" {
+    RandomKit.init();
     const allocator = std.testing.allocator;
 
     var manager = CaptchaManager.init(allocator);
     defer manager.deinit();
 
     const captcha = try manager.generate(.numeric, "session1");
+
     try std.testing.expectEqual(@as(usize, 4), captcha.code.len);
 
-    // 验证所有字符都是数字
     for (captcha.code) |c| {
         try std.testing.expect(std.ascii.isDigit(c));
     }
 }
 
 test "captcha validation" {
+    RandomKit.init();
     const allocator = std.testing.allocator;
 
     var manager = CaptchaManager.init(allocator);
@@ -265,11 +267,9 @@ test "captcha validation" {
 
     const captcha = try manager.generate(.numeric, "session1");
 
-    // 正确答案
     const valid = try manager.validate("session1", captcha.answer);
     try std.testing.expect(valid);
 
-    // 验证码已被消费，再次验证应该失败
     const valid2 = try manager.validate("session1", captcha.answer);
     try std.testing.expect(!valid2);
 }

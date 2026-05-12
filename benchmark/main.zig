@@ -17,55 +17,41 @@ const Stats = struct {
 
     pub fn add(self: *Stats, duration_ns: u64, failed: bool) void {
         std.Io.Mutex.lock(&self.mutex, zfinal.io_instance.io) catch {};
-        defer std.Io.Mutex.unlock(&self.mutex);
+        defer std.Io.Mutex.unlock(&self.mutex, zfinal.io_instance.io);
         self.requests += 1;
         if (failed) self.failures += 1;
         self.total_duration_ns += duration_ns;
     }
 };
 
-fn worker(allocator: std.mem.Allocator, config: Config, stats: *Stats, wg: *std.Thread.WaitGroup) !void {
-    defer wg.finish();
-
-    var client = std.http.Client{ .allocator = allocator };
+fn worker(allocator: std.mem.Allocator, io: std.Io, config: Config, stats: *Stats) !void {
+    var client = std.http.Client{ .allocator = allocator, .io = io };
     defer client.deinit();
 
     const requests_per_worker = config.requests / config.concurrency;
 
-    var buf: [4096]u8 = undefined;
     const uri = try std.Uri.parse(config.url);
 
     for (0..requests_per_worker) |_| {
-        const start = std.time.microTimestamp(); // Use microtimestamp for now
+        const start = std.Io.Timestamp.now(io, .awake);
         var failed = false;
 
-        var req = client.open(config.method, uri, .{
-            .server_header_buffer = &buf,
+        const result = client.fetch(.{
+            .location = .{ .uri = uri },
+            .method = config.method,
         }) catch {
             failed = true;
             stats.add(0, true);
             continue;
         };
-        defer req.deinit();
 
-        req.send() catch {
-            failed = true;
-            stats.add(0, true);
-            continue;
-        };
-
-        req.wait() catch {
-            failed = true;
-            stats.add(0, true);
-            continue;
-        };
-
-        if (req.response.status != .ok) {
+        if (result.status != .ok) {
             failed = true;
         }
 
-        const end = std.time.microTimestamp();
-        stats.add(@intCast((end - start) * 1000), failed); // Convert to ns
+        const end = std.Io.Timestamp.now(io, .awake);
+        const duration_ns = start.durationTo(end).toNanoseconds();
+        stats.add(@intCast(duration_ns), failed);
     }
 }
 
@@ -86,20 +72,22 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("--------------------------------------------------\n", .{});
 
     var stats = Stats{};
-    var wg = std.Thread.WaitGroup{};
+    var threads = std.ArrayList(std.Thread).empty;
+    defer threads.deinit(allocator);
 
-    const start_time = std.time.microTimestamp();
+    const start_time = std.Io.Timestamp.now(zfinal.io_instance.io, .awake);
 
     for (0..config.concurrency) |_| {
-        wg.start();
-        const thread = try std.Thread.spawn(.{}, worker, .{ allocator, config, &stats, &wg });
-        thread.detach();
+        const thread = try std.Thread.spawn(.{}, worker, .{ allocator, zfinal.io_instance.io, config, &stats });
+        try threads.append(allocator, thread);
     }
 
-    wg.wait();
+    for (threads.items) |thread| {
+        thread.join();
+    }
 
-    const end_time = std.time.microTimestamp();
-    const total_time_ns = (end_time - start_time) * 1000;
+    const end_time = std.Io.Timestamp.now(zfinal.io_instance.io, .awake);
+    const total_time_ns = start_time.durationTo(end_time).toNanoseconds();
     const total_time_s = @as(f64, @floatFromInt(total_time_ns)) / 1_000_000_000.0;
     const rps = @as(f64, @floatFromInt(stats.requests)) / total_time_s;
     const avg_latency_ms = if (stats.requests > 0)

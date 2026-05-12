@@ -90,35 +90,36 @@ pub const AgentPlugin = struct {
 
                             // Construct response
                             // Note: Simplified response construction
-                            return try std.json.stringifyAlloc(self.allocator, McpResponse{
+                            return try std.fmt.allocPrint(self.allocator, "{f}", .{std.json.fmt(McpResponse{
                                 .result = result,
                                 .id = req.value.id,
-                            }, .{});
+                            }, .{})});
                         }
                     }
                 }
             }
         }
 
-        return try std.json.stringifyAlloc(self.allocator, McpResponse{
+        return try std.fmt.allocPrint(self.allocator, "{f}", .{std.json.fmt(McpResponse{
             .@"error" = .{ .code = -32601, .message = "Method not found" },
             .id = req.value.id,
-        }, .{});
+        }, .{})});
     }
 
     // Default Tools
     fn listTools(self: *AgentPlugin, params: ?std.json.Value) !std.json.Value {
         _ = params;
-        var list = std.ArrayList([]const u8).init(self.allocator);
-        defer list.deinit();
+        var list = std.ArrayList([]const u8).empty;
+        defer list.deinit(self.allocator);
 
         var it = self.tools.keyIterator();
         while (it.next()) |key| {
-            try list.append(key.*);
+            try list.append(self.allocator, key.*);
         }
 
         // Return list of tool names
         // In a real implementation, this would return full tool schemas
-        return std.json.Value{ .array = std.ArrayList(std.json.Value).init(self.allocator) }; // Placeholder
+        const arr = std.json.Array.init(self.allocator);
+        return std.json.Value{ .array = arr }; // Placeholder
     }
 };

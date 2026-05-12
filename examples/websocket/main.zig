@@ -2,10 +2,9 @@ const std = @import("std");
 const zfinal = @import("zfinal");
 
 /// WebSocket Echo 示例
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const allocator = init.gpa;
 
     std.debug.print("\n", .{});
     std.debug.print("==============================================\n", .{});
@@ -32,17 +31,17 @@ pub fn main() !void {
     try ws_manager.addRoute("/ws", echoHandler);
 
     // 启动服务器（简化版，实际需要集成到 ZFinal）
-    const address = try std.net.Address.parseIp("127.0.0.1", 8080);
-    var listener = try address.listen(.{});
-    defer listener.deinit();
+    const address = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 8080);
+    var listener = try address.listen(io, .{});
+    defer listener.deinit(io);
 
     std.debug.print("Listening on port 8080...\n\n", .{});
 
     while (true) {
-        const connection = try listener.accept();
+        const connection = try listener.accept(io);
 
         // 在新线程中处理连接
-        const thread = try std.Thread.spawn(.{}, handleConnection, .{ allocator, connection, &ws_manager });
+        const thread = try std.Thread.spawn(.{}, handleConnection, .{ io, allocator, connection, &ws_manager });
         thread.detach();
     }
 }
@@ -87,17 +86,23 @@ fn echoHandler(ws: *zfinal.WebSocket) !void {
 }
 
 /// 处理连接
-fn handleConnection(allocator: std.mem.Allocator, connection: std.net.Server.Connection, manager: *zfinal.WebSocketManager) !void {
-    defer connection.stream.close();
+fn handleConnection(io: std.Io, allocator: std.mem.Allocator, connection: std.Io.net.Stream, manager: *zfinal.WebSocketManager) !void {
+    defer connection.close(io);
 
     // 读取 HTTP 请求
     var buffer: [4096]u8 = undefined;
-    const n = try connection.stream.read(&buffer);
+    var read_buf: [4096]u8 = undefined;
+    var reader = connection.reader(io, &read_buf);
+    const n = reader.interface.readSliceShort(&buffer) catch |err| switch (err) {
+        error.ReadFailed => return reader.err.?,
+    };
     const request = buffer[0..n];
 
     // 检查是否是 WebSocket 升级请求
     if (!std.mem.containsAtLeast(u8, request, 1, "Upgrade: websocket")) {
-        try connection.stream.writeAll("HTTP/1.1 400 Bad Request\r\n\r\n");
+        var write_buf: [256]u8 = undefined;
+        var writer = connection.writer(io, &write_buf);
+        try writer.interface.writeAll("HTTP/1.1 400 Bad Request\r\n\r\n");
         return;
     }
 
@@ -131,11 +136,13 @@ fn handleConnection(allocator: std.mem.Allocator, connection: std.net.Server.Con
         \\
     , .{accept});
 
-    try connection.stream.writeAll(response);
+    var write_buf: [512]u8 = undefined;
+    var writer = connection.writer(io, &write_buf);
+    try writer.interface.writeAll(response);
 
     // 创建 WebSocket 连接
     const ws = try allocator.create(zfinal.WebSocket);
-    ws.* = zfinal.WebSocket.init(allocator, connection.stream);
+    ws.* = zfinal.WebSocket.init(allocator, connection);
     defer allocator.destroy(ws);
 
     try manager.addConnection(ws);

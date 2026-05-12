@@ -1,4 +1,5 @@
 const std = @import("std");
+const io_instance = @import("../io_instance.zig");
 
 /// WebSocket 操作码
 pub const OpCode = enum(u8) {
@@ -118,10 +119,10 @@ pub const Frame = struct {
 /// WebSocket 连接
 pub const WebSocket = struct {
     allocator: std.mem.Allocator,
-    stream: std.net.Stream,
+    stream: std.Io.net.Stream,
     closed: bool = false,
 
-    pub fn init(allocator: std.mem.Allocator, stream: std.net.Stream) WebSocket {
+    pub fn init(allocator: std.mem.Allocator, stream: std.Io.net.Stream) WebSocket {
         return WebSocket{
             .allocator = allocator,
             .stream = stream,
@@ -141,7 +142,9 @@ pub const WebSocket = struct {
         const encoded = try frame.encode(self.allocator);
         defer self.allocator.free(encoded);
 
-        try self.stream.writeAll(encoded);
+        var write_buf: [4096]u8 = undefined;
+        var writer = self.stream.writer(io_instance.io, &write_buf);
+        try writer.interface.writeAll(encoded);
     }
 
     /// 发送二进制消息
@@ -157,7 +160,9 @@ pub const WebSocket = struct {
         const encoded = try frame.encode(self.allocator);
         defer self.allocator.free(encoded);
 
-        try self.stream.writeAll(encoded);
+        var write_buf: [4096]u8 = undefined;
+        var writer = self.stream.writer(io_instance.io, &write_buf);
+        try writer.interface.writeAll(encoded);
     }
 
     /// 发送 Pong
@@ -173,13 +178,19 @@ pub const WebSocket = struct {
         const encoded = try frame.encode(self.allocator);
         defer self.allocator.free(encoded);
 
-        try self.stream.writeAll(encoded);
+        var write_buf: [4096]u8 = undefined;
+        var writer = self.stream.writer(io_instance.io, &write_buf);
+        try writer.interface.writeAll(encoded);
     }
 
     /// 接收消息
     pub fn receive(self: *WebSocket) !Frame {
         var buffer: [8192]u8 = undefined;
-        const n = try self.stream.read(&buffer);
+        var read_buf: [8192]u8 = undefined;
+        var reader = self.stream.reader(io_instance.io, &read_buf);
+        const n = reader.interface.readSliceShort(&buffer) catch |err| switch (err) {
+            error.ReadFailed => return reader.err.?,
+        };
 
         if (n == 0) {
             self.closed = true;
@@ -192,7 +203,7 @@ pub const WebSocket = struct {
     /// 关闭连接
     pub fn close(self: *WebSocket) void {
         if (!self.closed) {
-            self.stream.close();
+            self.stream.close(io_instance.io);
             self.closed = true;
         }
     }

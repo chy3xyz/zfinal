@@ -21,7 +21,7 @@ pub fn checkApiToken(ctx: *zfinal.Context) !bool {
             const token = header[7..]; // Skip "Bearer "
 
             // Validate token
-            const is_valid = try Token.validateToken(token, db, ctx.allocator);
+            const is_valid = try Token.validateToken(token, db, ctx.allocator, zfinal.io_instance.io);
 
             if (is_valid) {
                 // Token valid, proceed to handler

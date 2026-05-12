@@ -24,25 +24,25 @@ pub const Context = struct {
         return Context{
             .req = req,
             .allocator = allocator,
-            .attributes = std.StringHashMap([]const u8).empty,
+            .attributes = std.StringHashMap([]const u8).init(allocator),
             .response_cookies = std.ArrayList(Cookie).empty,
-            .response_headers = std.StringHashMap([]const u8).empty,
+            .response_headers = std.StringHashMap([]const u8).init(allocator),
         };
     }
 
     pub fn deinit(self: *Context) void {
         if (self.query_params) |*qp| {
-            qp.deinit(self.allocator);
+            qp.deinit();
         }
         if (self.path_params) |*pp| {
-            pp.deinit(self.allocator);
+            pp.deinit();
         }
-        self.attributes.deinit(self.allocator);
+        self.attributes.deinit();
         if (self.cookies) |*c| {
-            c.deinit(self.allocator);
+            c.deinit();
         }
         self.response_cookies.deinit(self.allocator);
-        self.response_headers.deinit(self.allocator);
+        self.response_headers.deinit();
     }
 
     pub fn getHeader(self: *Context, name: []const u8) ?[]const u8 {
@@ -77,11 +77,12 @@ pub const Context = struct {
         if (self.req.head.method == .POST or self.req.head.method == .PUT or self.req.head.method == .PATCH) {
             const content_type = self.getHeader("content-type") orelse "";
             if (std.ascii.startsWithIgnoreCase(content_type, "application/x-www-form-urlencoded")) {
-                var body_buffer = std.ArrayList(u8).init(self.allocator);
-                defer body_buffer.deinit();
+                var body_buffer = std.ArrayList(u8).empty;
+                defer body_buffer.deinit(self.allocator);
 
-                var reader = try self.req.reader();
-                try reader.readAllArrayList(&body_buffer, 2 * 1024 * 1024); // 2MB max for form
+                var read_buf: [4096]u8 = undefined;
+                var reader = self.req.readerExpectNone(&read_buf);
+                try reader.appendRemaining(self.allocator, &body_buffer, .limited(2 * 1024 * 1024)); // 2MB max for form
                 if (body_buffer.items.len > 0) {
                     try params.parseQueryIntoAllocator(self.allocator, body_buffer.items, &map);
                 }
@@ -208,7 +209,7 @@ pub const Context = struct {
     }
 
     pub fn setCookie(self: *Context, name: []const u8, value: []const u8, max_age: ?i32) !void {
-        try self.response_cookies.append(.{
+        try self.response_cookies.append(self.allocator, .{
             .name = name,
             .value = value,
             .max_age = max_age,

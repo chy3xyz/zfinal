@@ -3,9 +3,9 @@ const zfinal = @import("zfinal");
 
 /// Token 防重复提交示例 - 展示如何使用 Token 拦截器防止表单重复提交
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    
+    
+    const allocator = std.heap.smp_allocator;
 
     // 创建 Token 管理器
     var token_manager = zfinal.TokenManager.init(allocator);
@@ -19,9 +19,8 @@ pub fn main() !void {
 
     app.setPort(8080);
 
-    // 创建 Token 拦截器配置
-    const TokenInterceptor = @import("../../src/token/interceptor.zig");
-    const token_interceptor = TokenInterceptor.createTokenInterceptor(.{
+    // 创建 Token 拦截器
+    const token_interceptor = zfinal.createTokenInterceptor(.{
         .token_manager = &token_manager,
         .token_name = "_token",
         .error_message = "Invalid or expired token, please refresh",
@@ -84,8 +83,8 @@ pub fn main() !void {
                 \\</html>
             ;
 
-            try ctx.renderHtml(html.{ token, token });
-        },
+            try ctx.renderHtml(html);
+        }
 
         // API: 获取 Token
         fn getTokenApiHandler(ctx: *zfinal.Context) !void {
@@ -97,11 +96,11 @@ pub fn main() !void {
                 .expires_in = 300,
                 .message = "Token generated, use it within 5 minutes",
             });
-        },
+        }
 
         // API: 提交表单（需要 Token）- 使用拦截器
         fn submitApiHandler(ctx: *zfinal.Context) !void {
-            const data = ctx.getParam("data") orelse "no data";
+            const data = try ctx.getPara("data") orelse "no data";
 
             try ctx.renderJson(.{
                 .success = true,
@@ -109,7 +108,7 @@ pub fn main() !void {
                 .data = data,
                 .note = "This token is now invalid. Get a new one for next submission.",
             });
-        },
+        }
     };
 
     Handlers.tm = &token_manager;
@@ -119,8 +118,7 @@ pub fn main() !void {
 
     // API 路由 - 需要 Token 拦截器保护
     try app.get("/api/token", Handlers.getTokenApiHandler);
-    try app.addRoute("/api/submit", Handlers.submitApiHandler);
-    // 添加拦截器到提交路由
+    try app.postWithInterceptors("/api/submit", Handlers.submitApiHandler, &.{token_interceptor});
     // 注意: 拦截器会在处理器之前执行 Token 验证
 
     // 启动信息

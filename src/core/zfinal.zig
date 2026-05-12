@@ -2,6 +2,7 @@ const std = @import("std");
 const Router = @import("router.zig").Router;
 const HttpMethod = @import("router.zig").HttpMethod;
 const Server = @import("server.zig").Server;
+const ServerConfig = @import("server.zig").ServerConfig;
 const Handler = @import("router.zig").Handler;
 const Interceptor = @import("../interceptor/interceptor.zig").Interceptor;
 const InterceptorChain = @import("../interceptor/interceptor.zig").InterceptorChain;
@@ -13,14 +14,14 @@ pub const ZFinal = struct {
     allocator: std.mem.Allocator,
     router: Router,
     plugin_manager: PluginManager,
-    port: u16,
+    config: ServerConfig,
 
     pub fn init(allocator: std.mem.Allocator) ZFinal {
         return ZFinal{
             .allocator = allocator,
             .router = Router.init(allocator),
             .plugin_manager = PluginManager.init(allocator),
-            .port = 8080,
+            .config = .{},
         };
     }
 
@@ -33,7 +34,11 @@ pub const ZFinal = struct {
     }
 
     pub fn setPort(self: *ZFinal, port: u16) void {
-        self.port = port;
+        self.config.port = port;
+    }
+
+    pub fn setConfig(self: *ZFinal, config: ServerConfig) void {
+        self.config = config;
     }
 
     pub fn addPlugin(self: *ZFinal, plugin: Plugin) !void {
@@ -110,7 +115,7 @@ pub const ZFinal = struct {
         // Start all plugins
         try self.plugin_manager.startAll();
 
-        var server = try Server.init(self.allocator, &self.router, self.port);
+        var server = try Server.init(self.allocator, &self.router, self.config);
         try server.start();
     }
 };

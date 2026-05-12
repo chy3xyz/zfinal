@@ -1,4 +1,5 @@
 const std = @import("std");
+const io_instance = @import("../io_instance.zig");
 const zfinal = @import("../core/zfinal.zig");
 const Plugin = @import("plugin.zig").Plugin;
 const HashKit = @import("../kit/hash_kit.zig").HashKit;
@@ -26,12 +27,13 @@ pub const DidPlugin = struct {
 
     pub fn init(allocator: std.mem.Allocator) !DidPlugin {
         var seed: [std.crypto.sign.Ed25519.KeyPair.seed_length]u8 = undefined;
-        std.crypto.random.bytes(&seed);
+        io_instance.io.random(&seed);
         const key_pair = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic(seed);
         // Generate DID from public key (simplified did:key method)
         // In reality, did:key uses multicodec/multibase
         const pub_key_bytes = key_pair.public_key.bytes;
-        const did_id = try std.fmt.allocPrint(allocator, "did:key:z{s}", .{std.fmt.fmtSliceHexLower(&pub_key_bytes)});
+        const hex_bytes = std.fmt.bytesToHex(&pub_key_bytes, .lower);
+        const did_id = try std.fmt.allocPrint(allocator, "did:key:z{s}", .{hex_bytes});
 
         return DidPlugin{
             .allocator = allocator,
@@ -70,7 +72,8 @@ pub const DidPlugin = struct {
     /// Sign data
     pub fn sign(self: *DidPlugin, data: []const u8) ![]const u8 {
         const signature = try self.key_pair.sign(data, null);
-        return try std.fmt.allocPrint(self.allocator, "{s}", .{std.fmt.fmtSliceHexLower(&signature.toBytes())});
+        const hex_sig = std.fmt.bytesToHex(&signature.toBytes(), .lower);
+        return try std.fmt.allocPrint(self.allocator, "{s}", .{hex_sig});
     }
 
     /// Verify signature

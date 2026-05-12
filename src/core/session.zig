@@ -1,10 +1,11 @@
 const std = @import("std");
+const io_instance = @import("../io_instance.zig");
 
 /// Simple in-memory session store
 pub const SessionStore = struct {
     sessions: std.StringHashMap(Session),
     allocator: std.mem.Allocator,
-    mutex: std.Thread.Mutex,
+    mutex: std.Io.Mutex,
 
     pub const Session = struct {
         id: []const u8,
@@ -27,7 +28,7 @@ pub const SessionStore = struct {
         return SessionStore{
             .sessions = std.StringHashMap(Session).init(allocator),
             .allocator = allocator,
-            .mutex = .{},
+            .mutex = std.Io.Mutex.init,
         };
     }
 
@@ -40,26 +41,21 @@ pub const SessionStore = struct {
         self.sessions.deinit();
     }
 
-    /// Create a new session with a unique ID
+    /// Create a new session with a cryptographically secure unique ID
     pub fn createSession(self: *SessionStore) ![]const u8 {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lock(io_instance.io) catch {};
+        defer self.mutex.unlock(io_instance.io);
 
-        // Generate simple session ID (UUID-like)
-        var buf: [36]u8 = undefined;
-        var prng = std.rand.DefaultPrng.init(@intCast(std.time.timestamp()));
-        const random = prng.random();
+        // Generate secure random session ID (32 bytes hex = 64 chars)
+        var random_bytes: [32]u8 = undefined;
+        io_instance.io.random(&random_bytes);
 
-        const session_id = try std.fmt.bufPrint(&buf, "{x:0>8}-{x:0>4}-{x:0>4}-{x:0>4}-{x:0>12}", .{
-            random.int(u32),
-            random.int(u16),
-            random.int(u16),
-            random.int(u16),
-            random.int(u48),
-        });
+        var buf: [64]u8 = undefined;
+        const session_id = try std.fmt.bufPrint(&buf, "{s}", .{std.fmt.fmtSliceHexLower(&random_bytes)});
 
         const id_copy = try self.allocator.dupe(u8, session_id);
-        const now = std.time.timestamp();
+        errdefer self.allocator.free(id_copy);
+        const now = std.Io.Timestamp.now(io_instance.io, .real).toSeconds();
 
         const session = Session{
             .id = id_copy,
@@ -74,19 +70,22 @@ pub const SessionStore = struct {
 
     /// Get session by ID
     pub fn getSession(self: *SessionStore, session_id: []const u8) ?*Session {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lock(io_instance.io) catch {};
+        defer self.mutex.unlock(io_instance.io);
 
         if (self.sessions.getPtr(session_id)) |session| {
-            session.last_accessed = std.time.timestamp();
+            session.last_accessed = std.Io.Timestamp.now(io_instance.io, .real).toSeconds();
             return session;
         }
         return null;
     }
 
-    /// Set attribute in session
+    /// Set attribute in session (thread-safe)
     pub fn setAttr(self: *SessionStore, session_id: []const u8, key: []const u8, value: []const u8) !void {
-        if (self.getSession(session_id)) |session| {
+        self.mutex.lock(io_instance.io) catch {};
+        defer self.mutex.unlock(io_instance.io);
+
+        if (self.sessions.getPtr(session_id)) |session| {
             const key_copy = try self.allocator.dupe(u8, key);
             const value_copy = try self.allocator.dupe(u8, value);
 
@@ -97,20 +96,29 @@ pub const SessionStore = struct {
             }
 
             try session.data.put(key_copy, value_copy);
+            session.last_accessed = std.Io.Timestamp.now(io_instance.io, .real).toSeconds();
         }
     }
 
-    /// Get attribute from session
+    /// Get attribute from session (thread-safe)
     pub fn getAttr(self: *SessionStore, session_id: []const u8, key: []const u8) ?[]const u8 {
-        if (self.getSession(session_id)) |session| {
+        self.mutex.lock(io_instance.io) catch {};
+        defer self.mutex.unlock(io_instance.io);
+
+        if (self.sessions.getPtr(session_id)) |session| {
+            session.last_accessed = std.Io.Timestamp.now(io_instance.io, .real).toSeconds();
             return session.data.get(key);
         }
         return null;
     }
 
-    /// Remove attribute from session
+    /// Remove attribute from session (thread-safe)
     pub fn removeAttr(self: *SessionStore, session_id: []const u8, key: []const u8) void {
-        if (self.getSession(session_id)) |session| {
+        self.mutex.lock(io_instance.io) catch {};
+        defer self.mutex.unlock(io_instance.io);
+
+        if (self.sessions.getPtr(session_id)) |session| {
+            session.last_accessed = std.Io.Timestamp.now(io_instance.io, .real).toSeconds();
             if (session.data.fetchRemove(key)) |old| {
                 self.allocator.free(old.key);
                 self.allocator.free(old.value);
@@ -120,8 +128,8 @@ pub const SessionStore = struct {
 
     /// Destroy session
     pub fn destroySession(self: *SessionStore, session_id: []const u8) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lock(io_instance.io) catch {};
+        defer self.mutex.unlock(io_instance.io);
 
         if (self.sessions.fetchRemove(session_id)) |entry| {
             var session = entry.value;

@@ -1,4 +1,5 @@
 const std = @import("std");
+const io_instance = @import("../io_instance.zig");
 
 /// 随机工具类
 pub const RandomKit = struct {
@@ -11,7 +12,7 @@ pub const RandomKit = struct {
 
     /// Seed with current timestamp
     pub fn seedWithTime() void {
-prng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.time.timestamp())));
+prng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.Io.Timestamp.now(io_instance.io, .real).toSeconds())));
     }
 
     /// Get the random generator

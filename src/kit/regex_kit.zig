@@ -36,9 +36,9 @@ pub const RegexKit = struct {
     }
 
     /// 提取所有数字
-    pub fn extractNumbers(allocator: std.mem.Allocator, text: []const u8) ![]i64 {
-        var result = std.ArrayList(i64).init(allocator);
-        defer result.deinit();
+    pub fn extractNumbers(_allocator: std.mem.Allocator, text: []const u8) ![]i64 {
+        var result = std.ArrayList(i64).empty;
+        defer result.deinit(_allocator);
 
         var i: usize = 0;
         while (i < text.len) {
@@ -48,7 +48,7 @@ pub const RegexKit = struct {
 
                 const num_str = text[i..j];
                 const num = try std.fmt.parseInt(i64, num_str, 10);
-                try result.append(num);
+                try result.append(_allocator, num);
 
                 i = j;
             } else {
@@ -56,7 +56,7 @@ pub const RegexKit = struct {
             }
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(_allocator);
     }
 
     /// 检查是否是邮箱格式

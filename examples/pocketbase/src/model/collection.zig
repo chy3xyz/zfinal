@@ -11,26 +11,26 @@ pub const Collection = struct {
         var rs = try db.query(sql);
         defer rs.deinit();
 
-        var collections = std.ArrayList([]const u8).init(allocator);
-        defer collections.deinit();
+        var collections = std.ArrayList([]const u8).empty;
+        defer collections.deinit(allocator);
 
         while (rs.next()) {
             const row = rs.getCurrentRowMap().?;
             if (row.get("name")) |name| {
-                try collections.append(try allocator.dupe(u8, name));
+                try collections.append(allocator, try allocator.dupe(u8, name));
             }
         }
 
-        return try collections.toOwnedSlice();
+        return try collections.toOwnedSlice(allocator);
     }
 
     /// Check if collection exists
     pub fn exists(name: []const u8, db: *zfinal.DB, allocator: std.mem.Allocator) !bool {
-        const sql = try std.fmt.allocPrintZ(
+        const sql = try std.fmt.allocPrintSentinel(
             allocator,
             "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name = '{s}'",
-            .{name},
-        );
+            .{name}, 0);
+        
         defer allocator.free(sql);
 
         var rs = try db.query(sql);
@@ -50,8 +50,7 @@ pub const Collection = struct {
     /// Create a new collection (table)
     pub fn create(name: []const u8, schema: []const u8, db: *zfinal.DB, allocator: std.mem.Allocator) !void {
         var sql_buf: [256]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&sql_buf);
-        const writer = fbs.writer();
+        var writer = std.Io.Writer.fixed(&sql_buf);
 
         try writer.print("CREATE TABLE {s} (id INTEGER PRIMARY KEY AUTOINCREMENT, ", .{name});
         if (schema.len > 0) {
@@ -59,7 +58,7 @@ pub const Collection = struct {
         }
         try writer.writeAll("created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
 
-        const sql = try std.fmt.allocPrintZ(allocator, "{s}", .{fbs.getWritten()});
+        const sql = try std.fmt.allocPrintSentinel(allocator, "{s}", .{writer.buffer[0..writer.end]}, 0);
         defer allocator.free(sql);
 
         try db.exec(sql);
@@ -67,7 +66,7 @@ pub const Collection = struct {
 
     /// Drop collection (table)
     pub fn drop(name: []const u8, db: *zfinal.DB, allocator: std.mem.Allocator) !void {
-        const sql = try std.fmt.allocPrintZ(allocator, "DROP TABLE IF EXISTS {s}", .{name});
+        const sql = try std.fmt.allocPrintSentinel(allocator, "DROP TABLE IF EXISTS {s}", .{name}, 0);
         defer allocator.free(sql);
 
         try db.exec(sql);

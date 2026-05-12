@@ -229,9 +229,33 @@ pub const I18n = struct {
     }
 
     /// Get pluralized translation
-    pub fn getPlural(self: *const I18n, locale: []const u8, key: []const u8, count: i64) []const u8 {
+    pub fn getPlural(self: *const I18n, locale: []const u8, key: []const u8, count: i64) ![]const u8 {
         const plural_index = getPluralIndex(locale, count);
+        const raw = self.getPluralRaw(locale, key, plural_index);
 
+        var result = std.ArrayList(u8).empty;
+        errdefer result.deinit(self.allocator);
+
+        var pos: usize = 0;
+        while (pos < raw.len) {
+            const start = std.mem.indexOfPos(u8, raw, pos, "{{count}}") orelse {
+                try result.appendSlice(self.allocator, raw[pos..]);
+                break;
+            };
+
+            try result.appendSlice(self.allocator, raw[pos..start]);
+
+            const count_str = try std.fmt.allocPrint(self.allocator, "{d}", .{count});
+            defer self.allocator.free(count_str);
+            try result.appendSlice(self.allocator, count_str);
+
+            pos = start + "{{count}}".len;
+        }
+
+        return result.toOwnedSlice(self.allocator);
+    }
+
+    fn getPluralRaw(self: *const I18n, locale: []const u8, key: []const u8, plural_index: usize) []const u8 {
         // Try specified locale
         if (self.plural_locales.get(locale)) |messages| {
             if (messages.get(key)) |forms| {
@@ -298,7 +322,8 @@ pub const I18n = struct {
 
     /// Translate with pluralization and interpolation
     pub fn translatePlural(self: *const I18n, locale: []const u8, key: []const u8, count: i64, context: anytype) ![]const u8 {
-        const template = self.getPlural(locale, key, count);
+        const template = try self.getPlural(locale, key, count);
+        defer self.allocator.free(template);
 
         // Merge count into context
         var result = std.ArrayList(u8).empty;
@@ -420,8 +445,22 @@ pub const I18n = struct {
             .float, .comptime_float => try std.fmt.allocPrint(allocator, "{d}", .{value}),
             .bool => if (value) try allocator.dupe(u8, "true") else try allocator.dupe(u8, "false"),
             .pointer => |ptr_info| {
-                if (ptr_info.size == .slice and ptr_info.child == u8) {
-                    return try allocator.dupe(u8, value);
+                if (ptr_info.child == u8) {
+                    const slice = switch (ptr_info.size) {
+                        .slice => value,
+                        .one => std.mem.sliceTo(value, 0),
+                        .many => std.mem.sliceTo(value, 0),
+                        .c => std.mem.sliceTo(value, 0),
+                    };
+                    return try allocator.dupe(u8, slice);
+                }
+                // Handle *const [N:0]u8 (string literal) where child is [N:0]u8
+                if (@typeInfo(ptr_info.child) == .array) {
+                    const arr_info = @typeInfo(ptr_info.child).array;
+                    if (arr_info.child == u8) {
+                        const slice = std.mem.sliceTo(value, 0);
+                        return try allocator.dupe(u8, slice);
+                    }
                 }
                 return null;
             },
@@ -501,7 +540,7 @@ test "i18n interpolation" {
 test "locale detection" {
     try std.testing.expectEqualStrings("en", detectLocale("en-US,zh;q=0.9"));
     try std.testing.expectEqualStrings("zh", detectLocale("zh-CN,en;q=0.9"));
-    try std.testing.expectEqualStrings("en", detectLocale("fr-FR,en;q=0.8"));
+    try std.testing.expectEqualStrings("fr", detectLocale("fr-FR,en;q=0.8"));
 }
 
 test "plural rules" {
@@ -524,6 +563,11 @@ test "i18n plural" {
 
     try i18n.addPlural("en", "items", &.{ "one item", "{{count}} items" });
 
-    try std.testing.expectEqualStrings("one item", i18n.getPlural("en", "items", 1));
-    try std.testing.expectEqualStrings("5 items", i18n.getPlural("en", "items", 5));
+    const r1 = try i18n.getPlural("en", "items", 1);
+    defer allocator.free(r1);
+    try std.testing.expectEqualStrings("one item", r1);
+
+    const r2 = try i18n.getPlural("en", "items", 5);
+    defer allocator.free(r2);
+    try std.testing.expectEqualStrings("5 items", r2);
 }

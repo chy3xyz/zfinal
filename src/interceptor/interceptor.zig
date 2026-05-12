@@ -37,17 +37,17 @@ pub const InterceptorChain = struct {
 
     pub fn init(allocator: std.mem.Allocator) InterceptorChain {
         return InterceptorChain{
-            .interceptors = std.ArrayList(Interceptor).init(allocator),
+            .interceptors = std.ArrayList(Interceptor).empty,
             .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *InterceptorChain) void {
-        self.interceptors.deinit();
+        self.interceptors.deinit(self.allocator);
     }
 
     pub fn add(self: *InterceptorChain, interceptor: Interceptor) !void {
-        try self.interceptors.append(interceptor);
+        try self.interceptors.append(self.allocator, interceptor);
     }
 
     /// Execute all interceptors in chain with handler

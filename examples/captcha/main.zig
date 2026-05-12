@@ -3,9 +3,9 @@ const zfinal = @import("zfinal");
 
 /// 验证码演示 - 展示如何使用验证码功能
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    
+    
+    const allocator = std.heap.smp_allocator;
 
     // 创建验证码管理器
     var captcha_manager = zfinal.CaptchaManager.init(allocator);
@@ -22,7 +22,7 @@ pub fn main() !void {
 
     // 路由 - 使用内联函数捕获 captcha_manager
     const Handlers = struct {
-        var cm: *zfinal.CaptchaManager = undefined,
+        var cm: *zfinal.CaptchaManager = undefined;
 
         fn getCaptchaHandler(ctx: *zfinal.Context) !void {
             // 生成 session ID
@@ -31,7 +31,7 @@ pub fn main() !void {
 
             // 生成验证码 - 支持多种类型
             const captcha_type = zfinal.CaptchaType.alphanumeric;
-            const captcha = try cm.generate(captcha_type, session_id);
+            var captcha = try cm.generate(captcha_type, session_id);
             defer captcha.deinit();
 
             // 在实际应用中，这里应该返回图片
@@ -42,16 +42,16 @@ pub fn main() !void {
                 .captcha_type = @tagName(captcha_type),
                 .message = "验证码已生成，有效期5分钟",
             });
-        },
+        }
 
         fn verifyHandler(ctx: *zfinal.Context) !void {
-            const session_id = ctx.getParam("session_id") orelse {
+            const session_id = try ctx.getPara("session_id") orelse {
                 ctx.res_status = .bad_request;
                 try ctx.renderJson(.{ .@"error" = "Missing session_id" });
                 return;
             };
 
-            const code = ctx.getParam("code") orelse {
+            const code = try ctx.getPara("code") orelse {
                 ctx.res_status = .bad_request;
                 try ctx.renderJson(.{ .@"error" = "Missing code" });
                 return;
@@ -72,7 +72,7 @@ pub fn main() !void {
                     .message = "验证码错误或已过期",
                 });
             }
-        },
+        }
     };
 
     Handlers.cm = &captcha_manager;

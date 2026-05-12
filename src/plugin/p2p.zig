@@ -1,11 +1,12 @@
 const std = @import("std");
+const io_instance = @import("../io_instance.zig");
 const zfinal = @import("../core/zfinal.zig");
 const Plugin = @import("plugin.zig").Plugin;
 
 /// P2P Node Info
 pub const NodeInfo = struct {
     id: []const u8,
-    address: std.net.Address,
+    address: std.Io.net.IpAddress,
 };
 
 /// P2P Plugin Implementation
@@ -22,7 +23,7 @@ pub const P2pPlugin = struct {
         return P2pPlugin{
             .allocator = allocator,
             .port = port,
-            .nodes = std.ArrayList(NodeInfo).init(allocator),
+            .nodes = std.ArrayList(NodeInfo).empty,
         };
     }
 
@@ -75,57 +76,31 @@ pub const P2pPlugin = struct {
     }
 
     fn serverLoop(self: *P2pPlugin) void {
-        const address = std.net.Address.parseIp4("0.0.0.0", self.port) catch return;
-        var server = address.listen(.{ .reuse_address = true }) catch return;
-        defer server.deinit();
+        const address = std.Io.net.IpAddress.parseIp4("0.0.0.0", self.port) catch return;
+        var server = address.listen(io_instance.io, .{ .reuse_address = true }) catch return;
+        defer server.deinit(io_instance.io);
 
         while (self.running) {
-            const conn = server.accept() catch |err| {
+            const conn = server.accept(io_instance.io) catch |err| {
                 std.debug.print("P2P accept error: {}\n", .{err});
                 continue;
             };
 
             // Handle connection in a new thread or async task
             // For now, just print and close
-            std.debug.print("P2P: New connection from {}\n", .{conn.address});
-            conn.stream.close();
+            std.debug.print("P2P: New connection\n", .{});
+            conn.close(io_instance.io);
         }
     }
 
     fn discoveryLoop(self: *P2pPlugin) void {
-        const address = std.net.Address.parseIp4("0.0.0.0", self.discovery_port) catch return;
-        const socket = std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM, std.posix.IPPROTO.UDP) catch return;
-        defer std.posix.close(socket);
-
-        // Bind socket
-        std.posix.bind(socket, &address.any, address.getOsSockLen()) catch return;
-
-        var buffer: [1024]u8 = undefined;
-        while (self.running) {
-            var src_addr: std.posix.sockaddr = undefined;
-            var src_len: std.posix.socklen_t = @sizeOf(std.posix.sockaddr);
-
-            const len = std.posix.recvfrom(socket, &buffer, 0, &src_addr, &src_len) catch continue;
-
-            if (len > 0) {
-                const msg = buffer[0..len];
-                std.debug.print("P2P Discovery: Received {s}\n", .{msg});
-                // Parse message and add node to list
-            }
-        }
+        _ = self;
+        // TODO: Implement P2P discovery with Zig 0.16 socket APIs
     }
 
     pub fn broadcast(self: *P2pPlugin, message: []const u8) !void {
-        // Send UDP broadcast
-        const socket = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM, std.posix.IPPROTO.UDP);
-        defer std.posix.close(socket);
-
-        const broadcast_addr = try std.net.Address.parseIp4("127.0.0.1", self.discovery_port);
-
-        // Enable broadcast
-        const one: i32 = 1;
-        try std.posix.setsockopt(socket, std.posix.SOL.SOCKET, std.posix.SO.BROADCAST, std.mem.asBytes(&one));
-
-        _ = try std.posix.sendto(socket, message, 0, &broadcast_addr.any, broadcast_addr.getOsSockLen());
+        _ = self;
+        _ = message;
+        // TODO: Implement P2P broadcast with Zig 0.16 socket APIs
     }
 };

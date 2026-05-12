@@ -6,9 +6,9 @@ const zfinal = @import("zfinal");
 /// 本示例演示如何使用 ZFinal 的代码生成器从现有数据库表
 /// 自动生成 Model 代码，加速开发。
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    
+    
+    const allocator = std.heap.smp_allocator;
 
     // 连接数据库 (SQLite)
     const db_path = "generator_demo.db";

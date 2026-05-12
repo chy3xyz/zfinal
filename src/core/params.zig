@@ -33,8 +33,8 @@ pub fn parseQueryIntoAllocator(allocator: std.mem.Allocator, query: []const u8, 
 
 /// Simple URL decoder (handles %XX encoding)
 fn urlDecode(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
-    var result = std.ArrayList(u8).init(allocator);
-    defer result.deinit();
+    var result = std.ArrayList(u8).empty;
+    defer result.deinit(allocator);
 
     var i: usize = 0;
     while (i < input.len) {
@@ -43,23 +43,23 @@ fn urlDecode(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
             const hex = input[i + 1 .. i + 3];
             const value = std.fmt.parseInt(u8, hex, 16) catch {
                 // Invalid hex, just keep the %
-                try result.append('%');
+                try result.append(allocator, '%');
                 i += 1;
                 continue;
             };
-            try result.append(value);
+            try result.append(allocator, value);
             i += 3;
         } else if (input[i] == '+') {
             // + is space in URL encoding
-            try result.append(' ');
+            try result.append(allocator, ' ');
             i += 1;
         } else {
-            try result.append(input[i]);
+            try result.append(allocator, input[i]);
             i += 1;
         }
     }
 
-    return result.toOwnedSlice();
+    return result.toOwnedSlice(allocator);
 }
 
 /// Convert string to int with optional default
@@ -126,7 +126,7 @@ test "parseQuery basic" {
     const allocator = std.testing.allocator;
 
     var params = try parseQuery(allocator, "name=John&age=25");
-    defer params.deinit();
+    defer freeParams(allocator, &params);
 
     try std.testing.expectEqualStrings("John", params.get("name").?);
     try std.testing.expectEqualStrings("25", params.get("age").?);
@@ -136,10 +136,20 @@ test "parseQuery with url encoding" {
     const allocator = std.testing.allocator;
 
     var params = try parseQuery(allocator, "msg=Hello+World&email=test%40example.com");
-    defer params.deinit();
+    defer freeParams(allocator, &params);
 
     try std.testing.expectEqualStrings("Hello World", params.get("msg").?);
     try std.testing.expectEqualStrings("test@example.com", params.get("email").?);
+}
+
+/// Free a StringHashMap created by parseQuery
+fn freeParams(allocator: std.mem.Allocator, params: *std.StringHashMap([]const u8)) void {
+    var it = params.iterator();
+    while (it.next()) |entry| {
+        allocator.free(entry.key_ptr.*);
+        allocator.free(entry.value_ptr.*);
+    }
+    params.deinit();
 }
 
 test "toInt conversion" {

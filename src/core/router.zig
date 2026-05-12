@@ -114,7 +114,7 @@ pub const Router = struct {
 
     pub fn init(allocator: std.mem.Allocator) Router {
         return Router{
-            .routes = std.ArrayList(Route).init(allocator),
+            .routes = std.ArrayList(Route).empty,
             .global_interceptors = InterceptorChain.init(allocator),
             .allocator = allocator,
         };
@@ -126,7 +126,7 @@ pub const Router = struct {
             self.allocator.free(route.segments);
             self.allocator.free(route.param_names);
         }
-        self.routes.deinit();
+        self.routes.deinit(self.allocator);
         self.global_interceptors.deinit();
     }
 
@@ -149,7 +149,7 @@ pub const Router = struct {
             .param_names = parsed.param_names,
         };
 
-        try self.routes.append(route);
+        try self.routes.append(self.allocator, route);
     }
 
     /// 添加带拦截器的路由
@@ -170,7 +170,7 @@ pub const Router = struct {
             .param_names = parsed.param_names,
         };
 
-        try self.routes.append(route);
+        try self.routes.append(self.allocator, route);
     }
 
     /// 查找匹配的路由
@@ -224,8 +224,8 @@ const ParsedRoute = struct {
 
 /// 解析路由模式
 fn parseRoute(path: []const u8, allocator: std.mem.Allocator) !ParsedRoute {
-    var segments = std.ArrayList(Segment).init(allocator);
-    var param_names = std.ArrayList([]const u8).init(allocator);
+    var segments = std.ArrayList(Segment).empty;
+    var param_names = std.ArrayList([]const u8).empty;
 
     var parts = std.mem.splitScalar(u8, path, '/');
 
@@ -237,16 +237,16 @@ fn parseRoute(path: []const u8, allocator: std.mem.Allocator) !ParsedRoute {
     while (parts.next()) |part| {
         if (part.len > 0 and part[0] == ':') {
             const name = part[1..];
-            try segments.append(.{ .type = .param, .value = name });
-            try param_names.append(name);
+            try segments.append(allocator, .{ .type = .param, .value = name });
+            try param_names.append(allocator, name);
         } else {
-            try segments.append(.{ .type = .static, .value = part });
+            try segments.append(allocator, .{ .type = .static, .value = part });
         }
     }
 
     return ParsedRoute{
-        .segments = try segments.toOwnedSlice(),
-        .param_names = try param_names.toOwnedSlice(),
+        .segments = try segments.toOwnedSlice(allocator),
+        .param_names = try param_names.toOwnedSlice(allocator),
     };
 }
 

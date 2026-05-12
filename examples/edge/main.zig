@@ -12,10 +12,10 @@ const P2pPlugin = zfinal.P2pPlugin;
 /// - AI Agent: AI 代理能力
 /// - DID: 去中心化身份
 /// - P2P: 点对点通信
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    zfinal.io_instance.init(init);
+    const allocator = init.gpa;
+    const io = init.io;
 
     // 初始化 ZFinal 应用
     var app = zfinal.ZFinal.init(allocator);
@@ -49,7 +49,7 @@ pub fn main() !void {
     try app.addPlugin(p2p_plugin.plugin());
 
     // 启动模拟线程（模拟边缘设备数据）
-    const sim_thread = try std.Thread.spawn(.{}, simulationLoop, .{ &mqtt_plugin, &did_plugin, &agent_plugin, &p2p_plugin, allocator });
+    const sim_thread = try std.Thread.spawn(.{}, simulationLoop, .{ &mqtt_plugin, &did_plugin, &agent_plugin, &p2p_plugin, allocator, io });
     defer sim_thread.detach();
 
     // 启动应用
@@ -75,9 +75,9 @@ pub fn main() !void {
 }
 
 /// 模拟边缘设备数据循环
-fn simulationLoop(mqtt: *MqttPlugin, did: *DidPlugin, agent: *AgentPlugin, p2p: *P2pPlugin, allocator: std.mem.Allocator) !void {
+fn simulationLoop(mqtt: *MqttPlugin, did: *DidPlugin, agent: *AgentPlugin, p2p: *P2pPlugin, allocator: std.mem.Allocator, io: std.Io) !void {
     // 等待插件启动
-    std.time.sleep(1 * std.time.ns_per_s);
+    std.Io.sleep(io, .{ .nanoseconds = 1 * std.time.ns_per_s }, .awake) catch {};
 
     // === MQTT 演示 ===
     // 发布消息到主题
@@ -121,30 +121,30 @@ fn simulationLoop(mqtt: *MqttPlugin, did: *DidPlugin, agent: *AgentPlugin, p2p: 
 /// AI Agent 工具: 获取设备状态
 fn getDeviceStatus(ctx: *AgentPlugin, params: ?std.json.Value) anyerror!std.json.Value {
     _ = params;
-    var result = std.StringArrayHashMap(std.json.Value).init(ctx.allocator);
+    var result = std.json.ObjectMap.empty;
 
-    try result.put("device_id", std.json.Value{ .string = "edge-001" });
-    try result.put("status", std.json.Value{ .string = "online" });
-    try result.put("cpu_usage", std.json.Value{ .float = 15.5 });
-    try result.put("memory_usage", std.json.Value{ .float = 42.0 });
-    try result.put("temperature", std.json.Value{ .float = 45.0 });
-    try result.put("uptime", std.json.Value{ .integer = 3600 });
+    try result.put(ctx.allocator, "device_id", std.json.Value{ .string = "edge-001" });
+    try result.put(ctx.allocator, "status", std.json.Value{ .string = "online" });
+    try result.put(ctx.allocator, "cpu_usage", std.json.Value{ .float = 15.5 });
+    try result.put(ctx.allocator, "memory_usage", std.json.Value{ .float = 42.0 });
+    try result.put(ctx.allocator, "temperature", std.json.Value{ .float = 45.0 });
+    try result.put(ctx.allocator, "uptime", std.json.Value{ .integer = 3600 });
 
     return std.json.Value{ .object = result };
 }
 
 /// AI Agent 工具: 控制 LED
 fn controlLed(ctx: *AgentPlugin, params: ?std.json.Value) anyerror!std.json.Value {
-    var result = std.StringArrayHashMap(std.json.Value).init(ctx.allocator);
+    var result = std.json.ObjectMap.empty;
 
     if (params) |p| {
         if (p.object.get("state")) |state| {
-            const state_str = state.string orelse "unknown";
-            try result.put("led_state", std.json.Value{ .string = state_str });
-            try result.put("message", std.json.Value{ .string = std.fmt.allocPrint(ctx.allocator, "LED turned {s}", .{state_str}) catch "ok" });
+            const state_str = state.string;
+            try result.put(ctx.allocator, "led_state", std.json.Value{ .string = state_str });
+            try result.put(ctx.allocator, "message", std.json.Value{ .string = std.fmt.allocPrint(ctx.allocator, "LED turned {s}", .{state_str}) catch "ok" });
         }
     } else {
-        try result.put("error", std.json.Value{ .string = "Missing 'state' parameter" });
+        try result.put(ctx.allocator, "error", std.json.Value{ .string = "Missing 'state' parameter" });
     }
 
     return std.json.Value{ .object = result };

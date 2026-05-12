@@ -1,6 +1,14 @@
 const std = @import("std");
+const SqlParam = @import("sql_param.zig").SqlParam;
 
-/// SQL 模板引擎（简化版）
+/// 渲染结果类型
+pub const RenderResult = struct {
+    sql: [:0]const u8,
+    params: []const SqlParam,
+};
+
+/// SQL 模板引擎（参数化查询版本）
+/// 支持 {param} 风格的命名参数，最终输出带 ? 占位符的 SQL 和参数列表
 pub const SqlTemplate = struct {
     allocator: std.mem.Allocator,
 
@@ -8,45 +16,48 @@ pub const SqlTemplate = struct {
         return SqlTemplate{ .allocator = allocator };
     }
 
-    /// 渲染 SQL 模板
-    /// 支持 {param} 风格的参数替换
-    pub fn render(self: *SqlTemplate, template: []const u8, params: anytype) ![]const u8 {
-        var result = std.ArrayList(u8).empty;
-        defer result.deinit(self.allocator);
+    /// 渲染 SQL 模板为参数化查询
+    /// 返回：sql_template（带 ? 占位符） + params 数组
+    pub fn render(self: *SqlTemplate, template: []const u8, params_struct: anytype) !RenderResult {
+        var sql_parts = std.ArrayList(u8).empty;
+        defer sql_parts.deinit(self.allocator);
+
+        var param_list = std.ArrayList(SqlParam).empty;
+        defer param_list.deinit(self.allocator);
 
         var pos: usize = 0;
         while (pos < template.len) {
-            // 查找 {
             const start = std.mem.indexOfScalarPos(u8, template, pos, '{') orelse {
-                // 没有更多参数，添加剩余部分
-                try result.appendSlice(self.allocator, template[pos..]);
+                try sql_parts.appendSlice(self.allocator, template[pos..]);
                 break;
             };
 
-            // 添加 { 之前的内容
-            try result.appendSlice(self.allocator, template[pos..start]);
+            try sql_parts.appendSlice(self.allocator, template[pos..start]);
 
-            // 查找 }
             const end = std.mem.indexOfScalarPos(u8, template, start, '}') orelse {
                 return error.UnclosedBrace;
             };
 
-            // 提取参数名
             const param_name = template[start + 1 .. end];
-
-            // 获取参数值并替换
-            const value = try self.getParamValue(params, param_name);
-            defer self.allocator.free(value);
-            try result.appendSlice(self.allocator, value);
+            const value = try self.getParamValue(params_struct, param_name);
+            try param_list.append(self.allocator, value);
+            try sql_parts.appendSlice(self.allocator, "?");
 
             pos = end + 1;
         }
 
-        return result.toOwnedSlice(self.allocator);
+        try sql_parts.append(self.allocator, 0);
+        const sql_slice = try sql_parts.toOwnedSlice(self.allocator);
+        const sql_z = sql_slice[0 .. sql_slice.len - 1 :0];
+
+        const params_slice = try param_list.toOwnedSlice(self.allocator);
+
+        return .{ .sql = sql_z, .params = params_slice };
     }
 
     /// 从参数结构中获取值
-    fn getParamValue(self: *SqlTemplate, params: anytype, name: []const u8) ![]const u8 {
+    fn getParamValue(self: *SqlTemplate, params: anytype, name: []const u8) !SqlParam {
+        _ = self;
         const T = @TypeOf(params);
         const type_info = @typeInfo(T);
 
@@ -57,39 +68,34 @@ pub const SqlTemplate = struct {
         inline for (type_info.@"struct".fields) |field| {
             if (std.mem.eql(u8, field.name, name)) {
                 const value = @field(params, field.name);
-                return self.formatValue(value);
+                return sqlParamFromValue(value);
             }
         }
 
         return error.ParamNotFound;
     }
 
-    /// 格式化值为 SQL 字符串
-    fn formatValue(self: *SqlTemplate, value: anytype) ![]const u8 {
+    fn sqlParamFromValue(value: anytype) SqlParam {
         const T = @TypeOf(value);
         const type_info = @typeInfo(T);
 
         return switch (type_info) {
-            .int, .comptime_int => {
-                return try std.fmt.allocPrint(self.allocator, "{d}", .{value});
-            },
-            .float, .comptime_float => {
-                return try std.fmt.allocPrint(self.allocator, "{d}", .{value});
-            },
-            .bool => if (value) try self.allocator.dupe(u8, "true") else try self.allocator.dupe(u8, "false"),
+            .int, .comptime_int => .{ .int = @intCast(value) },
+            .float, .comptime_float => .{ .real = @floatCast(value) },
+            .bool => .{ .int = if (value) 1 else 0 },
             .pointer => |ptr_info| {
                 if (ptr_info.size == .slice and ptr_info.child == u8) {
-                    return try self.allocator.dupe(u8, value);
+                    return .{ .text = value };
                 }
                 if (ptr_info.size == .one) {
                     const child_info = @typeInfo(ptr_info.child);
                     if (child_info == .array and child_info.array.child == u8) {
-                        return try self.allocator.dupe(u8, value);
+                        return .{ .text = value };
                     }
                 }
-                return error.UnsupportedType;
+                @compileError("Unsupported parameter type for SQL template");
             },
-            else => error.UnsupportedType,
+            else => @compileError("Unsupported parameter type for SQL template"),
         };
     }
 };
@@ -127,8 +133,8 @@ pub const SqlTemplateManager = struct {
         return self.templates.get(name);
     }
 
-    /// 渲染模板
-    pub fn render(self: *SqlTemplateManager, name: []const u8, params: anytype) ![]const u8 {
+    /// 渲染模板为参数化查询
+    pub fn render(self: *SqlTemplateManager, name: []const u8, params: anytype) !RenderResult {
         const template = self.get(name) orelse return error.TemplateNotFound;
         var engine = SqlTemplate.init(self.allocator);
         return try engine.render(template, params);
@@ -140,10 +146,14 @@ test "sql template basic" {
 
     var engine = SqlTemplate.init(allocator);
 
-    const sql = try engine.render("SELECT * FROM users WHERE age > {age} AND city = '{city}'", .{ .age = 18, .city = "Beijing" });
-    defer allocator.free(sql);
+    const result = try engine.render("SELECT * FROM users WHERE age > {age} AND city = {city}", .{ .age = 18, .city = "Beijing" });
+    defer allocator.free(result.sql);
+    defer allocator.free(result.params);
 
-    try std.testing.expectEqualStrings("SELECT * FROM users WHERE age > 18 AND city = 'Beijing'", sql);
+    try std.testing.expectEqualStrings("SELECT * FROM users WHERE age > ? AND city = ?", result.sql);
+    try std.testing.expectEqual(@as(usize, 2), result.params.len);
+    try std.testing.expectEqual(@as(i64, 18), result.params[0].int);
+    try std.testing.expectEqualStrings("Beijing", result.params[1].text);
 }
 
 test "sql template manager" {
@@ -154,8 +164,10 @@ test "sql template manager" {
 
     try manager.add("find_user", "SELECT * FROM users WHERE id = {id}");
 
-    const sql = try manager.render("find_user", .{ .id = 123 });
-    defer allocator.free(sql);
+    const result = try manager.render("find_user", .{ .id = 123 });
+    defer allocator.free(result.sql);
+    defer allocator.free(result.params);
 
-    try std.testing.expectEqualStrings("SELECT * FROM users WHERE id = 123", sql);
+    try std.testing.expectEqualStrings("SELECT * FROM users WHERE id = ?", result.sql);
+    try std.testing.expectEqual(@as(i64, 123), result.params[0].int);
 }

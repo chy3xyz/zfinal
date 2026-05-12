@@ -23,10 +23,16 @@ pub const UploadFile = struct {
         try file.writeAll(self.data);
     }
 
-    /// 保存文件到目录，使用原始文件名
+    /// 保存文件到目录，使用安全文件名（去除路径分量）
     pub fn saveToDir(self: *UploadFile, dir: []const u8) !void {
+        // 提取安全文件名：只取最后的路径分量，防止路径遍历
+        const safe_name = std.fs.path.basename(self.filename);
+        if (safe_name.len == 0 or std.mem.eql(u8, safe_name, ".") or std.mem.eql(u8, safe_name, "..")) {
+            return error.InvalidFilename;
+        }
+
         var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-        const path = try std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ dir, self.filename });
+        const path = try std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ dir, safe_name });
         try self.saveTo(path);
     }
 };

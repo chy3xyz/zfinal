@@ -1,4 +1,5 @@
 const std = @import("std");
+const io_instance = @import("../io_instance.zig");
 const zfinal = @import("../main.zig");
 
 /// CORS Handler - 跨域资源共享
@@ -48,11 +49,33 @@ pub const StaticHandler = struct {
     pub fn handle(self: *const StaticHandler, ctx: *zfinal.Context) !void {
         const path = ctx.req.head.target;
 
-        // 构建文件路径
+        // 安全路径校验：拒绝路径遍历攻击
+        if (std.mem.indexOf(u8, path, "..") != null) {
+            ctx.res_status = .forbidden;
+            try ctx.renderText("403 Forbidden");
+            return;
+        }
+
+        // 构建文件路径并规范化
         var file_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         const file_path = try std.fmt.bufPrint(&file_path_buf, "{s}{s}", .{ self.root_path, path });
 
-        // 读取文件
+        // 双重校验：确保解析后的路径仍在 root_path 下
+        const resolved = std.fs.cwd().realpath(file_path, &file_path_buf) catch |err| {
+            if (err == error.FileNotFound) {
+                ctx.res_status = .not_found;
+                try ctx.renderText("404 Not Found");
+                return;
+            }
+            return err;
+        };
+        if (!std.mem.startsWith(u8, resolved, self.root_path)) {
+            ctx.res_status = .forbidden;
+            try ctx.renderText("403 Forbidden");
+            return;
+        }
+
+        // 读取文件（限制 10MB）
         const content = std.fs.cwd().readFileAlloc(ctx.allocator, file_path, 10 * 1024 * 1024) catch |err| {
             if (err == error.FileNotFound) {
                 ctx.res_status = .not_found;
@@ -84,7 +107,7 @@ pub const StaticHandler = struct {
 pub const RateLimitHandler = struct {
     requests: std.StringHashMap(RequestInfo),
     allocator: std.mem.Allocator,
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = std.Io.Mutex.init,
     max_requests: usize = 100,
     window_seconds: i64 = 60,
 
@@ -111,10 +134,10 @@ pub const RateLimitHandler = struct {
     pub fn handle(self: *RateLimitHandler, ctx: *zfinal.Context) !void {
         const client_ip = ctx.getHeader("X-Real-IP") orelse ctx.getHeader("X-Forwarded-For") orelse "unknown";
 
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lock(io_instance.io) catch {};
+        defer self.mutex.unlock(io_instance.io);
 
-        const now: i64 = @as(i64, @intCast(std.time.Clock.timestamp()));
+        const now: i64 = std.Io.Timestamp.now(io_instance.io, .real).toSeconds();
 
         if (self.requests.getPtr(client_ip)) |info| {
             // 检查是否在同一时间窗口

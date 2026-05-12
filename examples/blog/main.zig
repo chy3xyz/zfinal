@@ -6,9 +6,9 @@ const DbInit = @import("config/db_init.zig");
 const Interceptors = @import("interceptor/interceptors.zig");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    
+    
+    const allocator = std.heap.smp_allocator;
 
     // 初始化数据库
     const db_config = Config.DBConfig.get();

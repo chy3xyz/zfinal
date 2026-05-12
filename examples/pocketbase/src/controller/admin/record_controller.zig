@@ -24,7 +24,7 @@ pub fn list(ctx: *zfinal.Context) !void {
     };
     const db = getDb();
 
-    const sql = try std.fmt.allocPrintZ(ctx.allocator, "SELECT * FROM {s} ORDER BY created_at DESC LIMIT 50", .{table});
+    const sql = try std.fmt.allocPrintSentinel(ctx.allocator, "SELECT * FROM {s} ORDER BY created_at DESC LIMIT 50", .{table}, 0);
     defer ctx.allocator.free(sql);
 
     var rs = db.query(sql) catch {
@@ -33,10 +33,10 @@ pub fn list(ctx: *zfinal.Context) !void {
     };
     defer rs.deinit();
 
-    var html = std.ArrayList(u8).init(ctx.allocator);
-    defer html.deinit();
+    var html = std.ArrayList(u8).empty;
+    defer html.deinit(ctx.allocator);
 
-    try html.writer().writeAll(
+    try html.appendSlice(ctx.allocator, 
         \\<!DOCTYPE html><html><head><title>Records</title><script src="https://cdn.tailwindcss.com"></script></head>
         \\<body class="bg-gray-50 font-sans text-gray-800 h-screen hidden sm:block">
         \\  <div class="flex h-screen overflow-hidden">
@@ -61,8 +61,8 @@ pub fn list(ctx: *zfinal.Context) !void {
         \\          <span class="text-gray-400">/</span>
         \\          <h1 class="text-lg font-bold">
     );
-    try html.writer().print("{s}", .{table});
-    try html.writer().writeAll(
+    try html.print(ctx.allocator, "{s}", .{table});
+    try html.appendSlice(ctx.allocator, 
         \\          </h1>
         \\        </div>
         \\        <div class="flex items-center gap-5">
@@ -77,16 +77,16 @@ pub fn list(ctx: *zfinal.Context) !void {
         \\      <div>
         \\        <h2 class="text-2xl font-bold text-gray-900 flex items-center gap-2">
     );
-    try html.writer().print("{s}", .{table});
-    try html.writer().writeAll(
+    try html.print(ctx.allocator, "{s}", .{table});
+    try html.appendSlice(ctx.allocator, 
         \\        </h2>
         \\        <p class="text-sm text-gray-500 mt-1">Browse and manage data records in this collection.</p>
         \\      </div>
         \\      <div class="flex w-full sm:w-auto">
         \\        <a href="/admin/collections/
     );
-    try html.writer().print("{s}", .{table});
-    try html.writer().writeAll(
+    try html.print(ctx.allocator, "{s}", .{table});
+    try html.appendSlice(ctx.allocator, 
         \\/records/new" class="bg-indigo-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition flex items-center justify-center gap-2 shadow-sm w-full sm:w-auto">
         \\          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg> New Record
         \\        </a>
@@ -99,10 +99,10 @@ pub fn list(ctx: *zfinal.Context) !void {
     );
 
     for (rs.columns) |col| {
-        try html.writer().print("<th class=\"p-4 font-medium first:pl-6\">{s}</th>", .{col});
+        try html.print(ctx.allocator, "<th class=\"p-4 font-medium first:pl-6\">{s}</th>", .{col});
     }
 
-    try html.writer().writeAll(
+    try html.appendSlice(ctx.allocator, 
         \\            <th class="p-4 font-medium text-right pr-6 w-24">Actions</th>
         \\          </tr>
         \\        </thead>
@@ -114,18 +114,18 @@ pub fn list(ctx: *zfinal.Context) !void {
         count += 1;
         const row = rs.getCurrentRowMap().?;
 
-        try html.writer().writeAll("<tr class=\"hover:bg-indigo-50/30 transition\">");
+        try html.appendSlice(ctx.allocator, "<tr class=\"hover:bg-indigo-50/30 transition\">");
         for (rs.columns) |col| {
             const val = row.get(col) orelse "null";
             if (std.mem.eql(u8, col, "id")) {
-                try html.writer().print("<td class=\"p-4 first:pl-6 font-mono text-xs text-indigo-600 font-bold\">{s}</td>", .{val});
+                try html.print(ctx.allocator, "<td class=\"p-4 first:pl-6 font-mono text-xs text-indigo-600 font-bold\">{s}</td>", .{val});
             } else {
-                try html.writer().print("<td class=\"p-4 text-sm text-gray-700 truncate max-w-[200px]\">{s}</td>", .{val});
+                try html.print(ctx.allocator, "<td class=\"p-4 text-sm text-gray-700 truncate max-w-[200px]\">{s}</td>", .{val});
             }
         }
 
         const id = row.get("id").?;
-        try html.writer().print(
+        try html.print(ctx.allocator, 
             \\          <td class="p-4 pr-6 text-right">
             \\            <form method="POST" action="/admin/collections/{s}/records/{s}/delete" class="inline" onsubmit="return confirm('WARNING: Are you sure you want to delete this record?');">
             \\              <button type="submit" class="text-gray-400 hover:text-red-600 text-sm font-medium transition p-2 rounded hover:bg-red-50">
@@ -138,14 +138,14 @@ pub fn list(ctx: *zfinal.Context) !void {
     }
 
     if (count == 0) {
-        try html.writer().print(
+        try html.print(ctx.allocator, 
             \\        <tr>
             \\          <td colspan="{d}" class="p-12 text-center text-gray-400 italic">No records found in this collection. click "New Record" to add one.</td>
             \\        </tr>
         , .{rs.columns.len + 1});
     }
 
-    try html.writer().writeAll(
+    try html.appendSlice(ctx.allocator, 
         \\        </tbody>
         \\      </table>
         \\    </div>
@@ -172,16 +172,16 @@ pub fn create(ctx: *zfinal.Context) !void {
     const db = getDb();
 
     var random_bytes: [16]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
+    zfinal.io_instance.io.random(&random_bytes);
     var id_buf: [32]u8 = undefined;
-    const new_id = std.fmt.bufPrint(&id_buf, "{s}", .{std.fmt.fmtSliceHexLower(&random_bytes)}) catch "error";
-    const now = std.time.timestamp();
+    const new_id = std.fmt.bufPrint(&id_buf, "{s}", .{std.fmt.bytesToHex(&random_bytes, .lower)}) catch "error";
+    const now = std.Io.Timestamp.now(zfinal.io_instance.io, .real).toSeconds();
 
-    const sql = try std.fmt.allocPrintZ(ctx.allocator, "INSERT INTO {s} (id, created_at) VALUES ('{s}', {d})", .{ table, new_id, now });
+    const sql = try std.fmt.allocPrintSentinel(ctx.allocator, "INSERT INTO {s} (id, created_at) VALUES ('{s}', {d})", .{ table, new_id, now }, 0);
     defer ctx.allocator.free(sql);
     try db.exec(sql);
 
-    const redirect_url = try std.fmt.allocPrintZ(ctx.allocator, "/admin/collections/{s}/records", .{table});
+    const redirect_url = try std.fmt.allocPrintSentinel(ctx.allocator, "/admin/collections/{s}/records", .{table}, 0);
     defer ctx.allocator.free(redirect_url);
     try redirect(ctx, redirect_url);
 }
@@ -197,11 +197,11 @@ pub fn delete(ctx: *zfinal.Context) !void {
     };
     const db = getDb();
 
-    const sql = try std.fmt.allocPrintZ(ctx.allocator, "DELETE FROM {s} WHERE id = '{s}'", .{ table, id });
+    const sql = try std.fmt.allocPrintSentinel(ctx.allocator, "DELETE FROM {s} WHERE id = '{s}'", .{ table, id }, 0);
     defer ctx.allocator.free(sql);
     try db.exec(sql);
 
-    const redirect_url = try std.fmt.allocPrintZ(ctx.allocator, "/admin/collections/{s}/records", .{table});
+    const redirect_url = try std.fmt.allocPrintSentinel(ctx.allocator, "/admin/collections/{s}/records", .{table}, 0);
     defer ctx.allocator.free(redirect_url);
     try redirect(ctx, redirect_url);
 }

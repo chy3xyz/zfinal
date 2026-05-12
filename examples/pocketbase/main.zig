@@ -3,10 +3,9 @@ const zfinal = @import("zfinal");
 
 const State = @import("src/state.zig");
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    zfinal.io_instance.init(init);
+    const allocator = init.gpa;
 
     // Initialize ZFinal
     var app = zfinal.ZFinal.init(allocator);
@@ -97,7 +96,7 @@ fn initSystemTables() !void {
 
     // Create a default API token for testing
     const Token = @import("src/auth/token.zig");
-    const check_sql = try std.fmt.allocPrintZ(State.global_state.?.allocator, "SELECT COUNT(*) as count FROM _api_tokens", .{});
+    const check_sql = try std.fmt.allocPrintSentinel(State.global_state.?.allocator, "SELECT COUNT(*) as count FROM _api_tokens", .{}, 0);
     defer State.global_state.?.allocator.free(check_sql);
     var rs = try db.query(check_sql);
     defer rs.deinit();
@@ -112,7 +111,7 @@ fn initSystemTables() !void {
     }
 
     if (needs_token) {
-        const token = try Token.createToken("demo_user", null, db, State.global_state.?.allocator);
+        const token = try Token.createToken("demo_user", null, db, State.global_state.?.allocator, zfinal.io_instance.io);
         std.debug.print("Default API token: {s}\n", .{token});
     }
 
@@ -129,7 +128,7 @@ fn initSystemTables() !void {
     );
 
     // Initialize test data if collections is empty
-    const check_col_sql = try std.fmt.allocPrintZ(State.global_state.?.allocator, "SELECT COUNT(*) as count FROM _collections WHERE name != '_admins' AND name != '_api_tokens' AND name != '_collections'", .{});
+    const check_col_sql = try std.fmt.allocPrintSentinel(State.global_state.?.allocator, "SELECT COUNT(*) as count FROM _collections WHERE name != '_admins' AND name != '_api_tokens' AND name != '_collections'", .{}, 0);
     defer State.global_state.?.allocator.free(check_col_sql);
     var col_rs = try db.query(check_col_sql);
     defer col_rs.deinit();
@@ -151,20 +150,22 @@ fn initSystemTables() !void {
         try db.exec("CREATE TABLE IF NOT EXISTS posts (id TEXT PRIMARY KEY, title TEXT, content TEXT, created_at INTEGER, updated_at INTEGER)");
 
         // Insert sample records
-        const now = std.time.timestamp();
+        const now = std.Io.Timestamp.now(zfinal.io_instance.io, .real).toSeconds();
 
         var id_buf: [32]u8 = undefined;
         var r_bytes: [16]u8 = undefined;
 
-        std.crypto.random.bytes(&r_bytes);
-        const id1 = try std.fmt.bufPrint(&id_buf, "{s}", .{std.fmt.fmtSliceHexLower(&r_bytes)});
-        const sql1 = try std.fmt.allocPrintZ(State.global_state.?.allocator, "INSERT OR IGNORE INTO posts (id, title, content, created_at) VALUES ('{s}', 'Welcome to ZFinal PocketBase', 'This is a sample post.', {d})", .{ id1, now });
+        zfinal.io_instance.io.random(&r_bytes);
+        const hex1 = std.fmt.bytesToHex(&r_bytes, .lower);
+        const id1 = try std.fmt.bufPrint(&id_buf, "{s}", .{hex1});
+        const sql1 = try std.fmt.allocPrintSentinel(State.global_state.?.allocator, "INSERT OR IGNORE INTO posts (id, title, content, created_at) VALUES ('{s}', 'Welcome to ZFinal PocketBase', 'This is a sample post.', {d})", .{ id1, now }, 0);
         defer State.global_state.?.allocator.free(sql1);
         try db.exec(sql1);
 
-        std.crypto.random.bytes(&r_bytes);
-        const id2 = try std.fmt.bufPrint(&id_buf, "{s}", .{std.fmt.fmtSliceHexLower(&r_bytes)});
-        const sql2 = try std.fmt.allocPrintZ(State.global_state.?.allocator, "INSERT OR IGNORE INTO posts (id, title, content, created_at) VALUES ('{s}', 'TailwindCSS Integration', 'The admin panel is now beautiful.', {d})", .{ id2, now - 3600 });
+        zfinal.io_instance.io.random(&r_bytes);
+        const hex2 = std.fmt.bytesToHex(&r_bytes, .lower);
+        const id2 = try std.fmt.bufPrint(&id_buf, "{s}", .{hex2});
+        const sql2 = try std.fmt.allocPrintSentinel(State.global_state.?.allocator, "INSERT OR IGNORE INTO posts (id, title, content, created_at) VALUES ('{s}', 'TailwindCSS Integration', 'The admin panel is now beautiful.', {d})", .{ id2, now - 3600 }, 0);
         defer State.global_state.?.allocator.free(sql2);
         try db.exec(sql2);
     }

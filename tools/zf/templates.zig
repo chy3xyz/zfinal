@@ -65,9 +65,9 @@ pub const main_zig =
     \\const Interceptors = @import("interceptor/interceptors.zig");
     \\
     \\pub fn main() !void {
-    \\    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    \\    defer _ = gpa.deinit();
-    \\    const allocator = gpa.allocator();
+    \\    
+    \\    
+    \\    const allocator = std.heap.smp_allocator;
     \\
     \\    // Initialize Database
     \\    const db_config = Config.DBConfig.get();

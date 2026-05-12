@@ -24,10 +24,10 @@ pub fn list(ctx: *zfinal.Context) !void {
     var rs = try db.query("SELECT name, type FROM _collections ORDER BY created_at DESC");
     defer rs.deinit();
 
-    var html = std.ArrayList(u8).init(ctx.allocator);
-    defer html.deinit();
+    var html = std.ArrayList(u8).empty;
+    defer html.deinit(ctx.allocator);
 
-    try html.writer().writeAll(
+    try html.appendSlice(ctx.allocator, 
         \\<!DOCTYPE html><html><head><title>Collections</title><script src="https://cdn.tailwindcss.com"></script></head>
         \\<body class="bg-gray-50 font-sans text-gray-800 h-screen hidden sm:block">
         \\  <div class="flex h-screen overflow-hidden">
@@ -87,7 +87,7 @@ pub fn list(ctx: *zfinal.Context) !void {
         const row = rs.getCurrentRowMap().?;
         const name = row.get("name").?;
         const t_type = row.get("type").?;
-        try html.writer().print(
+        try html.print(ctx.allocator, 
             \\        <tr class="hover:bg-indigo-50/30 transition group">
             \\          <td class="p-4 pl-6">
             \\            <a href="/admin/collections/{s}/records" class="font-bold text-indigo-600 hover:text-indigo-800 hover:underline flex items-center gap-2">
@@ -108,14 +108,14 @@ pub fn list(ctx: *zfinal.Context) !void {
     }
 
     if (count == 0) {
-        try html.writer().writeAll(
+        try html.appendSlice(ctx.allocator, 
             \\        <tr>
             \\          <td colspan="3" class="p-8 text-center text-gray-400 italic">No collections found. Create your first table above.</td>
             \\        </tr>
         );
     }
 
-    try html.writer().writeAll(
+    try html.appendSlice(ctx.allocator, 
         \\        </tbody>
         \\      </table>
         \\    </div>
@@ -147,19 +147,19 @@ pub fn create(ctx: *zfinal.Context) !void {
     }
 
     const schema = (try ctx.getPara("schema")) orelse "";
-    var schema_sql = std.ArrayList(u8).init(ctx.allocator);
-    defer schema_sql.deinit();
+    var schema_sql = std.ArrayList(u8).empty;
+    defer schema_sql.deinit(ctx.allocator);
 
     if (schema.len > 0) {
-        try schema_sql.writer().print(", {s}", .{schema});
+        try schema_sql.print(ctx.allocator, ", {s}", .{schema});
     }
 
     const db = getDb();
-    const sql = try std.fmt.allocPrintZ(ctx.allocator, "CREATE TABLE IF NOT EXISTS {s} (id TEXT PRIMARY KEY, created_at INTEGER, updated_at INTEGER{s})", .{ name, schema_sql.items });
+    const sql = try std.fmt.allocPrintSentinel(ctx.allocator, "CREATE TABLE IF NOT EXISTS {s} (id TEXT PRIMARY KEY, created_at INTEGER, updated_at INTEGER{s})", .{ name, schema_sql.items }, 0);
     defer ctx.allocator.free(sql);
     try db.exec(sql);
 
-    const ins_sql = try std.fmt.allocPrintZ(ctx.allocator, "INSERT INTO _collections (name, type) VALUES ('{s}', 'base')", .{name});
+    const ins_sql = try std.fmt.allocPrintSentinel(ctx.allocator, "INSERT INTO _collections (name, type) VALUES ('{s}', 'base')", .{name}, 0);
     defer ctx.allocator.free(ins_sql);
     try db.exec(ins_sql);
 
@@ -175,11 +175,11 @@ pub fn delete(ctx: *zfinal.Context) !void {
     };
 
     const db = getDb();
-    const sql = try std.fmt.allocPrintZ(ctx.allocator, "DROP TABLE IF EXISTS {s}", .{name});
+    const sql = try std.fmt.allocPrintSentinel(ctx.allocator, "DROP TABLE IF EXISTS {s}", .{name}, 0);
     defer ctx.allocator.free(sql);
     try db.exec(sql);
 
-    const del_sql = try std.fmt.allocPrintZ(ctx.allocator, "DELETE FROM _collections WHERE name = '{s}'", .{name});
+    const del_sql = try std.fmt.allocPrintSentinel(ctx.allocator, "DELETE FROM _collections WHERE name = '{s}'", .{name}, 0);
     defer ctx.allocator.free(del_sql);
     try db.exec(del_sql);
 

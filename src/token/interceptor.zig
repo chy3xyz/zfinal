@@ -1,5 +1,6 @@
 const std = @import("std");
-const zfinal = @import("zfinal");
+const Interceptor = @import("../interceptor/interceptor.zig").Interceptor;
+const Context = @import("../core/context.zig").Context;
 const TokenManager = @import("token.zig").TokenManager;
 
 /// Token 拦截器配置
@@ -10,16 +11,16 @@ pub const TokenInterceptorConfig = struct {
 };
 
 /// 创建 Token 拦截器
-pub fn createTokenInterceptor(config: TokenInterceptorConfig) zfinal.Interceptor {
+pub fn createTokenInterceptor(config: TokenInterceptorConfig) Interceptor {
     const InterceptorImpl = struct {
         var cfg: TokenInterceptorConfig = undefined;
 
-        fn before(ctx: *zfinal.Context) !void {
+        fn before(ctx: *Context) !bool {
             // 获取 Token
-            const token_value = ctx.getParam(cfg.token_name) orelse {
+            const token_value = try ctx.getPara(cfg.token_name) orelse {
                 ctx.res_status = .bad_request;
                 try ctx.renderJson(.{ .@"error" = "Missing token" });
-                return error.MissingToken;
+                return false;
             };
 
             // 验证 Token
@@ -27,14 +28,15 @@ pub fn createTokenInterceptor(config: TokenInterceptorConfig) zfinal.Interceptor
             if (!valid) {
                 ctx.res_status = .bad_request;
                 try ctx.renderJson(.{ .@"error" = cfg.error_message });
-                return error.InvalidToken;
+                return false;
             }
+            return true;
         }
     };
 
     InterceptorImpl.cfg = config;
 
-    return zfinal.Interceptor{
+    return Interceptor{
         .name = "token",
         .before = InterceptorImpl.before,
     };
@@ -43,13 +45,13 @@ pub fn createTokenInterceptor(config: TokenInterceptorConfig) zfinal.Interceptor
 /// Context 扩展：Token 方法
 pub const TokenContextMixin = struct {
     /// 生成并设置 Token 到 Context
-    pub fn setToken(ctx: *zfinal.Context, token_manager: *TokenManager) !void {
+    pub fn setToken(ctx: *Context, token_manager: *TokenManager) !void {
         const token = try token_manager.generate();
         try ctx.setAttr("_token", token);
     }
 
     /// 获取 Token
-    pub fn getToken(ctx: *zfinal.Context) ?[]const u8 {
+    pub fn getToken(ctx: *Context) ?[]const u8 {
         return ctx.getAttr("_token");
     }
 };

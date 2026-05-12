@@ -30,12 +30,12 @@ pub const ArrayKit = struct {
     }
 
     /// 去重
-    pub fn unique(comptime T: type, allocator: std.mem.Allocator, array: []const T) ![]T {
-        var seen = std.AutoHashMap(T, void).init(allocator);
+    pub fn unique(comptime T: type, _allocator: std.mem.Allocator, array: []const T) ![]T {
+        var seen = std.AutoHashMap(T, void).init(_allocator);
         defer seen.deinit();
 
-        var result = std.ArrayList(T).init(allocator);
-        defer result.deinit();
+        var result = std.ArrayList(T).empty;
+        defer result.deinit(_allocator);
 
         for (array) |item| {
             if (!seen.contains(item)) {
@@ -48,9 +48,9 @@ pub const ArrayKit = struct {
     }
 
     /// 过滤数组
-    pub fn filter(comptime T: type, allocator: std.mem.Allocator, array: []const T, predicate: *const fn (T) bool) ![]T {
-        var result = std.ArrayList(T).init(allocator);
-        defer result.deinit();
+    pub fn filter(comptime T: type, _allocator: std.mem.Allocator, array: []const T, predicate: *const fn (T) bool) ![]T {
+        var result = std.ArrayList(T).empty;
+        defer result.deinit(_allocator);
 
         for (array) |item| {
             if (predicate(item)) {

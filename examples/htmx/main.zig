@@ -1,7 +1,7 @@
 const std = @import("std");
 const zfinal = @import("zfinal");
-const Template = @import("../../src/template/template.zig").Template;
-const TemplateManager = @import("../../src/template/template.zig").TemplateManager;
+const Template = zfinal.Template;
+const TemplateManager = zfinal.TemplateManager;
 
 /// 简单的 Todo 模型
 const Todo = struct {
@@ -10,7 +10,7 @@ const Todo = struct {
     completed: bool,
 };
 
-var todos = std.ArrayList(Todo).init(std.heap.page_allocator);
+var todos = std.ArrayList(Todo).empty;
 var next_id: i64 = 1;
 
 /// 首页
@@ -105,14 +105,14 @@ fn indexHandler(ctx: *zfinal.Context) !void {
 
 /// 获取所有 todos
 fn getTodosHandler(ctx: *zfinal.Context) !void {
-    var html = std.ArrayList(u8).init(ctx.allocator);
-    defer html.deinit();
+    var html = std.ArrayList(u8).empty;
+    defer html.deinit(ctx.allocator);
 
     for (todos.items) |todo| {
         const completed_class = if (todo.completed) " completed" else "";
         const checked = if (todo.completed) "checked" else "";
 
-        try html.writer().print(
+        try html.print(ctx.allocator,
             \\<div class="card todo-item" id="todo-{d}">
             \\    <div>
             \\        <input type="checkbox" {s}
@@ -150,12 +150,12 @@ fn createTodoHandler(ctx: *zfinal.Context) !void {
     };
     next_id += 1;
 
-    try todos.append(todo);
+    try todos.append(std.heap.page_allocator, todo);
 
-    var html = std.ArrayList(u8).init(ctx.allocator);
-    defer html.deinit();
+    var html = std.ArrayList(u8).empty;
+    defer html.deinit(ctx.allocator);
 
-    try html.writer().print(
+    try html.print(ctx.allocator,
         \\<div class="card todo-item" id="todo-{d}">
         \\    <div>
         \\        <input type="checkbox"
@@ -194,10 +194,10 @@ fn toggleTodoHandler(ctx: *zfinal.Context) !void {
             const completed_class = if (todo.completed) " completed" else "";
             const checked = if (todo.completed) "checked" else "";
 
-            var html = std.ArrayList(u8).init(ctx.allocator);
-            defer html.deinit();
+            var html = std.ArrayList(u8).empty;
+            defer html.deinit(ctx.allocator);
 
-            try html.writer().print(
+            try html.print(ctx.allocator,
                 \\<div class="card todo-item" id="todo-{d}">
                 \\    <div>
                 \\        <input type="checkbox" {s}
@@ -250,9 +250,9 @@ fn deleteTodoHandler(ctx: *zfinal.Context) !void {
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    
+    
+    const allocator = std.heap.smp_allocator;
 
     var app = zfinal.ZFinal.init(allocator);
     defer app.deinit();

@@ -2,6 +2,7 @@ const std = @import("std");
 const DBConfig = @import("config.zig").DBConfig;
 const DBType = @import("config.zig").DBType;
 const ResultSet = @import("result.zig").ResultSet;
+const SqlParam = @import("sql_param.zig").SqlParam;
 
 // Conditional driver imports based on build configuration
 // Only import drivers if their libraries are available
@@ -20,7 +21,13 @@ const PostgresDB = struct {
     pub fn exec(_: *PostgresDB, _: [:0]const u8) !void {
         return error.DriverNotEnabled;
     }
+    pub fn execParams(_: *PostgresDB, _: [:0]const u8, _: []const SqlParam) !void {
+        return error.DriverNotEnabled;
+    }
     pub fn query(_: *PostgresDB, _: [:0]const u8) !ResultSet {
+        return error.DriverNotEnabled;
+    }
+    pub fn queryParams(_: *PostgresDB, _: [:0]const u8, _: []const SqlParam) !ResultSet {
         return error.DriverNotEnabled;
     }
     pub fn affectedRows(_: *PostgresDB) !i64 {
@@ -36,7 +43,13 @@ const MySQLDB = struct {
     pub fn exec(_: *MySQLDB, _: [:0]const u8) !void {
         return error.DriverNotEnabled;
     }
+    pub fn execParams(_: *MySQLDB, _: [:0]const u8, _: []const SqlParam) !void {
+        return error.DriverNotEnabled;
+    }
     pub fn query(_: *MySQLDB, _: [:0]const u8) !ResultSet {
+        return error.DriverNotEnabled;
+    }
+    pub fn queryParams(_: *MySQLDB, _: [:0]const u8, _: []const SqlParam) !ResultSet {
         return error.DriverNotEnabled;
     }
     pub fn lastInsertId(_: *MySQLDB) !i64 {
@@ -90,12 +103,30 @@ pub const DB = struct {
         }
     }
 
+    /// Execute with parameter binding (safe against SQL injection)
+    pub fn execParams(self: *DB, sql: [:0]const u8, params: []const SqlParam) !void {
+        switch (self.driver) {
+            .postgres => |*pg| try pg.execParams(sql, params),
+            .mysql => |*my| try my.execParams(sql, params),
+            .sqlite => |*sq| try sq.execParams(sql, params),
+        }
+    }
+
     /// Execute query and return result set
     pub fn query(self: *DB, sql: [:0]const u8) !ResultSet {
         return switch (self.driver) {
             .postgres => |*pg| try pg.query(sql),
             .mysql => |*my| try my.query(sql),
             .sqlite => |*sq| try sq.query(sql),
+        };
+    }
+
+    /// Execute query with parameter binding
+    pub fn queryParams(self: *DB, sql: [:0]const u8, params: []const SqlParam) !ResultSet {
+        return switch (self.driver) {
+            .postgres => |*pg| try pg.queryParams(sql, params),
+            .mysql => |*my| try my.queryParams(sql, params),
+            .sqlite => |*sq| try sq.queryParams(sql, params),
         };
     }
 

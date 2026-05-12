@@ -1,4 +1,5 @@
 const std = @import("std");
+const io_instance = @import("../io_instance.zig");
 
 /// 日期工具类
 pub const DateKit = struct {
@@ -13,36 +14,41 @@ pub const DateKit = struct {
 
         /// 格式化为字符串
         pub fn format(self: Date, allocator: std.mem.Allocator, fmt: []const u8) ![]const u8 {
-            var result = std.ArrayList(u8).init(allocator);
-            defer result.deinit();
+            var result = std.ArrayList(u8).empty;
+            defer result.deinit(allocator);
 
             var i: usize = 0;
             while (i < fmt.len) {
                 if (fmt[i] == '%' and i + 1 < fmt.len) {
-                    switch (fmt[i + 1]) {
-                        'Y' => try result.writer().print("{d:0>4}", .{self.year}),
-                        'y' => try result.writer().print("{d:0>2}", .{@mod(self.year, 100)}),
-                        'm' => try result.writer().print("{d:0>2}", .{self.month}),
-                        'd' => try result.writer().print("{d:0>2}", .{self.day}),
-                        'H' => try result.writer().print("{d:0>2}", .{self.hour}),
-                        'M' => try result.writer().print("{d:0>2}", .{self.minute}),
-                        'S' => try result.writer().print("{d:0>2}", .{self.second}),
-                        else => try result.append(fmt[i + 1]),
-                    }
+                    var buf: [16]u8 = undefined;
+                    const slice = switch (fmt[i + 1]) {
+                        'Y' => try std.fmt.bufPrint(&buf, "{d:0>4}", .{self.year}),
+                        'y' => try std.fmt.bufPrint(&buf, "{d:0>2}", .{@mod(self.year, 100)}),
+                        'm' => try std.fmt.bufPrint(&buf, "{d:0>2}", .{self.month}),
+                        'd' => try std.fmt.bufPrint(&buf, "{d:0>2}", .{self.day}),
+                        'H' => try std.fmt.bufPrint(&buf, "{d:0>2}", .{self.hour}),
+                        'M' => try std.fmt.bufPrint(&buf, "{d:0>2}", .{self.minute}),
+                        'S' => try std.fmt.bufPrint(&buf, "{d:0>2}", .{self.second}),
+                        else => blk: {
+                            buf[0] = fmt[i + 1];
+                            break :blk buf[0..1];
+                        },
+                    };
+                    try result.appendSlice(allocator, slice);
                     i += 2;
                 } else {
-                    try result.append(fmt[i]);
+                    try result.append(allocator, fmt[i]);
                     i += 1;
                 }
             }
 
-            return result.toOwnedSlice();
+            return result.toOwnedSlice(allocator);
         }
     };
 
     /// 获取当前日期
     pub fn now() Date {
-        const timestamp = std.time.timestamp();
+        const timestamp = std.Io.Timestamp.now(io_instance.io, .real).toSeconds();
         return fromTimestamp(timestamp);
     }
 

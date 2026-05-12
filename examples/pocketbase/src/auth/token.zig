@@ -9,25 +9,26 @@ pub const Token = struct {
 };
 
 /// Generate a random token
-pub fn generateToken(allocator: std.mem.Allocator) ![]const u8 {
+pub fn generateToken(allocator: std.mem.Allocator, io: std.Io) ![]const u8 {
     var random_bytes: [32]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
+    io.random(&random_bytes);
 
     // Convert to hex string
-    const token = try allocator.alloc(u8, 64);
-    _ = try std.fmt.bufPrint(token, "{s}", .{std.fmt.fmtSliceHexLower(&random_bytes)});
+    const hex_bytes = std.fmt.bytesToHex(&random_bytes, .lower);
+    const token = try allocator.alloc(u8, hex_bytes.len);
+    @memcpy(token, &hex_bytes);
 
     return token;
 }
 
 /// Validate token against database
-pub fn validateToken(token: []const u8, db: *zfinal.DB, allocator: std.mem.Allocator) !bool {
-    const timestamp = std.time.timestamp();
-    const sql = try std.fmt.allocPrintZ(
+pub fn validateToken(token: []const u8, db: *zfinal.DB, allocator: std.mem.Allocator, io: std.Io) !bool {
+    const timestamp = std.Io.Timestamp.now(io, .real).toSeconds();
+    const sql = try std.fmt.allocPrintSentinel(
         allocator,
         "SELECT COUNT(*) as count FROM _api_tokens WHERE token = '{s}' AND (expires_at IS NULL OR expires_at > {d})",
-        .{ token, timestamp },
-    );
+        .{ token, timestamp }, 0);
+    
     defer allocator.free(sql);
 
     var rs = try db.query(sql);
@@ -45,13 +46,13 @@ pub fn validateToken(token: []const u8, db: *zfinal.DB, allocator: std.mem.Alloc
 }
 
 /// Get user ID for a token
-pub fn getTokenUser(token: []const u8, db: *zfinal.DB, allocator: std.mem.Allocator) !?[]const u8 {
-    const timestamp = std.time.timestamp();
-    const sql = try std.fmt.allocPrintZ(
+pub fn getTokenUser(token: []const u8, db: *zfinal.DB, allocator: std.mem.Allocator, io: std.Io) !?[]const u8 {
+    const timestamp = std.Io.Timestamp.now(io, .real).toSeconds();
+    const sql = try std.fmt.allocPrintSentinel(
         allocator,
         "SELECT user_id FROM _api_tokens WHERE token = '{s}' AND (expires_at IS NULL OR expires_at > {d}) LIMIT 1",
-        .{ token, timestamp },
-    );
+        .{ token, timestamp }, 0);
+    
     defer allocator.free(sql);
 
     var rs = try db.query(sql);
@@ -68,23 +69,25 @@ pub fn getTokenUser(token: []const u8, db: *zfinal.DB, allocator: std.mem.Alloca
 }
 
 /// Create a new API token
-pub fn createToken(user_id: ?[]const u8, expires_at: ?i64, db: *zfinal.DB, allocator: std.mem.Allocator) ![]const u8 {
-    const token = try generateToken(allocator);
+pub fn createToken(user_id: ?[]const u8, expires_at: ?i64, db: *zfinal.DB, allocator: std.mem.Allocator, io: std.Io) ![]const u8 {
+    const token = try generateToken(allocator, io);
 
     const sql = if (user_id != null) blk: {
         const uid = user_id.?;
         const exp = expires_at orelse 0;
-        break :blk try std.fmt.allocPrintZ(
+        break :blk try std.fmt.allocPrintSentinel(
             allocator,
             "INSERT INTO _api_tokens (token, user_id, expires_at) VALUES ('{s}', '{s}', {d})",
             .{ token, uid, exp },
+            0,
         );
     } else blk: {
         const exp = expires_at orelse 0;
-        break :blk try std.fmt.allocPrintZ(
+        break :blk try std.fmt.allocPrintSentinel(
             allocator,
             "INSERT INTO _api_tokens (token, expires_at) VALUES ('{s}', {d})",
             .{ token, exp },
+            0,
         );
     };
     defer allocator.free(sql);

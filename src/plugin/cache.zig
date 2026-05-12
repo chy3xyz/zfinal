@@ -226,15 +226,16 @@ pub const CachePlugin = struct {
     }
 
     // Plugin interface implementation
-    pub fn asPlugin(self: *Self) Plugin {
-        const vtable = Plugin.VTable{
+    pub fn asPlugin(self: *Self) !Plugin {
+        const vtable = try self.allocator.create(Plugin.VTable);
+        vtable.* = .{
             .start = startImpl,
             .stop = stopImpl,
         };
 
         return Plugin{
             .name = self.name,
-            .vtable = &vtable,
+            .vtable = vtable,
             .context = self,
         };
     }
