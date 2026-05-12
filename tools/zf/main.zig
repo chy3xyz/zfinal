@@ -30,7 +30,7 @@ pub fn main(init: std.process.Init) !void {
         return;
     };
 
-    // Collect remaining args for compatibility with existing code
+    // Collect all args for index-based access
     var args_list = std.ArrayList([]const u8).empty;
     defer args_list.deinit(allocator);
     try args_list.append(allocator, argv0);
@@ -52,19 +52,19 @@ pub fn main(init: std.process.Init) !void {
 
     switch (command) {
         .new => {
-            const project_name = args_iter.next() orelse {
+            if (args.len < 3) {
                 std.debug.print("Usage: {s} new <project_name>\n", .{argv0});
                 return;
-            };
-            try createProject(allocator, project_name);
+            }
+            try createProject(allocator, args[2]);
         },
         .generate => {
-            if (args.len < 3) {
+            if (args.len < 4) {
                 std.debug.print("Usage: {s} generate <type> <name>\n", .{args[0]});
-                std.debug.print("Types: controller, model, interceptor\n", .{});
+                std.debug.print("Types: controller, model, interceptor, plugin\n", .{});
                 return;
             }
-            try generateCode(allocator, args[2], if (args.len > 3) args[3] else "", false);
+            try generateCode(allocator, args[2], args[3], false);
         },
         .api => {
             if (args.len < 3) {
@@ -89,25 +89,11 @@ pub fn main(init: std.process.Init) !void {
             }
             try generateTest(allocator, args[2]);
         },
-        .docker => {
-            try generateDocker(allocator);
-        },
-        .deploy => {
-            try handleDeploy(allocator);
-        },
+        .docker => try generateDocker(allocator),
+        .deploy => try handleDeploy(allocator),
         .build_cmd => {
             std.debug.print("Building release binary...\n", .{});
-            const result = try std.process.run(allocator, io, .{
-                .argv = &[_][]const u8{ "zig", "build", "-Doptimize=ReleaseSafe" },
-            });
-            defer allocator.free(result.stdout);
-            defer allocator.free(result.stderr);
-
-            if (result.term == .exited and result.term.exited == 0) {
-                std.debug.print("✅ Build successful! Binary: zig-out/bin/<app_name>\n", .{});
-            } else {
-                std.debug.print("❌ Build failed:\n{s}\n", .{result.stderr});
-            }
+            std.debug.print("Run: zig build -Doptimize=ReleaseSafe\n", .{});
         },
         .serve => {
             std.debug.print("Starting development server...\n", .{});
@@ -118,12 +104,10 @@ pub fn main(init: std.process.Init) !void {
             std.debug.print("Run: zig build test\n", .{});
         },
         .version => {
-            std.debug.print("ZFinal CLI (zf) version 0.1.0\n", .{});
+            std.debug.print("ZFinal CLI (zf) version 0.3.0\n", .{});
             std.debug.print("Zig Web Framework inspired by JFinal\n", .{});
         },
-        .help => {
-            printHelp(args[0]);
-        },
+        .help => printHelp(args[0]),
     }
 }
 
@@ -559,8 +543,7 @@ fn generateTest(allocator: std.mem.Allocator, name: []const u8) !void {
     std.debug.print("✅ Generated test file: {s}\n", .{filename});
 }
 
-fn generateDocker(allocator: std.mem.Allocator) !void {
-    _ = allocator; // Suppress unused variable warning
+fn generateDocker(_: std.mem.Allocator) !void {
     const dockerfile_content =
         \\FROM alpine:latest
         \\

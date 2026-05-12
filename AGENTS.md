@@ -1,251 +1,140 @@
-# AGENTS.md - ZFinal Development Guide
+# AGENTS.md — ZFinal AI Development Guide
 
-This file provides guidance for AI agents working on the ZFinal project.
+This file provides guidance for AI coding agents (Claude Code, etc.) working with ZFinal.
 
 ## Project Overview
 
-ZFinal is a high-performance Zig web framework inspired by JFinal. It provides a minimalist API for building web applications with zero GC pauses and极致性能.
+ZFinal is a production-hardened Zig web framework (v0.3.0, Zig 0.16, ~94% readiness). Fiber-based async server, ActiveRecord ORM, plugin system, 17 utility kits.
 
-**Zig Version**: 0.14.0+  
-**License**: MIT  
-**Repository**: https://github.com/chy3xyz/zfinal
-
----
-
-## Build & Test Commands
-
-### Running Tests
+## Quick Commands
 
 ```bash
-# Run all unit tests
-zig build test
-
-# Run tests with verbose output
-zig build test --summary all
+zig build                 # Build framework + all examples
+zig build test            # Run 90 tests (88 pass, 2 skip)
+zig build run-hello       # Hello-world demo
+zig build run-blog        # Blog with SQLite
+zig build run-htmx        # HTMX interactive app
+zig build run-production  # Production example
+zig build run-ws          # WebSocket demo
+zig build install-zf      # Build CLI tool -> zig-out/bin/zf
 ```
 
-### Running Examples/Demos
-
-```bash
-# Hello World demo (basic routing, JSON, cookies)
-zig build run-demo
-
-# Blog demo (full CRUD, database, session)
-zig build run-blog
-
-# HTMX demo (server-side rendering, SPA-like UX)
-zig build run-htmx
-
-# WebSocket demo
-zig build run-ws-demo
-
-# Single-file blog app
-zig build run-blog-app
-
-# Edge computing demo
-zig build run-edge
-
-# PocketBase Lite demo
-zig build run-pb
-
-# CLI tool
-zig build install
-```
-
-### Building
-
-```bash
-# Build release version
-zig build -Doptimize=ReleaseSafe
-zig build -Doptimize=ReleaseFast
-
-# Build with specific database support
-zig build -Dpostgres=true -Dmysql=true -Dsqlite=true
-
-# Install CLI tool
-zig build install
-```
-
----
-
-## Code Style Guidelines
-
-### General Principles
-
-- Follow [Zig's official style guide](https://ziglang.org/documentation/master/#Style-Guide)
-- Write small, focused functions
-- Use meaningful variable and function names
-- Add comments for complex logic
-- Keep functions under 50 lines when possible
-- End all files with a newline
-
-### Imports
-
-```zig
-// Standard import at the top of every file
-const std = @import("std");
-
-// Local imports use relative paths
-const Context = @import("context.zig");
-const Params = @import("params.zig");
-```
-
-### Error Handling
-
-- Use `!void` or `!T` for functions that can fail
-- Always handle errors with `try` or `catch`
-- Propagate errors up the call stack when appropriate
-
-```zig
-pub fn myHandler(ctx: *Context) !void {
-    // Use try for functions that return error unions
-    try ctx.renderJson(.{ .status = "ok" });
-    
-    // For optional handling
-    const value = ctx.getPara("name") catch null;
-}
-```
-
-### Naming Conventions
-
-- **Functions**: `camelCase` (e.g., `getHeader`, `parseQuery`)
-- **Types/Structs**: `PascalCase` (e.g., `Context`, `ConnectionPool`)
-- **Constants**: `PascalCase` for typed constants, `SCREAMING_SNAKE` for enum values
-- **Variables**: `camelCase` (e.g., `allocator`, `queryParams`)
-- **Files**: `snake_case.zig` (e.g., `context.zig`, `http_kit.zig`)
-
-### Structs and Types
-
-```zig
-// Public struct with type inference
-pub const MyStruct = struct {
-    name: []const u8,
-    value: i32,
-    
-    // Associated functions go inside
-    pub fn init(name: []const u8, value: i32) MyStruct {
-        return .{ .name = name, .value = value };
-    }
-    
-    pub fn deinit(self: *MyStruct) void {
-        // cleanup
-    }
-};
-```
-
-### Testing
-
-Tests are defined inline within each module:
-
-```zig
-test "my test name" {
-    const result = myFunction();
-    try std.testing.expectEqual(expected, result);
-}
-```
-
-- Test names should be descriptive: `test "validator email validation"`
-- Place tests at the bottom of the file or in a dedicated test block
-- Use `std.testing.expectEqual`, `expect`, etc.
-
-### Module Organization
+## Architecture
 
 ```
 src/
-├── main.zig          # Public API exports
-├── core/             # Core framework (router, context, server)
-├── db/               # Database, ORM, connection pools
-├── kit/              # Utility kits (str_kit, hash_kit, etc.)
-├── interceptor/      # Interceptor (AOP) support
-├── validator/        # Input validation
-├── plugin/           # Plugin system
-├── template/         # Template rendering
-├── websocket/        # WebSocket support
-├── upload/           # File upload handling
-└── ...
+├── core/    # Server (fiber-based), Router, Context, Session, Logger, Metrics, Shutdown
+├── db/      # DB wrapper, SQLite/PG/MySQL drivers, ConnectionPool, ORM, SQL templates
+├── plugin/  # Cache (stable), Cron (stable), Redis (stable), MQTT/P2P/DID/Agent (experimental)
+├── kit/     # 17 utilities: str, hash, json, file, validate, regex, random (CSPRNG), etc.
+├── interceptor/  # Auth, CORS, Logging, CSRF token interceptors
+├── token/    # CSRF token generation/validation (32-byte random, Base64)
+├── captcha/  # Numeric/alpha/alphanumeric/math captcha
+├── template/ # Template engine (vars, loops, conditions, includes, extends, layouts)
+├── i18n/     # Internationalization with pluralization
+├── websocket/# WebSocket with ping/pong, close handshake
+└── main.zig  # Public API exports
 ```
 
-### Conventions
-
-1. **Allocation**: Always use the allocator passed to functions
-2. **Cleanup**: Use `defer` for cleanup, especially for `deinit()` calls
-3. **Optionals**: Use `?T` for optional types, `orelse` for default values
-4. **Slices**: Prefer `[]const u8` for read-only strings, `[]u8` when modifying
-5. **Hash Maps**: Use `std.StringHashMap` for string-keyed maps
-
----
-
-## Common Patterns
-
-### Handler Functions
+## Pattern: Create a ZFinal Application
 
 ```zig
-// Standard handler signature
-fn myHandler(ctx: *zfinal.Context) !void {
-    // Get query parameters
-    const name = try ctx.getParaDefault("name", "Guest");
-    
-    // Return JSON response
-    try ctx.renderJson(.{ .greeting = "Hello, {s}!" });
-    
-    // Or return text/HTML
-    try ctx.renderText("Hello!");
-    try ctx.renderHtml("<p>Hello!</p>");
+const std = @import("std");
+const zfinal = @import("zfinal");
+
+pub fn main() !void {
+    var app = zfinal.ZFinal.init(std.heap.page_allocator);
+    defer app.deinit();
+
+    // Routes
+    try app.get("/", indexHandler);
+    try app.post("/api/users", createUser);
+
+    // Global interceptors
+    try app.addGlobalInterceptor(zfinal.CORSInterceptor);
+
+    // Start fiber-based async server
+    try app.start();
+}
+
+fn indexHandler(ctx: *zfinal.Context) !void {
+    try ctx.renderJson(.{ .message = "Hello, ZFinal!" });
 }
 ```
 
-### Adding Routes
+## Pattern: Handler with Database
 
 ```zig
-var app = zfinal.ZFinal.init(allocator);
-defer app.deinit();
+fn listUsers(ctx: *zfinal.Context) !void {
+    const db = try pool.acquire();
+    defer pool.release(db) catch {};
 
-try app.get("/path", handler);
-try app.post("/path", handler);
-try app.addRoute("/api/:id", handler);
+    const sql = "SELECT * FROM users ORDER BY id";
+    var result = try db.queryParams(@ptrCast(sql), &.{});
+    defer result.deinit();
+    // ... iterate result
+}
 ```
 
-### Database Operations
+## Pattern: CSRF-Protected POST
 
 ```zig
-// Use connection pool
-var pool = try zfinal.ConnectionPool.init(allocator, config);
-defer pool.deinit();
+var token_mgr = zfinal.TokenManager.init(allocator);
+defer token_mgr.deinit();
 
-const conn = try pool.getConnection();
-defer conn.release();
+fn showForm(ctx: *zfinal.Context) !void {
+    const token = try token_mgr.generate();
+    defer allocator.free(token);
+    // Render form with hidden <input name="csrf_token" value="{s}">
+}
 
-// Execute queries
-const result = try conn.exec("SELECT * FROM users");
+fn handleSubmit(ctx: *zfinal.Context) !void {
+    const submitted = try ctx.getPara("csrf_token") orelse return error.MissingToken;
+    if (!try token_mgr.validate(submitted)) {
+        ctx.res_status = .forbidden;
+        return try ctx.renderJson(.{ .err = "Invalid CSRF token" });
+    }
+    // Process form...
+}
 ```
 
----
+## Pattern: Structured Logging
 
-## Key Files Reference
+```zig
+var logger = zfinal.Logger.init(allocator);
+logger.setLevel(.info);
+logger.prefix = "myapp";
+zfinal.initGlobalLogger(logger);
 
-| File | Purpose |
-|------|---------|
-| `src/main.zig` | Public API exports |
-| `src/core/zfinal.zig` | Main ZFinal app |
-| `src/core/context.zig` | HTTP request/response context |
-| `src/core/router.zig` | Routing logic |
-| `src/db/model.zig` | Active Record ORM |
-| `src/db/pool.zig` | Database connection pool |
+zfinal.getLogger().info("request handled", .{
+    zfinal.Field{ .key = "method", .value = .{ .string = "GET" } },
+    zfinal.Field{ .key = "status", .value = .{ .int = 200 } },
+});
 
----
+// Build with log level: zig build -Dlog-level=debug
+```
 
-## Contributing
+## Pattern: Graceful Shutdown
 
-1. Fork the repo and create a feature branch
-2. Follow Zig style guide
-3. Add tests for new functionality
-4. Update documentation
-5. Run `zig build test` before submitting PR
+```zig
+zfinal.shutdown.registerHandlers();
+// ... start server, check shutdown.isShuttingDown() in loops
+```
 
----
+## Key Rules
 
-## Useful Resources
+1. **Allocator**: Always pass allocator explicitly, never use global/static
+2. **Cleanup**: Every `init()` needs a `defer x.deinit()` 
+3. **Context**: Created per-request, `defer ctx.deinit()` frees all resources
+4. **SQL safety**: Use `execParams`/`queryParams` with bound params. Never concatenate user input into SQL. `findWhere` requires `comptime` WHERE clause.
+5. **CSRF**: Use `TokenManager` for all state-changing endpoints
+6. **Error handling**: Handlers return `!void`, errors become 500 with structured log
+7. **Plugin deps**: Cache/Cron/Redis are stable. MQTT/P2P/DID/Agent are experimental.
 
-- [Zig Documentation](https://ziglang.org/documentation/master/)
-- [Zig Standard Library](https://pkg.zig.std/)
-- [Zig Style Guide](https://ziglang.org/documentation/master/#Style-Guide)
+## Zig 0.16 Specifics
+
+- IO: `std.Io` (capital I), use `io_instance.zig` for global instance
+- ArrayList: `.empty` (no allocator), `deinit(allocator)` 
+- Mutex: `std.Io.Mutex.init` (no parens), `lock(io)`/`unlock(io)`
+- Format: `"{}" ` for errors, `"{s}"` for slices, `"{d}"` for integers
+- Server accept: returns `Stream` (no `.address` field, use `getpeername` for remote IP)
