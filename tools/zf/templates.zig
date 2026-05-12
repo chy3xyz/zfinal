@@ -65,9 +65,7 @@ pub const main_zig =
     \\const Interceptors = @import("interceptor/interceptors.zig");
     \\
     \\pub fn main() !void {
-    \\    
-    \\    
-    \\    const allocator = std.heap.smp_allocator;
+    \\    const allocator = std.heap.page_allocator;
     \\
     \\    // Initialize Database
     \\    const db_config = Config.DBConfig.get();

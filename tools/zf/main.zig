@@ -527,11 +527,7 @@ fn generateTest(allocator: std.mem.Allocator, name: []const u8) !void {
         \\const testing = std.testing;
         \\
         \\test "{s} basic functionality" {{
-        \\    // Setup
-        \\    var gpa = std.heap.GeneralPurposeAllocator(.{{}}){{}};
-        \\    
-        \\    const allocator = std.heap.smp_allocator;
-        \\
+        \\    const allocator = std.testing.allocator;
         \\    // Test logic here
         \\    try testing.expect(true);
         \\}}
