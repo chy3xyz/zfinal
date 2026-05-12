@@ -3,114 +3,153 @@ const http = std.http;
 const Router = @import("router.zig").Router;
 const HttpMethod = @import("router.zig").HttpMethod;
 const Context = @import("context.zig").Context;
-const ThreadPool = @import("thread_pool.zig").ThreadPool;
-const io_instance = @import("../io_instance.zig");
 const getLog = @import("logger.zig").getLogger;
 
 pub const ServerConfig = struct {
-    host: []const u8 = "127.0.0.1",
+    host: []const u8 = "0.0.0.0",
     port: u16 = 8080,
-    thread_count: u32 = 0, // 0 = cpu_count * 2
+    thread_count: u32 = 0,
     max_connections: usize = 10000,
-    /// Maximum time (ms) to wait for a request head after accepting a connection.
-    /// Connection is closed if the client sends no data within this window.
-    read_timeout_ms: u64 = 30000,
-    /// Maximum request body size in bytes (default: 10MB).
+    max_requests_per_conn: usize = 100,
     max_body_size: usize = 10 * 1024 * 1024,
+};
+
+/// Error set for server operations. Wrapped to fit Group.async std.Io.Cancelable!void constraint.
+pub const ServerError = error{
+    ListenFailed,
+    AcceptFailed,
+    AddressInvalid,
+};
+
+/// Cross-fiber error container. Stores the first fatal error as a message.
+const ErrorHandle = struct {
+    err: bool = false,
+
+    fn set(self: *ErrorHandle) void {
+        self.err = true;
+    }
 };
 
 pub const Server = struct {
     allocator: std.mem.Allocator,
     router: *Router,
     config: ServerConfig,
-    address: std.Io.net.IpAddress,
-    pool: ?ThreadPool = null,
+    active_conns: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
+    err_handle: ErrorHandle = .{},
 
     pub fn init(allocator: std.mem.Allocator, router: *Router, config: ServerConfig) !Server {
-        const address = try std.Io.net.IpAddress.parseIp4(config.host, config.port);
-        return Server{
-            .allocator = allocator,
-            .router = router,
-            .config = config,
-            .address = address,
-        };
+        return .{ .allocator = allocator, .router = router, .config = config };
     }
 
+    /// Start the server. Blocks until shutdown or fatal error.
     pub fn start(self: *Server) !void {
-        const thread_count: u32 = if (self.config.thread_count == 0)
-            @intCast(try std.Thread.getCpuCount() * 2)
+        const tc: u32 = if (self.config.thread_count == 0)
+            @intCast(try std.Thread.getCpuCount())
         else
             self.config.thread_count;
 
-        var pool = try ThreadPool.init(self.allocator, thread_count, self.config.max_connections);
-        self.pool = pool;
+        getLog().infoFmt("Server starting on http://{s}:{d} (threads={d})", .{ self.config.host, self.config.port, tc });
 
-        var server = try self.address.listen(io_instance.io, .{
-            .reuse_address = true,
-        });
-        defer server.deinit(io_instance.io);
+        var threaded = std.Io.Threaded.init(self.allocator, .{});
+        defer threaded.deinit();
+        const io = threaded.io();
 
-        getLog().infoFmt("Server listening on {s}:{d} (threads: {d}, max_conn: {d})", .{
-            self.config.host, self.config.port, thread_count, self.config.max_connections,
-        });
+        var group = std.Io.Group.init;
+        defer { _ = group.await(io) catch {}; }
 
-        while (true) {
-            const connection = try server.accept(io_instance.io);
+        const addr = try std.Io.net.IpAddress.parseIp4(self.config.host, self.config.port);
 
-            const task = try self.allocator.create(ConnectionTask);
-            task.* = .{
-                .server = self,
-                .connection = connection,
-            };
-            pool.submitRaw(handleConnectionTask, task) catch |err| {
-                std.debug.print("Failed to submit task: {}\n", .{err});
-                self.allocator.destroy(task);
-                connection.close(io_instance.io);
-                // Return 503 if queue is full
-                const response = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 19\r\n\r\nService Unavailable";
-                var write_buf: [256]u8 = undefined;
-                var writer = connection.writer(io_instance.io, &write_buf);
-                _ = writer.interface.writeAll(response) catch {};
-            };
-        }
-    }
+        // Spawn accept loop via Group.async. The wrapper satisfies std.Io.Cancelable!void.
+        // Real errors are caught and stored in self.err_handle.
+        group.async(io, acceptLoop, .{ io, self, addr, &group });
 
-    const ConnectionTask = struct {
-        server: *Server,
-        connection: std.Io.net.Stream,
-    };
+        // Block until all fibers complete (server shutdown or fatal error)
+        _ = group.await(io) catch {};
 
-    fn handleConnectionTask(task_ptr: *anyopaque) void {
-        const task: *ConnectionTask = @ptrCast(@alignCast(task_ptr));
-        defer task.connection.close(io_instance.io);
-        defer task.server.allocator.destroy(task);
-
-        var read_buffer: [4096]u8 = undefined;
-        var write_buffer: [4096]u8 = undefined;
-        var stream_reader = task.connection.reader(io_instance.io, &read_buffer);
-        var stream_writer = task.connection.writer(io_instance.io, &write_buffer);
-        var http_server = http.Server.init(&stream_reader.interface, &stream_writer.interface);
-
-        var request = http_server.receiveHead() catch |err| {
-            std.debug.print("Error receiving head: {}\n", .{err});
-            return;
-        };
-
-        var ctx = Context.init(&request, task.server.allocator);
-        defer ctx.deinit();
-
-        const target = request.head.target;
-        const path = if (std.mem.indexOfScalar(u8, target, '?')) |q_pos|
-            target[0..q_pos]
-        else
-            target;
-
-        const method = HttpMethod.fromString(@tagName(request.head.method)) orelse .GET;
-
-        task.server.router.execute(path, method, &ctx) catch |err| {
-            std.debug.print("Handler error: {}\n", .{err});
-            ctx.res_status = .internal_server_error;
-            ctx.renderText("Internal Server Error") catch {};
-        };
+        // Check for fatal errors captured by the wrapper
+        if (self.err_handle.err) return error.ServerFatalError;
     }
 };
+
+// ============================================================
+// Inner business logic — returns full ServerError!void
+// ============================================================
+
+fn acceptLoopImpl(io: std.Io, server: *Server, addr: std.Io.net.IpAddress, group: *std.Io.Group) !void {
+    var listener = try addr.listen(io, .{ .reuse_address = true });
+    defer listener.deinit();
+
+    getLog().infoFmt("Server listening on http://{s}:{d}", .{ server.config.host, server.config.port });
+
+    var backoff: u64 = 1;
+    while (true) {
+        const conn = listener.accept(io) catch |err| {
+            getLog().warnFmt("Accept error: {} — retrying in {d}ms", .{ err, backoff });
+            io.sleep(std.Io.Duration.fromMilliseconds(@intCast(backoff)), .awake) catch {};
+            backoff = @min(backoff * 2, 1000);
+            continue;
+        };
+        backoff = 1;
+
+        const current = server.active_conns.load(.monotonic);
+        if (current >= server.config.max_connections) {
+            const body = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 19\r\nConnection: close\r\n\r\nService Unavailable";
+            var wbuf: [256]u8 = undefined;
+            var writer = conn.writer(io, &wbuf);
+            _ = writer.interface.writeAll(body) catch {};
+            conn.close(io);
+            continue;
+        }
+
+        group.async(io, handleConn, .{ io, conn, server });
+    }
+}
+
+/// Handler fiber — manages keep-alive request loop for one connection.
+fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cancelable!void {
+    defer conn.close(io);
+    defer _ = server.active_conns.fetchSub(1, .monotonic);
+    _ = server.active_conns.fetchAdd(1, .monotonic);
+
+    var read_buf: [4096]u8 = undefined;
+    var write_buf: [4096]u8 = undefined;
+    var reader = conn.reader(io, &read_buf);
+    var writer = conn.writer(io, &write_buf);
+    var http_srv = http.Server.init(&reader.interface, &writer.interface);
+    var req_count: usize = 0;
+
+    while (req_count < server.config.max_requests_per_conn) : (req_count += 1) {
+        var request = http_srv.receiveHead() catch break;
+        dispatch(&request, server) catch break;
+        if (request.head.version != .@"HTTP/1.1") break;
+        if (!request.head.keep_alive) break;
+    }
+}
+
+fn dispatch(request: *http.Server.Request, server: *Server) !void {
+    const target = request.head.target;
+    const path = if (std.mem.indexOfScalar(u8, target, '?')) |q| target[0..q] else target;
+    const method = HttpMethod.fromString(@tagName(request.head.method)) orelse .GET;
+
+    var ctx = Context.init(request, server.allocator);
+    ctx.max_body_size = server.config.max_body_size;
+    defer ctx.deinit();
+
+    server.router.execute(path, method, &ctx) catch |err| {
+        getLog().errFmt("Handler error: {} for {s} {s}", .{ err, @tagName(request.head.method), target });
+        ctx.res_status = .internal_server_error;
+        ctx.renderText("Internal Server Error") catch {};
+    };
+}
+
+// ============================================================
+// Group.async wrappers — constrain return type to std.Io.Cancelable!void
+// ============================================================
+
+fn acceptLoop(io: std.Io, server: *Server, addr: std.Io.net.IpAddress, group: *std.Io.Group) std.Io.Cancelable!void {
+    acceptLoopImpl(io, server, addr, group) catch |e| {
+        getLog().errFmt("Server fatal error: {}", .{e});
+        server.err_handle.set();
+        group.cancel(io);
+    };
+}
