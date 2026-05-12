@@ -2,12 +2,12 @@
 
 ## 1. 环境要求
 
-- **Zig**: 0.14.0 或更高版本
+- **Zig**: 0.16.0
 - **OS**: macOS, Linux, Windows (WSL)
 
-## 2. 安装 zfctl 工具
+## 2. 安装 zf 工具
 
-`zfctl` 是 ZFinal 的命令行工具，用于快速创建项目脚手架。
+`zf` 是 ZFinal 的命令行工具，用于快速创建项目脚手架。
 
 ```bash
 # 克隆仓库
@@ -17,16 +17,16 @@ cd zfinal
 # 编译并安装工具
 zig build install
 
-# 将工具添加到 PATH (可选，或者直接使用 ./zig-out/bin/zfctl)
+# 将工具添加到 PATH (可选，或者直接使用 ./zig-out/bin/zf)
 export PATH=$PATH:$(pwd)/zig-out/bin
 ```
 
 ## 3. 创建第一个项目
 
-使用 `zfctl` 创建一个名为 `myapp` 的新项目：
+使用 `zf` 创建一个名为 `myapp` 的新项目：
 
 ```bash
-zfctl new myapp
+zf new myapp
 ```
 
 这将生成以下目录结构：
