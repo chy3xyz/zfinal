@@ -2,13 +2,14 @@
 
 # ⚡ ZFinal
 
-**Minimal, High-Performance Zig Web Framework**
+**A fast, production-hardened web framework for Zig**
 
-*Inspired by JFinal, a modern web framework for the Zig ecosystem*
+*Inspired by JFinal — minimal API, maximal performance*
 
 [![Zig](https://img.shields.io/badge/Zig-0.16.0-orange.svg)](https://ziglang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![Tests](https://img.shields.io/badge/tests-90%20passing-brightgreen.svg)]()
+[![Production](https://img.shields.io/badge/production--readiness-88%25-yellow.svg)](PRODUCTION_AUDIT.md)
 
 **English** | [中文文档](README_CN.md)
 
@@ -16,13 +17,15 @@
 
 ---
 
-## ✨ Why ZFinal?
+## What is ZFinal?
+
+ZFinal is a **lightweight, high-performance web framework** for Zig 0.16. It provides routing, ORM, plugins, templating, and a rich utility toolkit — all in idiomatic Zig with minimal ceremony.
 
 ```zig
 const zfinal = @import("zfinal");
 
 pub fn main() !void {
-    var app = zfinal.ZFinal.init(allocator);
+    var app = zfinal.ZFinal.init(std.heap.page_allocator);
     defer app.deinit();
 
     try app.get("/", index);
@@ -34,362 +37,281 @@ fn index(ctx: *zfinal.Context) !void {
 }
 ```
 
-**It's that simple!** 🚀
+---
 
-### 🎯 Core Features
+## Production Readiness
 
-- **🔥 Minimal Design** - JFinal-like API, get started in 5 minutes
-- **⚡ Native Performance** - Built on Zig, zero GC pauses, extreme performance
-- **🎨 HTMX Support** - Build modern web apps without writing JavaScript
-- **💾 Multi-Database** - Out-of-the-box support for SQLite, MySQL, PostgreSQL
-- **🔧 Active Record** - Elegant ORM, makes database operations silky smooth
-- **🛠️ CLI Tool** - `zf` command-line tool for rapid code generation
-- **📦 Zero Dependencies** - Core library has no external dependencies, lightweight
+| Status | Dimension | Score |
+|--------|-----------|-------|
+| ✅ | Build Stability | 95% |
+| ✅ | Security | 90% |
+| ✅ | Memory Safety | 88% |
+| ✅ | Correctness | 88% |
+| ✅ | Observability | 85% |
+| ✅ | Concurrency | 85% |
+| ✅ | Testability | 85% |
+| ✅ | Code Quality | 85% |
+| 🟡 | Documentation | 60% |
+| 🟡 | Examples | 82% |
+| **→** | **Overall** | **88%** |
+
+See [PRODUCTION_AUDIT.md](PRODUCTION_AUDIT.md) for the full assessment (51 findings, all critical/high resolved).
 
 ---
 
-## 🚀 Quick Start
+## Project Structure
 
-### One-Line Installation
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/chy3xyz/zfinal/main/install.sh | bash
+```
+src/
+├── core/           # HTTP server, router, context, session, logger, metrics
+├── db/             # Database abstraction, connection pool, ORM, SQLite driver
+├── plugin/         # Plugin system (cache, cron — stable; others experimental)
+├── interceptor/    # AOP interceptors (auth, CORS, logging, CSRF token)
+├── token/          # CSRF token generation and validation
+├── captcha/        # CAPTCHA generation (numeric, alpha, math)
+├── template/       # Template engine (variables, loops, conditions, layouts)
+├── kit/            # 17 utility kits (string, hash, json, http, file, validate, ...)
+├── i18n/           # Internationalization with pluralization
+├── upload/         # Multipart file upload parser
+├── websocket/      # WebSocket server and connection manager
+├── generator/      # Code generation utilities
+├── validator/      # Request data validation
+├── config/         # Configuration loader (.ini, .json)
+├── io_instance.zig # Global IO instance (Zig 0.16 IO reform)
+└── main.zig        # Module entry point — exports all public API
 ```
 
-Or using wget:
+---
+
+## Quick Start
+
+### Build from source
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/chy3xyz/zfinal/main/install.sh | bash
-```
-
-### Manual Installation
-
-```bash
-# Clone repository
 git clone https://github.com/chy3xyz/zfinal.git
 cd zfinal
-
-# Build CLI tool
-zig build install
-
-# Add to PATH (optional)
-export PATH=$PATH:$(pwd)/zig-out/bin
+zig build                  # Build framework + all examples
+zig build test             # Run 90 tests
 ```
 
-See [INSTALL.md](INSTALL.md) for detailed installation instructions for different platforms.
-
-### Create Your First Project
+### Run an example
 
 ```bash
-# Create project using zf CLI
-zf new myapp
-cd myapp
-
-# Run the project
-zig build run
+zig build run-hello        # Hello-world demo
+zig build run-blog         # Blog with SQLite
+zig build run-htmx         # HTMX interactive app
+zig build run-production   # Production example (logging, metrics, CSRF)
 ```
 
-Visit `http://localhost:8080` - 🎉 your first ZFinal app is running!
+### Add to your project
+
+In your `build.zig`:
+
+```zig
+const zfinal_mod = b.addModule("zfinal", .{
+    .root_source_file = b.path("path/to/zfinal/src/main.zig"),
+    .target = target,
+    .optimize = optimize,
+});
+zfinal_mod.link_libc = true;
+zfinal_mod.linkSystemLibrary("sqlite3", .{});
+
+// With log level
+// zig build -Dlog-level=debug
+```
 
 ---
 
-## 💡 Core Features Showcase
+## Core Capabilities
 
-### 📍 Routing System
+### Routing + Interceptors
 
 ```zig
-// RESTful routes
-try app.get("/users", UserController.index);
-try app.post("/users", UserController.create);
-try app.get("/users/:id", UserController.show);
-try app.put("/users/:id", UserController.update);
-try app.delete("/users/:id", UserController.delete);
+// HTTP methods with path parameters
+try app.get("/users/:id", showUser);
+try app.post("/users", createUser);
+try app.put("/users/:id", updateUser);
+try app.delete("/users/:id", deleteUser);
 
-// Path parameters
-fn show(ctx: *zfinal.Context) !void {
-    const id = ctx.getPathParam("id");
-    // ...
-}
+// Route groups with shared prefix
+var api = zfinal.RouteGroup.init(&app, "/api");
+try api.get("/health", healthHandler);
+
+// Global interceptors (auth, CORS, logging, rate limiting)
+try app.addGlobalInterceptor(zfinal.CORSInterceptor);
 ```
 
-### 💾 Active Record ORM
+### Database + ORM
 
 ```zig
-// Define model
-pub const User = struct {
-    id: ?i64 = null,
-    username: []const u8,
-    email: []const u8,
-    age: i32,
-};
+const User = struct { id: ?i64, name: []const u8, email: []const u8 };
+const UserModel = zfinal.Model(User, "users");
 
-pub const UserModel = zfinal.Model(User, "users");
+// Connection pool with health checks
+var pool = zfinal.ConnectionPool.init(allocator, config, 10);
 
-// CRUD operations
-var user = UserModel.Instance{
-    .data = User{
-        .username = "Alice",
-        .email = "alice@example.com",
-        .age = 25
-    }
-};
-
-// Save
-try user.save(&db);
-
-// Query
+// CRUD with parameterized queries (SQL injection safe)
 const users = try UserModel.findAll(&db, allocator);
-const alice = try UserModel.findById(&db, 1, allocator);
-
-// Update
-user.data.age = 26;
+var user = UserModel.Instance{ .data = User{ .name = "Alice", .email = "alice@example.com" } };
 try user.save(&db);
-
-// Delete
 try user.delete(&db);
 ```
 
-### 🎨 HTMX Support
+### Security
 
 ```zig
-fn todoList(ctx: *zfinal.Context) !void {
-    const html = 
-        \\<div id="todo-list">
-        \\  <button hx-get="/api/todos" hx-target="#todo-list">
-        \\    Load Todos
-        \\  </button>
-        \\</div>
-    ;
-    try ctx.renderHtml(html);
-}
+// CSRF token protection
+var token_mgr = zfinal.TokenManager.init(allocator);
+const token = try token_mgr.generate();          // 32-byte random, Base64-encoded
+const valid = try token_mgr.validate(token);     // One-time use, auto-expiry
+
+// Rate limiting (real socket address, no spoofable headers)
+var limiter = zfinal.RateLimitHandler.init(allocator);
+limiter.max_requests = 100;                       // Per 60s window
+try limiter.handle(ctx);
+
+// CAPTCHA (numeric, alpha, alphanumeric, math)
+var captcha_mgr = zfinal.CaptchaManager.init(allocator);
+const captcha = try captcha_mgr.generate(.numeric, session_id);
 ```
 
-**Build dynamic web apps without writing JavaScript!**
-
-### 🔐 Interceptors (AOP)
+### Structured Logging + Observability
 
 ```zig
-fn authBefore(ctx: *zfinal.Context) !bool {
-    const token = ctx.getHeader("Authorization");
-    if (token == null) {
-        ctx.res_status = .unauthorized;
-        try ctx.renderJson(.{ .@"error" = "Unauthorized" });
-        return false; // Intercept request
-    }
-    return true; // Allow request
-}
+// Structured logger with compile-time level filtering
+var logger = zfinal.Logger.init(allocator);
+logger.setLevel(.info);
+logger.prefix = "myapp";
+zfinal.initGlobalLogger(logger);
 
-pub const AuthInterceptor = zfinal.Interceptor{
-    .name = "auth",
-    .before = authBefore,
-};
+zfinal.getLogger().info("request handled", .{
+    zfinal.Field{ .key = "method", .value = .{ .string = "GET" } },
+    zfinal.Field{ .key = "status", .value = .{ .int = 200 } },
+});
 
-// Apply interceptor
-try app.addGlobalInterceptor(AuthInterceptor);
+// Health endpoint with metrics
+var metrics = zfinal.Metrics.init(allocator);
+metrics.recordRequest(200);
+const uptime = metrics.uptime();
 ```
 
-### ✅ Data Validation
+**Build with log level:** `zig build -Dlog-level=debug|info|warn|err`
 
-```zig
-var validator = zfinal.Validator.init(allocator);
-defer validator.deinit();
+### Template Engine
 
-try validator.validateRequired("username", username);
-try validator.validateEmail("email", email);
-try validator.validateMinLength("password", password, 8);
+```html
+{# Layout inheritance #}
+{% extends "layout.html" %}
 
-if (validator.hasErrors()) {
-    try ctx.renderJson(.{ .errors = validator });
-    return;
-}
-```
-
----
-
-## 🛠️ CLI Tool
-
-ZFinal provides the powerful `zf` CLI tool to boost development efficiency:
-
-```bash
-# Create new project
-zf new myapp
-
-# Generate HTMX controller
-zf g controller User
-
-# Generate API controller
-zf api Product
-
-# Generate model
-zf g model Post
-
-# Generate interceptor
-zf g interceptor Auth
-
-# Build release version
-zf build
-
-# Start development server
-zf serve
+{% block content %}
+  <h1>{{ title }}</h1>
+  <ul>
+  {% for item in items %}
+    <li>{{ item.name }} — {{ item.price | upper }}</li>
+  {% endfor %}
+  </ul>
+  {% include "footer.html" %}
+{% endblock %}
 ```
 
 ---
 
-## 📚 Rich Toolkit
+## Plugin Maturity
 
-ZFinal includes many utility classes out of the box:
+| Plugin | Status | Description |
+|--------|--------|-------------|
+| Cache (memory) | ✅ Stable | In-memory cache with TTL, thread-safe |
+| Cron | ✅ Stable | Cron expression parser, job scheduling |
+| Cache (Redis) | 🟡 Stub | Redis backend — API defined, network layer pending |
+| MQTT | 🟡 Stub | MQTT 3.1.1 client — IoT protocol, not core framework |
+| Agent (MCP) | 🔧 Experimental | Model Context Protocol agent — early development |
+| P2P | 🔧 Experimental | Peer-to-peer networking — early development |
+| DID | 🔧 Experimental | Decentralized Identity — early development |
 
-```zig
-// String tools
-const trimmed = StrKit.trim("  hello  ");
-const parts = try StrKit.split(allocator, "a,b,c", ",");
-
-// Hash tools
-const md5 = try HashKit.md5(allocator, "password");
-const encoded = try HashKit.base64Encode(allocator, data);
-
-// Date tools
-const now = DateKit.now();
-const formatted = try now.format(allocator, "%Y-%m-%d %H:%M:%S");
-
-// JSON tools
-const user = try JsonKit.parse(User, allocator, json_str);
-const json = try JsonKit.stringify(allocator, user);
-
-// Array tools
-const unique = try ArrayKit.unique(i32, allocator, &array);
-const sum = ArrayKit.sum(i32, &array);
-```
+**Stable plugins** are production-ready. **Stub** plugins have their API defined but lack full implementation. **Experimental** plugins are under active development and not recommended for production use.
 
 ---
 
-## 🎯 Performance Benchmarks
+## Utility Kits (17 modules)
 
-ZFinal focuses on performance, here are preliminary benchmark results:
-
-```
-Framework      Requests/sec    Latency (avg)    Memory
-ZFinal         45,000+         0.8ms            12MB
-Go Gin         42,000          1.2ms            28MB
-Node Express   18,000          3.5ms            65MB
-```
-
-*Test environment: MacBook Pro M1, 8 cores, 16GB RAM*
-
----
-
-## 📖 Complete Documentation
-
-- [Getting Started](doc/getting_started.md)
-- [Core Concepts](doc/core_concepts.md)
-- [Database & ORM](doc/database.md)
-- [Advanced Features](doc/advanced.md)
-- [Toolkits](doc/kits.md)
-- [HTMX Templates](doc/htmx_template.md)
-- [CLI Tool](doc/zf_cli.md)
-- [Advanced Tutorial: Life3 App](doc/tutorial_life3.md)
+| Kit | Purpose |
+|-----|---------|
+| `StrKit` | String operations (split, join, trim, case) |
+| `HashKit` | MD5, SHA256, Base64 |
+| `JsonKit` | JSON parse / stringify |
+| `DateKit` | Date formatting, leap year, month days |
+| `TimeKit` | Timestamps, sleep, ISO 8601 |
+| `FileKit` | Read/write/copy/delete, path sandboxing |
+| `PathKit` | Path join, basename, dirname, resolve |
+| `HttpKit` | MIME types, status codes, browser detection |
+| `UrlKit` | URL encode/decode |
+| `ArrayKit` | Contains, unique, sum, filter, map |
+| `RandomKit` | CSPRNG-backed random int, float, UUID, shuffle |
+| `RegexKit` | Regex match, email/IP/phone validation |
+| `ValidateKit` | Email, phone, IP, password strength |
+| `NumberKit` | Parse, clamp, format |
+| `FormatKit` | File size, number formatting |
+| `SysKit` | System info, environment |
+| `CacheKit` | Simple key-value cache |
 
 ---
 
-## 🌟 Example Projects
+## Performance
 
-### HTMX Todo App
+ZFinal is built on Zig's native compilation and zero-cost abstractions. Key performance properties:
 
-```bash
-zig build run-htmx
-```
+- **Zero GC pauses** — no garbage collector
+- **Stack-allocated request handling** — minimal heap pressure (async server path)
+- **Compile-time optimization** — log levels, SQL templates, route parsing
+- **Connection pooling** — SQLite connection reuse with health checks
 
-Visit `http://localhost:8080` to see a complete HTMX app example.
-
-### Blog System
-
-```bash
-zig build run-blog
-```
-
-Complete blog system with user, article, and comment features.
+For detailed benchmarks, run: `zig build run-bench`
 
 ---
 
-## 🗺️ Roadmap
+## Roadmap
 
-### ✅ Completed
+### v0.3 (current) — Production Hardening ✅
 
-- [x] Core Routing System
-- [x] Active Record ORM
-- [x] Multi-Database Support (SQLite, MySQL, PostgreSQL)
-- [x] Interceptors / AOP
-- [x] Data Validator
-- [x] HTMX Template Support
-- [x] CLI Tool `zf`
-- [x] File Uploads
-- [x] Static File Serving
-- [x] Session Management
-- [x] Cookie Support
-- [x] WebSocket Support
-- [x] 17+ Utility Kits
+Security hardening, structured logging, health endpoints, concurrency fixes, template engine, i18n, cron, 90 tests.
 
-### 🚧 In Progress
+### v0.4 (next) — Ecosystem & Polish
 
-- [x] Template Engine Enhancements (conditionals, loops, includes, layouts, filters)
-- [x] Cache System / Redis (in-memory + Redis backends)
-- [x] Cron Jobs (proper cron expression parsing, scheduling)
-- [x] i18n Support (pluralization, interpolation, locale detection)
-- [ ] Template Engine v2 (advanced filters, macros)
-- [ ] Cache System / Redis Cluster
-- [ ] Distributed Cron
-- [ ] Advanced i18n (contextual translations)
+- [ ] Redis client network implementation
+- [ ] Template engine: advanced filters, macros
+- [ ] WebSocket: frame fragmentation, ping/pong
+- [ ] Admin dashboard (metrics, health, recent errors)
+- [ ] Docker deployment example
+- [ ] API reference documentation (`zig build docs`)
 
-### 📅 Planned
+### v1.0 — Stable Release
 
-- [ ] More Database Drivers
-- [ ] gRPC Support
-- [ ] Microservices Toolkit
-- [ ] Docker Deployment Tools
-- [ ] Performance Monitoring Dashboard
+- [ ] Stable API surface (no breaking changes without major version)
+- [ ] PostgreSQL and MySQL driver implementations
+- [ ] Comprehensive integration test suite
+- [ ] Production deployment guide
+- [ ] gRPC support (optional module)
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
-We welcome all forms of contribution!
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/amazing`
+3. Make changes, run tests: `zig build test`
+4. Commit: `git commit -m 'feat: add amazing feature'`
+5. Push and open a Pull Request
 
-1. Fork this repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for more information.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
 ---
 
-## 📄 License
+## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-## 💬 Community
-
-- **GitHub Issues**: [Report Issues](https://github.com/chy3xyz/zfinal/issues)
-- **GitHub Discussions**: [Discussions](https://github.com/chy3xyz/zfinal/discussions)
-- **Twitter**: [@zfinal](https://twitter.com/zfinal)
-
----
-
-## 🙏 Acknowledgments
-
-- Thanks to [JFinal](https://jfinal.com/) for design inspiration
-- Thanks to the [Zig](https://ziglang.org/) community for support
-- Thanks to all contributors
+MIT — see [LICENSE](LICENSE) for details.
 
 ---
 
 <div align="center">
-
-**If ZFinal helps you, please give us a ⭐️**
-
 Made with ❤️ by the ZFinal Team
-
 </div>

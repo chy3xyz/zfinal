@@ -40,6 +40,8 @@ desktop.ini
 # Project specific
 /testapp*/
 /myapp*/
+/test_sqlite*
+/test_transient*
 
 
 # Temporary files
