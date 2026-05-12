@@ -5,11 +5,14 @@ const params = @import("params.zig");
 /// with convenience methods for query params, path params, cookies,
 /// headers, attributes, file uploads, and response rendering.
 ///
-/// Created per-request by Server/AsyncServer. Call `deinit()` after use.
+/// Created per-request by Server. Call `deinit()` after use.
 pub const Context = struct {
     req: *std.http.Server.Request,
     allocator: std.mem.Allocator,
     res_status: std.http.Status = .ok,
+    /// Enable response compression (gzip/deflate) when client supports it.
+    /// Automatically set based on Accept-Encoding header in render* methods.
+    compress_enabled: bool = true,
     /// Remote address of the client (set by Server/AsyncServer at accept time).
     remote_addr: ?std.Io.net.IpAddress = null,
     /// Maximum request body size in bytes (default 10MB).
@@ -239,6 +242,45 @@ pub const Context = struct {
 
     pub fn removeCookie(self: *Context, name: []const u8) !void {
         try self.setCookie(name, "", 0);
+    }
+
+    /// Check if the client accepts gzip encoding.
+    fn clientAcceptsGzip(self: *Context) bool {
+        if (!self.compress_enabled) return false;
+        const accept = self.getHeader("Accept-Encoding") orelse return false;
+        return std.mem.indexOf(u8, accept, "gzip") != null;
+    }
+
+    /// Apply gzip compression to a response body using std.compress.flate.
+    /// Returns the compressed data, or the original body if compression fails/declines.
+    fn compressBody(self: *Context, body: []const u8) !struct { data: []const u8, is_compressed: bool } {
+        if (body.len < 256 or !self.clientAcceptsGzip()) return .{ .data = body, .is_compressed = false };
+
+        var buf = std.ArrayList(u8).empty;
+        // Gzip container wraps deflate with header + footer (handled by flate.Container.gzip)
+        const gzip_hdr = std.compress.flate.Container.gzip.header();
+        try buf.appendSlice(self.allocator, gzip_hdr);
+
+        // Use flate Huffman compressor for gzip
+        var w = buf.writer();
+        const Compress = std.compress.flate.Compress;
+        var compressor = Compress.Raw.init(&w, try self.allocator.alloc(u8, 8192), .gzip) catch {
+            buf.deinit(self.allocator);
+            return .{ .data = body, .is_compressed = false };
+        };
+        compressor.writer.writeAll(body) catch {
+            buf.deinit(self.allocator);
+            return .{ .data = body, .is_compressed = false };
+        };
+        compressor.close() catch {
+            buf.deinit(self.allocator);
+            return .{ .data = body, .is_compressed = false };
+        };
+
+        const gzip_footer = std.compress.flate.Container.gzip.footer();
+        try buf.appendSlice(self.allocator, gzip_footer);
+
+        return .{ .data = buf.items, .is_compressed = true };
     }
 
     // === Rendering ===

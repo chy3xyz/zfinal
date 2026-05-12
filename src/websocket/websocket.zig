@@ -122,9 +122,17 @@ pub const WebSocket = struct {
     stream: std.Io.net.Stream,
     closed: bool = false,
     close_sent: bool = false,
+    /// Buffer for reassembling fragmented messages.
+    frag_buf: std.ArrayList(u8) = undefined,
+    frag_opcode: OpCode = .text,
 
     pub fn init(allocator: std.mem.Allocator, stream: std.Io.net.Stream) WebSocket {
-        return .{ .allocator = allocator, .stream = stream };
+        return .{ .allocator = allocator, .stream = stream, .frag_buf = std.ArrayList(u8).empty };
+    }
+
+    pub fn deinit(self: *WebSocket) void {
+        self.frag_buf.deinit(self.allocator);
+        self.close();
     }
 
     fn writeFrame(self: *WebSocket, opcode: OpCode, data: []const u8) !void {
@@ -157,6 +165,26 @@ pub const WebSocket = struct {
         self.writeFrame(.pong, data) catch {};
     }
 
+    /// Send a large message as fragmented frames (chunked at ~4KB boundaries).
+    /// Use this for messages > 8KB to avoid buffer overflow at the receiver.
+    pub fn sendFragmented(self: *WebSocket, opcode: OpCode, data: []const u8) !void {
+        const chunk_size = 4096;
+        var offset: usize = 0;
+        while (offset < data.len) {
+            const end = @min(offset + chunk_size, data.len);
+            const fin = end >= data.len;
+            const chunk_opcode: OpCode = if (offset == 0) opcode else .continuation;
+
+            const frame = Frame{ .fin = fin, .opcode = chunk_opcode, .masked = false, .payload = data[offset..end], .allocator = self.allocator };
+            const encoded = try frame.encode(self.allocator);
+            defer self.allocator.free(encoded);
+            var wbuf: [4096]u8 = undefined;
+            var writer = self.stream.writer(io_instance.io, &wbuf);
+            try writer.interface.writeAll(encoded);
+            offset = end;
+        }
+    }
+
     /// Send close frame with status code and optional reason.
     pub fn sendClose(self: *WebSocket, code: u16, reason: []const u8) void {
         if (self.close_sent) return;
@@ -170,7 +198,7 @@ pub const WebSocket = struct {
     }
 
     /// 接收消息. Returns Frame on success. Caller must frame.deinit().
-    /// Returns null for control frames (ping/pong/close) that are handled internally.
+    /// Handles fragmented messages transparently — reassembles continuation frames.
     pub fn receive(self: *WebSocket) !Frame {
         while (true) {
             var buf: [8192]u8 = undefined;
@@ -199,7 +227,34 @@ pub const WebSocket = struct {
                     frame.deinit();
                     return error.ConnectionClosed;
                 },
-                else => return frame,
+                .continuation => {
+                    // Append to fragment buffer
+                    try self.frag_buf.appendSlice(self.allocator, frame.payload);
+                    frame.deinit();
+                    if (frame.fin) {
+                        // Final fragment — return reassembled message
+                        const complete = try self.allocator.dupe(u8, self.frag_buf.items);
+                        self.frag_buf.clearRetainingCapacity();
+                        return Frame{
+                            .fin = true,
+                            .opcode = self.frag_opcode,
+                            .masked = false,
+                            .payload = complete,
+                            .allocator = self.allocator,
+                        };
+                    }
+                    continue;
+                },
+                else => {
+                    if (!frame.fin) {
+                        // Start of fragmented message
+                        self.frag_opcode = frame.opcode;
+                        try self.frag_buf.appendSlice(self.allocator, frame.payload);
+                        frame.deinit();
+                        continue;
+                    }
+                    return frame;
+                },
             }
         }
     }
