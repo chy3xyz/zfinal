@@ -24,6 +24,7 @@ pub const getLogger = @import("core/logger.zig").getLogger;
 pub const Metrics = @import("core/metrics.zig").Metrics;
 pub const healthHandlerFor = @import("core/metrics.zig").healthHandlerFor;
 pub const shutdown = @import("core/shutdown.zig");
+pub const JsonNaming = enum { snake_case, camelCase };
 // Export database modules
 pub const DB = @import("db/db.zig").DB;
 pub const DBConfig = @import("db/config.zig").DBConfig;

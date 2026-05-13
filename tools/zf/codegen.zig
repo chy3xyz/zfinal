@@ -186,19 +186,61 @@ fn toCamelCase(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
 }
 
 // ============================================================
-// Code Generators (all use allocPrint — no ArrayList.writer needed)
+// JSON Naming Convention
 // ============================================================
 
-pub fn generateModel(allocator: std.mem.Allocator, table: *const Table) ![]const u8 {
+pub const JsonNaming = enum { snake_case, camelCase };
+
+fn toSnakeCase(allocator: std.mem.Allocator, camel: []const u8) ![]const u8 {
+    var result = std.ArrayList(u8).empty;
+    for (camel, 0..) |c, i| {
+        if (std.ascii.isUpper(c) and i > 0) try result.append(allocator, '_');
+        try result.append(allocator, std.ascii.toLower(c));
+    }
+    if (result.items.len == 0) return allocator.dupe(u8, "untitled");
+    return result.toOwnedSlice(allocator);
+}
+
+fn toCamelCaseSnake(allocator: std.mem.Allocator, snake: []const u8) ![]const u8 {
+    var result = std.ArrayList(u8).empty;
+    var cap = false;
+    for (snake) |c| {
+        if (c == '_') { cap = true; continue; }
+        try result.append(allocator, if (cap) std.ascii.toUpper(c) else c);
+        cap = false;
+    }
+    if (result.items.len == 0) return allocator.dupe(u8, "untitled");
+    return result.toOwnedSlice(allocator);
+}
+
+// ============================================================
+// Code Generators
+// ============================================================
+
+pub fn generateModel(allocator: std.mem.Allocator, table: *const Table, naming: JsonNaming) ![]const u8 {
     var fields = std.ArrayList(u8).empty;
+    var json_map = std.ArrayList(u8).empty;
     for (table.columns.items) |col| {
         const zt = zigType(col);
         const def = if (col.is_auto_increment) " = null" else if (col.is_nullable) " = null" else "";
         const line = try std.fmt.allocPrint(allocator, "    {s}: {s}{s},\n", .{ col.name, zt, def });
         defer allocator.free(line);
         try fields.appendSlice(allocator, line);
+
+        // Build JSON field name mapping (comptime)
+        const json_name = switch (naming) {
+            .snake_case => col.name,
+            .camelCase => try toCamelCaseSnake(allocator, col.name),
+        };
+        defer if (naming == .camelCase) allocator.free(json_name);
+        const jline = try std.fmt.allocPrint(allocator, "        .{{ .db = \"{s}\", .json = \"{s}\" }},\n", .{ col.name, json_name });
+        defer allocator.free(jline);
+        try json_map.appendSlice(allocator, jline);
     }
     defer fields.deinit(allocator);
+    defer json_map.deinit(allocator);
+
+    const naming_str = if (naming == .snake_case) ".snake_case" else ".camelCase";
 
     return std.fmt.allocPrint(allocator,
         \\const zfinal = @import("zfinal");
@@ -208,7 +250,17 @@ pub fn generateModel(allocator: std.mem.Allocator, table: *const Table) ![]const
         \\
         \\pub const {s}Model = zfinal.Model({s}, "{s}");
         \\
-    , .{ table.pascal_name, fields.items, table.pascal_name, table.pascal_name, table.name });
+        \\pub const jsonNaming: zfinal.JsonNaming = {s};
+        \\
+        \\pub const fieldMap = [_]struct {{ db: []const u8, json: []const u8 }}{{
+        \\{s}}};
+        \\
+        \\pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {{
+        \\    for (fieldMap) |entry| if (std.mem.eql(u8, entry.db, db_name)) return entry.json;
+        \\    return db_name;
+        \\}}
+        \\
+    , .{ table.pascal_name, fields.items, table.pascal_name, table.pascal_name, table.name, naming_str, json_map.items });
 }
 
 pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]const u8 {
@@ -257,8 +309,8 @@ pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]
     return std.fmt.allocPrint(allocator,
         \\const std = @import("std");
         \\const zfinal = @import("zfinal");
-        \\const {s}Model = @import("../model/{s}.zig").{s}Model;
-        \\const pool_ref = &@import("../deps.zig").pool;
+        \\const {s}Model = @import("model.zig").{s}Model;
+        \\const pool_ref = &@import("../../deps.zig").pool;
         \\
         \\pub fn list(ctx: *zfinal.Context) !void {{
         \\    const db = try pool_ref.acquire();
@@ -335,7 +387,7 @@ pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]
         \\    try item.delete(db);
         \\    try ctx.renderJson(.{{ .ok = true }});
         \\}}
-    , .{ name, name_low, name, name, name, name, create_fields.items, name, update_fields.items, name });
+    , .{ name, name, name, name, name, create_fields.items, name, update_fields.items, name });
 }
 
 pub fn generateRoutes(allocator: std.mem.Allocator, table: *const Table) ![]const u8 {
@@ -378,7 +430,7 @@ pub fn generateMigrationPackage(allocator: std.mem.Allocator, tables: []Table) !
     defer buf.deinit(allocator);
 
     for (tables) |*table| {
-        const model = try generateModel(allocator, table);
+        const model = try generateModel(allocator, table, .snake_case);
         defer allocator.free(model);
         const model_hdr = try std.fmt.allocPrint(allocator, "\n// ── src/model/{s}.zig ──\n{s}\n", .{ table.name, model });
         defer allocator.free(model_hdr);

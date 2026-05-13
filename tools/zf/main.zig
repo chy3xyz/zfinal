@@ -856,7 +856,7 @@ fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8) !void {
 }
 
 fn writeGeneratedFiles(allocator: std.mem.Allocator, table: *codegen.Table) !void {
-    // deps.zig — shared dependencies (generated once per project)
+    // deps.zig — shared dependencies
     try ensureDir(allocator, "src");
     const deps_content =
         \\const zfinal = @import("zfinal");
@@ -865,37 +865,60 @@ fn writeGeneratedFiles(allocator: std.mem.Allocator, table: *codegen.Table) !voi
     ;
     std.Io.Dir.cwd().writeFile(io, .{ .sub_path = "src/deps.zig", .data = deps_content }) catch {};
 
+    const module_name = try singularize(allocator, table.name);
+    defer allocator.free(module_name);
+    const module_dir = try std.fmt.allocPrint(allocator, "src/modules/{s}", .{module_name});
+    defer allocator.free(module_dir);
+    try ensureDir(allocator, module_dir);
+
+    // Determine naming from table columns (snake_case if any underscore found)
+    const naming: codegen.JsonNaming = blk: {
+        for (table.columns.items) |col| {
+            if (std.mem.indexOfScalar(u8, col.name, '_') != null) break :blk .snake_case;
+        }
+        break :blk .camelCase;
+    };
+
     // Model
-    const model = try codegen.generateModel(allocator, table);
+    const model = try codegen.generateModel(allocator, table, naming);
     defer allocator.free(model);
-    const model_path = try std.fmt.allocPrint(allocator, "src/model/{s}.zig", .{table.name});
+    const model_path = try std.fmt.allocPrint(allocator, "{s}/model.zig", .{module_dir});
     defer allocator.free(model_path);
-    try ensureDir(allocator, "src/model");
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = model_path, .data = model });
-    std.debug.print("✅ Generated model: {s}\n", .{model_path});
+    std.debug.print("✅ Generated: {s}\n", .{model_path});
 
     // Controller
     const ctrl = try codegen.generateController(allocator, table);
     defer allocator.free(ctrl);
-    const ctrl_path = try std.fmt.allocPrint(allocator, "src/controller/{s}_controller.zig", .{table.name});
+    const ctrl_path = try std.fmt.allocPrint(allocator, "{s}/controller.zig", .{module_dir});
     defer allocator.free(ctrl_path);
-    try ensureDir(allocator, "src/controller");
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ctrl_path, .data = ctrl });
-    std.debug.print("✅ Generated controller: {s}\n", .{ctrl_path});
+    std.debug.print("✅ Generated: {s}\n", .{ctrl_path});
 
     // Routes
     const routes = try codegen.generateRoutes(allocator, table);
     defer allocator.free(routes);
-    std.debug.print("✅ Routes for {s}:\n{s}\n", .{ table.name, routes });
+    std.debug.print("✅ Routes for {s}:\n{s}\n", .{ module_name, routes });
 
     // Test
     const test_code = try codegen.generateTest(allocator, table);
     defer allocator.free(test_code);
-    const test_path = try std.fmt.allocPrint(allocator, "test/{s}_test.zig", .{table.name});
+    const test_path = try std.fmt.allocPrint(allocator, "test/{s}_test.zig", .{module_name});
     defer allocator.free(test_path);
     try ensureDir(allocator, "test");
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = test_path, .data = test_code });
     std.debug.print("✅ Generated test: {s}\n", .{test_path});
+}
+
+fn singularize(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
+    if (name.len > 3 and std.mem.endsWith(u8, name, "ies")) {
+        var r = try allocator.alloc(u8, name.len - 3);
+        @memcpy(r, name[0 .. name.len - 3]);
+        r = try std.fmt.allocPrint(allocator, "{s}y", .{r[0 .. name.len - 3]});
+        return r;
+    }
+    if (name.len > 1 and name[name.len - 1] == 's' and name[name.len - 2] != 's') return allocator.dupe(u8, name[0 .. name.len - 1]);
+    return allocator.dupe(u8, name);
 }
 
 fn ensureDir(allocator: std.mem.Allocator, path: []const u8) !void {
