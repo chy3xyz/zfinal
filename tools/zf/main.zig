@@ -17,6 +17,7 @@ const Command = enum {
     help,
     crud,
     crud_sql,
+    life,
 };
 
 var io: std.Io = undefined;
@@ -122,10 +123,13 @@ pub fn main(init: std.process.Init) !void {
         .crud_sql => {
             if (args.len < 3) {
                 std.debug.print("Usage: {s} crud:sql <sql_file>\n", .{args[0]});
-                std.debug.print("Example: {s} crud:sql schema.sql\n", .{args[0]});
                 return;
             }
             try handleCrudFromSql(allocator, args[2]);
+        },
+        .life => {
+            const sub = if (args.len > 2) args[2] else "status";
+            try handleLife(allocator, sub, if (args.len > 3) args[3] else "");
         },
     }
 }
@@ -145,6 +149,7 @@ fn parseCommand(cmd: []const u8) ?Command {
     if (std.mem.eql(u8, cmd, "help") or std.mem.eql(u8, cmd, "h")) return .help;
     if (std.mem.eql(u8, cmd, "crud")) return .crud;
     if (std.mem.eql(u8, cmd, "crud:sql")) return .crud_sql;
+    if (std.mem.eql(u8, cmd, "life")) return .life;
     return null;
 }
 
@@ -717,6 +722,49 @@ fn generatePlugin(allocator: std.mem.Allocator, name: []const u8) !void {
 
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = filename, .data = content });
         std.debug.print("✅ Generated generic plugin: {s}\n", .{filename});
+    }
+}
+
+fn handleLife(allocator: std.mem.Allocator, sub: []const u8, _: []const u8) !void {
+    if (std.mem.eql(u8, sub, "status")) {
+        // Check if .life directory exists
+        std.Io.Dir.cwd().access(io, ".life", .{}) catch {
+            std.debug.print("No .life directory found. Run 'zf life init' first.\n", .{});
+            return;
+        };
+        std.debug.print("Project Life Status\n", .{});
+        std.debug.print("==================\n", .{});
+        std.debug.print("Directory: .life/ exists\n", .{});
+        std.debug.print("Fingerprints: ", .{});
+        var fp_dir = std.Io.Dir.cwd().openDir(io, ".life/fingerprints", .{ .iterate = true }) catch {
+            std.debug.print("none\n", .{});
+            return;
+        };
+        defer fp_dir.close(io);
+        var it = fp_dir.iterate();
+        var count: usize = 0;
+        while (try it.next(io)) |entry| {
+            if (entry.name[0] != '.') count += 1;
+        }
+        std.debug.print("{d} milestones\n", .{count});
+        std.debug.print("Decisions: .life/decisions/\n", .{});
+        std.debug.print("Evolution: .life/evolution.md\n", .{});
+        std.debug.print("DNA: .life/dna.json\n", .{});
+    } else if (std.mem.eql(u8, sub, "init")) {
+        try ensureDir(allocator, ".life");
+        try ensureDir(allocator, ".life/fingerprints");
+        try ensureDir(allocator, ".life/decisions");
+        try ensureDir(allocator, ".life/memory");
+        std.debug.print("✅ Initialized .life/ directory\n", .{});
+    } else if (std.mem.eql(u8, sub, "fingerprint")) {
+        std.debug.print("Project Fingerprint\n", .{});
+        std.debug.print("==================\n", .{});
+        const ts = std.Io.Timestamp.now(io, .real).toSeconds();
+        std.debug.print("Timestamp: {d}\n", .{ts});
+        std.debug.print("Fingerprint: zf-{d}\n", .{ts});
+    } else {
+        std.debug.print("Unknown life command: {s}\n", .{sub});
+        std.debug.print("Available: init, status, fingerprint\n", .{});
     }
 }
 

@@ -1,0 +1,65 @@
+{
+  "project": "zfinal",
+  "title": "ZFinal Web Framework",
+  "description": "Production-hardened Zig web framework inspired by JFinal. Fiber-based async server, ActiveRecord ORM, plugin system, 17 utility kits.",
+  "version": "0.4.0",
+  "birth": "2024-12-03",
+  "zig_version": "0.16.0",
+  "fingerprint": {
+    "algorithm": "sha256",
+    "source_hash": "d96b03c",
+    "computed_at": "2026-05-12"
+  },
+  "metrics": {
+    "source_files": 64,
+    "lines_of_code": 11288,
+    "tests": 90,
+    "tests_pass": 88,
+    "tests_skip": 2,
+    "tests_fail": 0,
+    "examples": 11,
+    "plugins_stable": 3,
+    "plugins_experimental": 4,
+    "production_readiness_pct": 94
+  },
+  "dependencies": {
+    "zig": "0.16.0",
+    "system_libs": ["libc", "sqlite3"],
+    "optional_libs": ["libpq", "libmysqlclient"]
+  },
+  "evolution": {
+    "total_commits": 38,
+    "total_releases": 4,
+    "major_milestones": [
+      {"version": "v0.1.0", "date": "2024-12-03", "theme": "Core framework: routing, ORM, CLI"},
+      {"version": "v0.2.0", "date": "2025-12-30", "theme": "AsyncServer, template engine, cache, cron, i18n"},
+      {"version": "v0.3.0", "date": "2026-05-12", "theme": "Production hardening: security, observability, correctness"},
+      {"version": "v0.4.0", "date": "2026-05-12", "theme": "Framework unification, WebSocket, Redis, Docker, codegen"}
+    ],
+    "architecture_shifts": [
+      "v0.3.0: Merged Server + AsyncServer into single fiber-based async server",
+      "v0.3.0: Replaced global PRNG with OS CSPRNG (arc4random/getrandom)",
+      "v0.3.0: Added structured Logger with compile-time log levels",
+      "v0.4.0: Full PostgreSQL + MySQL driver implementations (opt-in)",
+      "v0.4.0: Schema-driven CRUD code generation (zf crud:sql)",
+      "v0.4.0: Redis RESP protocol client over TCP",
+      "v0.4.0: WebSocket close handshake + frame fragmentation",
+      "v0.4.0: .life project memory system for AI self-evolution"
+    ],
+    "key_decisions": [
+      "001: Fiber-based server over thread-pool for scalability and zero heap allocation",
+      "002: CSPRNG over deterministic PRNG for all security-sensitive operations",
+      "003: Schema-driven code generation as primary AI workflow",
+      "004: Error-isolation pattern for Group.async Cancelable!void constraint",
+      "005: opt-in native drivers (libpq/mysqlclient) with zero-dependency default"
+    ]
+  },
+  "capabilities": {
+    "server": {"concurrency": "fiber", "keep_alive": true, "max_connections": 10000},
+    "database": ["sqlite", "postgresql", "mysql"],
+    "security": ["csrf", "cspng", "rate_limiting", "path_sandbox", "timing_safe"],
+    "observability": ["structured_logging", "health_endpoint", "metrics", "compile_time_levels"],
+    "templating": ["variables", "loops", "conditions", "includes", "extends"],
+    "codegen": ["schema_parser", "crud_generator", "migration_package"]
+  }
+}

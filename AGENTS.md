@@ -131,6 +131,40 @@ zfinal.shutdown.registerHandlers();
 6. **Error handling**: Handlers return `!void`, errors become 500 with structured log
 7. **Plugin deps**: Cache/Cron/Redis are stable. MQTT/P2P/DID/Agent are experimental.
 
+## Project Life Memory (`.life/`)
+
+ZFinal uses a `.life/` directory for self-evolving project memory. **Always read this first** when starting a new session.
+
+### On Session Start
+1. Read `.life/dna.json` — current state, version, metrics, capabilities
+2. Read `.life/evolution.md` — last 2-3 entries for recent changes
+3. Check `.life/decisions/` — relevant ADRs for current task
+
+### On Major Change
+1. Append entry to `.life/evolution.md` with date, session, changes made
+2. Update `.life/dna.json` metrics (files, tests, version, fingerprint)
+3. If architecture decision made → add ADR to `.life/decisions/`
+4. If milestone reached → create fingerprint in `.life/fingerprints/`
+
+### Fingerprint Format
+```json
+{
+  "version": "v0.4.0",
+  "fingerprint": "sha256:d96b03c...",
+  "timestamp": "2026-05-12",
+  "metrics": { "files": 64, "tests": 90, "lines": 11288 },
+  "changes": ["server merge", "schema codegen"],
+  "decisions": ["ADR-001", "ADR-002"]
+}
+```
+
+### ZF CLI
+```bash
+zf life status       # Show .life/ directory status
+zf life init         # Initialize .life/ in current project
+zf life fingerprint  # Generate fingerprint
+```
+
 ## Zig 0.16 Specifics
 
 - IO: `std.Io` (capital I), use `io_instance.zig` for global instance
