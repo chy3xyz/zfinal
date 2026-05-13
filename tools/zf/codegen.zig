@@ -369,19 +369,23 @@ pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]
         \\const {s}Model = @import("model.zig").{s}Model;
         \\const validate = @import("model.zig").validate;
         \\const pool_ref = &@import("../../deps.zig").pool;
+        \\const token_ref = &@import("../../deps.zig").tokenMgr;
+        \\const limit_ref = &@import("../../deps.zig").rateLimiter;
         \\
-        \\/// CSRF guard: checks csrf_token for state-changing requests.
-        \\fn csrfGuard(ctx: *zfinal.Context) !void {{
-        \\    const token = try ctx.getPara("csrf_token") orelse {{
-        \\        ctx.res_status = .forbidden;
-        \\        try ctx.renderJson(.{{ .err = "Missing CSRF token" }});
-        \\        return error.CsrfRequired;
-        \\    }};
-        \\    _ = token; // AI: validate with TokenManager here
+        \\fn err(ctx: *zfinal.Context, status: std.http.Status, comptime msg: []const u8, code: i32) !void {{
+        \\    ctx.res_status = status;
+        \\    try ctx.renderJson(.{{ .err = msg, .code = code }});
         \\}}
         \\
-        \\/// List {s} records with pagination.
+        \\/// CSRF guard: validates csrf_token using TokenManager.
+        \\fn csrfGuard(ctx: *zfinal.Context) !void {{
+        \\    const token = try ctx.getPara("csrf_token") orelse return err(ctx, .forbidden, "Missing CSRF token", 40301);
+        \\    if (!try token_ref.validate(token)) return err(ctx, .forbidden, "Invalid CSRF token", 40302);
+        \\}}
+        \\
+        \\/// List {s} records with pagination + rate limiting.
         \\pub fn list(ctx: *zfinal.Context) !void {{
+        \\    limit_ref.handle(ctx) catch {{}};
         \\    const db = try pool_ref.acquire();
         \\    defer pool_ref.release(db) catch {{}};
         \\    const page = try ctx.getParaToIntDefault("page", 1);
@@ -397,10 +401,7 @@ pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]
         \\    const id = try parseId(ctx);
         \\    const db = try pool_ref.acquire();
         \\    defer pool_ref.release(db) catch {{}};
-        \\    const item = try {s}Model.findById(db, id, ctx.allocator) orelse {{
-        \\        ctx.res_status = .not_found;
-        \\        return ctx.renderJson(.{{ .err = "Not found" }});
-        \\    }};
+        \\    const item = try {s}Model.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
         \\    defer item.deinit(ctx.allocator);
         \\    try ctx.renderJson(.{{ .data = item }});
         \\}}
@@ -414,7 +415,7 @@ pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]
         \\        .data = .{{
         \\{s}        }},
         \\    }};
-        \\    try validate(instance.data);
+        \\    validate(instance.data) catch return err(ctx, .unprocessable_entity, "Validation failed", 42201);
         \\    try instance.save(db);
         \\    try ctx.renderJson(.{{ .ok = true, .id = instance.id }});
         \\}}
@@ -425,11 +426,8 @@ pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]
         \\    const id = try parseId(ctx);
         \\    const db = try pool_ref.acquire();
         \\    defer pool_ref.release(db) catch {{}};
-        \\    var item = try {s}Model.findById(db, id, ctx.allocator) orelse {{
-        \\        ctx.res_status = .not_found;
-        \\        return ctx.renderJson(.{{ .err = "Not found" }});
-        \\    }};
-        \\{s}    try validate(item.data);
+        \\    var item = try {s}Model.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
+        \\{s}    validate(item.data) catch return err(ctx, .unprocessable_entity, "Validation failed", 42201);
         \\    try item.save(db);
         \\    try ctx.renderJson(.{{ .ok = true }});
         \\}}
@@ -440,11 +438,19 @@ pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]
         \\    const id = try parseId(ctx);
         \\    const db = try pool_ref.acquire();
         \\    defer pool_ref.release(db) catch {{}};
-        \\    var item = try {s}Model.findById(db, id, ctx.allocator) orelse {{
-        \\        ctx.res_status = .not_found;
-        \\        return ctx.renderJson(.{{ .err = "Not found" }});
-        \\    }};
+        \\    var item = try {s}Model.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
         \\    try item.delete(db);
+        \\    try ctx.renderJson(.{{ .ok = true }});
+        \\}}
+        \\
+        \\/// Partial update {s} record (CSRF-protected, PATCH).
+        \\pub fn patch(ctx: *zfinal.Context) !void {{
+        \\    try csrfGuard(ctx);
+        \\    const id = try parseId(ctx);
+        \\    const db = try pool_ref.acquire();
+        \\    defer pool_ref.release(db) catch {{}};
+        \\    var item = try {s}Model.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
+        \\{s}    try item.save(db);
         \\    try ctx.renderJson(.{{ .ok = true }});
         \\}}
         \\
@@ -461,7 +467,7 @@ pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]
         \\        return error.InvalidId;
         \\    }};
         \\}}
-    , .{ name, name, name, name, name, name, name, name, name, create_fields.items, name, name, update_fields.items, name, name });
+    , .{ name, name, name, name, name, name, name, name, name, create_fields.items, name, name, update_fields.items, name, name, name, name, update_fields.items });
 }
 
 pub fn generateRoutes(allocator: std.mem.Allocator, table: *const Table) ![]const u8 {
