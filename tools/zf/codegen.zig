@@ -30,7 +30,7 @@ pub const Table = struct {
 pub fn zigType(col: Column) []const u8 {
     const upper = col.sql_type;
     // Auto-increment PKs are always ?i64 (null before insert)
-    if (col.is_auto_increment) return "?i64";
+    if (col.is_auto_increment or std.mem.startsWith(u8, col.sql_type, "SERIAL")) return "?i64";
     if (col.is_nullable and !col.is_primary_key) {
         if (std.mem.startsWith(u8, upper, "INT") or std.mem.startsWith(u8, upper, "BIGINT") or std.mem.startsWith(u8, upper, "SMALLINT") or std.mem.startsWith(u8, upper, "TINYINT") or std.mem.startsWith(u8, upper, "SERIAL") or std.mem.startsWith(u8, upper, "NUMERIC") or std.mem.startsWith(u8, upper, "DECIMAL")) return "?i64";
         if (std.mem.startsWith(u8, upper, "REAL") or std.mem.startsWith(u8, upper, "FLOAT") or std.mem.startsWith(u8, upper, "DOUBLE")) return "?f64";
@@ -138,7 +138,7 @@ fn parseColumnDef(allocator: std.mem.Allocator, sql: []const u8, pos_ptr: *usize
         }
         else if (std.ascii.startsWithIgnoreCase(sql[pos..], "NULL")) { col.is_nullable = true; pos += 4; }
         else if (std.ascii.startsWithIgnoreCase(sql[pos..], "UNIQUE")) { pos += 6; }
-        else if (std.ascii.startsWithIgnoreCase(sql[pos..], "REFERENCES")) { while (pos < sql.len and sql[pos] != ',' and sql[pos] != ')') : (pos += 1) {} }
+        else if (std.ascii.startsWithIgnoreCase(sql[pos..], "REFERENCES")) { var pd: usize = 0; while (pos < sql.len) { if (sql[pos] == '(') pd += 1; if (sql[pos] == ')') { if (pd == 0) break; pd -= 1; } if (sql[pos] == ',' and pd == 0) break; pos += 1; } }
         else { pos += 1; }
         if (pos < sql.len and (sql[pos] == ',' or sql[pos] == ')')) break;
     }
@@ -222,7 +222,7 @@ pub fn generateModel(allocator: std.mem.Allocator, table: *const Table, naming: 
     var json_map = std.ArrayList(u8).empty;
     for (table.columns.items) |col| {
         const zt = zigType(col);
-        const def = if (col.is_auto_increment) " = null" else if (col.is_nullable) " = null" else "";
+        const def = if (col.is_auto_increment or col.is_nullable or std.mem.startsWith(u8, zt, "?")) " = null" else "";
         const line = try std.fmt.allocPrint(allocator, "    {s}: {s}{s},\n", .{ col.name, zt, def });
         defer allocator.free(line);
         try fields.appendSlice(allocator, line);
@@ -281,6 +281,9 @@ pub fn generateModel(allocator: std.mem.Allocator, table: *const Table, naming: 
             defer allocator.free(lline);
             try validation.appendSlice(allocator, lline);
         }
+    }
+    if (validation.items.len == 0) {
+        try validation.appendSlice(allocator, "    _ = data;\n");
     }
     defer validation.deinit(allocator);
 

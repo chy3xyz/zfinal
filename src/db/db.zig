@@ -7,12 +7,11 @@ const SqlParam = @import("sql_param.zig").SqlParam;
 const builtin = @import("builtin");
 const SQLiteDB = @import("drivers/sqlite.zig").SQLiteDB;
 
-// PostgreSQL and MySQL full driver implementations live in drivers/.
-// To use them, install the C client library (libpq / libmysqlclient),
-// link it in your build.zig, and import the driver directly:
-//   const PG = @import("zfinal/db/drivers/postgres.zig").PostgresDB;
-//
-// The stubs below keep the DB wrapper compilable without native deps.
+// PostgreSQL and MySQL full drivers exist in drivers/. They require native
+// C client libraries (libpq / libmysqlclient) and Zig evaluates ALL @import
+// at compile time — even in dead branches. So stubs are the default.
+// To use PG/MySQL: manually swap the import below and link the library.
+//   const PostgresDB = @import("drivers/postgres.zig").PostgresDB;
 const PostgresDB = DriverStub;
 const MySQLDB = DriverStub;
 
