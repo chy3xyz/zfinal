@@ -64,6 +64,15 @@ pub const MqttPlugin = @import("plugin/mqtt.zig").MqttPlugin;
 pub const AgentPlugin = @import("plugin/agent.zig").AgentPlugin;
 pub const DidPlugin = @import("plugin/did.zig").DidPlugin;
 pub const P2pPlugin = @import("plugin/p2p.zig").P2pPlugin;
+pub const CircuitBreaker = @import("plugin/compat/stubs.zig").CircuitBreaker;
+pub const ConfigClient = @import("plugin/compat/stubs.zig").ConfigClient;
+pub const HttpClient = @import("plugin/compat/stubs.zig").HttpClient;
+pub const BeanValidator = @import("plugin/compat/stubs.zig").BeanValidator;
+pub const TaskScheduler = @import("plugin/compat/stubs.zig").TaskScheduler;
+pub const MessageQueue = @import("plugin/compat/stubs.zig").MessageQueue;
+pub const OAuth2Client = @import("plugin/compat/stubs.zig").OAuth2Client;
+pub const ObjectMapper = @import("plugin/compat/stubs.zig").ObjectMapper;
+pub const MetricsExporter = @import("plugin/compat/stubs.zig").MetricsExporter;
 
 // Export config and i18n modules
 pub const I18n = @import("i18n/i18n.zig").I18n;

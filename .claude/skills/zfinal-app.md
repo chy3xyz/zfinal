@@ -209,6 +209,25 @@ For each generated controller, read the old Java/PHP/Go/Rust source and map:
 | Rate limit | `@RateLimiter`, `throttle:60,1` | `RateLimitHandler.handle(ctx)` |
 | Background job | `@Scheduled`, `dispatch(new Job())` | `CronPlugin.schedule()` |
 
+## Java → ZFinal Compatibility Stubs
+
+When migrating, common failure: Java library has no Zig equivalent. ZFinal provides well-typed stubs. AI fills implementation during migration.
+
+| Java Library | ZFinal Stub | Status | Action |
+|-------------|-------------|--------|--------|
+| Resilience4j/Hystrix | `CircuitBreaker` | Stub | AI implements state machine |
+| Spring Cloud Config | `ConfigClient` | Partial | File/env work; remote = AI fills |
+| Feign/RestTemplate | `HttpClient` | Partial | AI fills TCP + HTTP parsing |
+| Hibernate Validator | `BeanValidator` | Partial | AI fills reflect + rule engine |
+| Quartz/@Scheduled | `TaskScheduler` | Stub | AI fills fixed-rate scheduler |
+| Spring Cloud Gateway | `ApiGateway` | Stub | Use nginx/caddy in production |
+| RabbitMQ/Kafka | `MessageQueue` | Stub | AI fills protocol or use external |
+| Spring Security OAuth2 | `OAuth2Client` | Partial | AI fills OAuth2 flows |
+| Jackson/Gson | `ObjectMapper` | Partial | Basic read/write works; AI fills advanced |
+| Micrometer/Prometheus | `MetricsExporter` | Stub | AI fills Prometheus text format |
+
+**How AI uses these**: reads `src/plugin/compat/stubs.zig`, finds matching stub, implements missing methods based on old Java code patterns.
+
 Full pattern table: `doc/java_migration.md`
 
 ### 4. AI gap-filling
