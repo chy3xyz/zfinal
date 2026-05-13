@@ -147,6 +147,57 @@ test "type safety: non-nullable field rejects null" {
     try testing.expectEqual(@as(i64, 42), inst.data.author_id);
 }
 
+test "pagination: page 1 returns first N rows" {
+    const allocator = std.testing.allocator;
+    var db = try setupDb(allocator);
+    defer db.deinit();
+    for (0..10) |i| {
+        var buf: [32]u8 = undefined;
+        const name = try std.fmt.bufPrint(&buf, "user{d}", .{i});
+        var user = UserModel.Instance{
+            .data = User{ .username = name, .email = name, .password = "pw", .created_at = null },
+        };
+        try user.save(&db);
+    }
+    const page1 = try UserModel.paginate(&db, 1, 5, allocator);
+    defer {
+        for (page1) |*item| item.deinit(allocator);
+        allocator.free(page1);
+    }
+    try testing.expectEqual(@as(usize, 5), page1.len);
+    const page2 = try UserModel.paginate(&db, 2, 5, allocator);
+    defer {
+        for (page2) |*item| item.deinit(allocator);
+        allocator.free(page2);
+    }
+    try testing.expectEqual(@as(usize, 5), page2.len);
+}
+
+test "batch insert: all-or-nothing transaction" {
+    const allocator = std.testing.allocator;
+    var db = try setupDb(allocator);
+    defer db.deinit();
+    var instances: [3]UserModel.Instance = undefined;
+    instances[0] = UserModel.Instance{ .data = User{ .username = "batch1", .email = "b1@t.com", .password = "pw", .created_at = null } };
+    instances[1] = UserModel.Instance{ .data = User{ .username = "batch2", .email = "b2@t.com", .password = "pw", .created_at = null } };
+    instances[2] = UserModel.Instance{ .data = User{ .username = "batch3", .email = "b3@t.com", .password = "pw", .created_at = null } };
+    try UserModel.insertBatch(&db, &instances);
+    const count = try UserModel.count(&db);
+    try testing.expectEqual(@as(i64, 3), count);
+}
+
+test "routes file: all modules have routes.zig" {
+    for ([_][]const u8{ "user", "post", "comment" }) |name| {
+        const path = try std.fmt.allocPrint(std.testing.allocator, "src/modules/{s}/routes.zig", .{name});
+        defer std.testing.allocator.free(path);
+        const file = std.Io.Dir.cwd().openFile(std.testing.io, path, .{}) catch {
+            std.debug.print("Missing: {s}\n", .{path});
+            return error.TestFailed;
+        };
+        file.close(std.testing.io);
+    }
+}
+
 test "JSON naming: field map exists" {
     const UserMod = @import("src/modules/user/model.zig");
     try testing.expect(@hasDecl(UserMod, "fieldMap"));

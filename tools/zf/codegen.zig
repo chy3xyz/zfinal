@@ -243,6 +243,7 @@ pub fn generateModel(allocator: std.mem.Allocator, table: *const Table, naming: 
     const naming_str = if (naming == .snake_case) ".snake_case" else ".camelCase";
 
     return std.fmt.allocPrint(allocator,
+        \\const std = @import("std");
         \\const zfinal = @import("zfinal");
         \\
         \\pub const {s} = struct {{
@@ -315,9 +316,12 @@ pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]
         \\pub fn list(ctx: *zfinal.Context) !void {{
         \\    const db = try pool_ref.acquire();
         \\    defer pool_ref.release(db) catch {{}};
-        \\    const items = try {s}Model.findAll(db, ctx.allocator);
+        \\    const page = try ctx.getParaToIntDefault("page", 1);
+        \\    const size = try ctx.getParaToIntDefault("size", 20);
+        \\    const items = try {s}Model.paginate(db, @intCast(page), @intCast(size), ctx.allocator);
         \\    defer ctx.allocator.free(items);
-        \\    try ctx.renderJson(.{{ .data = items }});
+        \\    const total = try {s}Model.count(db);
+        \\    try ctx.renderJson(.{{ .data = items, .total = total, .page = page, .size = size }});
         \\}}
         \\
         \\pub fn show(ctx: *zfinal.Context) !void {{
@@ -387,7 +391,7 @@ pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]
         \\    try item.delete(db);
         \\    try ctx.renderJson(.{{ .ok = true }});
         \\}}
-    , .{ name, name, name, name, name, create_fields.items, name, update_fields.items, name });
+    , .{ name, name, name, name, name, name, create_fields.items, name, update_fields.items, name });
 }
 
 pub fn generateRoutes(allocator: std.mem.Allocator, table: *const Table) ![]const u8 {

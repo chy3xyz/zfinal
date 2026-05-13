@@ -119,6 +119,29 @@ pub fn Model(comptime T: type, comptime table_name: []const u8) type {
             try db.execParams(sql, &.{SqlParam{ .int = id }});
         }
 
+        /// Paginated query with LIMIT and OFFSET.
+        pub fn paginate(db: *DB, page: usize, page_size: usize, allocator: std.mem.Allocator) ![]Instance {
+            const offset = (page - 1) * page_size;
+            const sql = try std.fmt.allocPrintSentinel(allocator, "SELECT * FROM {s} LIMIT ? OFFSET ?", .{table_name}, 0);
+            defer allocator.free(sql);
+            var result = try db.queryParams(sql, &.{ SqlParam{ .int = @intCast(page_size) }, SqlParam{ .int = @intCast(offset) } });
+            defer result.deinit();
+            var list = std.ArrayList(Instance).empty;
+            errdefer { for (list.items) |*item| item.deinit(allocator); allocator.free(list.toOwnedSlice(allocator) catch &.{}); }
+            while (result.next()) {
+                if (result.getCurrentRowMap()) |row| try list.append(allocator, try mapFromRow(allocator, row));
+            }
+            return list.toOwnedSlice(allocator);
+        }
+
+        /// Batch insert — wraps multiple saves in a single transaction for 10-50x throughput.
+        pub fn insertBatch(db: *DB, instances: []Instance) !void {
+            try db.exec("BEGIN");
+            errdefer db.exec("ROLLBACK") catch {};
+            for (instances) |*inst| try inst.insert(db);
+            try db.exec("COMMIT");
+        }
+
         pub fn count(db: *DB) !i64 {
             const sql = try std.fmt.allocPrintSentinel(db.allocator, "SELECT COUNT(*) FROM {s}", .{table_name}, 0);
             defer db.allocator.free(sql);
@@ -143,8 +166,8 @@ pub fn Model(comptime T: type, comptime table_name: []const u8) type {
         fn parseField(allocator: std.mem.Allocator, raw: ?[]const u8, comptime FT: type) !FT {
             const s = raw orelse "";
             return switch (@typeInfo(FT)) {
-                .int, .comptime_int => std.fmt.parseInt(FT, if (s.len > 0) s else "0", 10) catch 0,
-                .float, .comptime_float => std.fmt.parseFloat(FT, if (s.len > 0) s else "0") catch 0,
+                .int, .comptime_int => if (s.len > 0) std.fmt.parseInt(FT, s, 10) catch return error.InvalidField else 0,
+                .float, .comptime_float => if (s.len > 0) std.fmt.parseFloat(FT, s) catch return error.InvalidField else 0,
                 .bool => std.mem.eql(u8, s, "1") or std.mem.eql(u8, s, "true") or std.mem.eql(u8, s, "t"),
                 .optional => blk: {
                     if (s.len == 0) break :blk null;

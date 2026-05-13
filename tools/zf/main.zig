@@ -898,7 +898,10 @@ fn writeGeneratedFiles(allocator: std.mem.Allocator, table: *codegen.Table) !voi
     // Routes
     const routes = try codegen.generateRoutes(allocator, table);
     defer allocator.free(routes);
-    std.debug.print("✅ Routes for {s}:\n{s}\n", .{ module_name, routes });
+    const routes_path = try std.fmt.allocPrint(allocator, "{s}/routes.zig", .{module_dir});
+    defer allocator.free(routes_path);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = routes_path, .data = routes });
+    std.debug.print("✅ Generated: {s}\n", .{routes_path});
 
     // Test
     const test_code = try codegen.generateTest(allocator, table);
