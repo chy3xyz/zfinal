@@ -223,8 +223,12 @@ pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]
     for (table.columns.items) |col| {
         if (col.is_auto_increment) continue;
         const zt = zigType(col);
-        const line = if (std.mem.eql(u8, zt, "i64") or std.mem.eql(u8, zt, "?i64"))
-            try std.fmt.allocPrint(allocator, "            .{s} = try std.fmt.parseInt(i64, (try ctx.getPara(\"{s}\")) orelse \"0\", 10) catch 0,\n", .{ col.name, col.name })
+        const line = if (std.mem.startsWith(u8, zt, "i64") or std.mem.startsWith(u8, zt, "?i64"))
+            try std.fmt.allocPrint(allocator, "            .{s} = std.fmt.parseInt(i64, (try ctx.getPara(\"{s}\")) orelse \"0\", 10) catch 0,\n", .{ col.name, col.name })
+        else if (std.mem.startsWith(u8, zt, "f64") or std.mem.startsWith(u8, zt, "?f64"))
+            try std.fmt.allocPrint(allocator, "            .{s} = std.fmt.parseFloat(f64, (try ctx.getPara(\"{s}\")) orelse \"0\") catch 0,\n", .{ col.name, col.name })
+        else if (std.mem.eql(u8, zt, "bool") or std.mem.eql(u8, zt, "?bool"))
+            try std.fmt.allocPrint(allocator, "            .{s} = if ((try ctx.getPara(\"{s}\"))) |v| (std.mem.eql(u8, v, \"true\") or std.mem.eql(u8, v, \"1\") or std.mem.eql(u8, v, \"t\")) else null,\n", .{ col.name, col.name })
         else
             try std.fmt.allocPrint(allocator, "            .{s} = (try ctx.getPara(\"{s}\")) orelse {s},\n", .{ col.name, col.name, defaultZigValue(col) });
         defer allocator.free(line);
@@ -237,8 +241,12 @@ pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]
     for (table.columns.items) |col| {
         if (col.is_primary_key or col.is_auto_increment) continue;
         const zt = zigType(col);
-        const line = if (std.mem.eql(u8, zt, "i64") or std.mem.eql(u8, zt, "?i64"))
+        const line = if (std.mem.startsWith(u8, zt, "i64") or std.mem.startsWith(u8, zt, "?i64"))
             try std.fmt.allocPrint(allocator, "    if (try ctx.getPara(\"{s}\")) |v| item.data.{s} = std.fmt.parseInt(i64, v, 10) catch item.data.{s};\n", .{ col.name, col.name, col.name })
+        else if (std.mem.startsWith(u8, zt, "f64") or std.mem.startsWith(u8, zt, "?f64"))
+            try std.fmt.allocPrint(allocator, "    if (try ctx.getPara(\"{s}\")) |v| item.data.{s} = std.fmt.parseFloat(f64, v) catch item.data.{s};\n", .{ col.name, col.name, col.name })
+        else if (std.mem.eql(u8, zt, "bool") or std.mem.eql(u8, zt, "?bool"))
+            try std.fmt.allocPrint(allocator, "    if (try ctx.getPara(\"{s}\")) |v| item.data.{s} = std.mem.eql(u8, v, \"true\") or std.mem.eql(u8, v, \"1\");\n", .{ col.name, col.name })
         else
             try std.fmt.allocPrint(allocator, "    if (try ctx.getPara(\"{s}\")) |v| item.data.{s} = v;\n", .{ col.name, col.name });
         defer allocator.free(line);
@@ -250,10 +258,11 @@ pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]
         \\const std = @import("std");
         \\const zfinal = @import("zfinal");
         \\const {s}Model = @import("../model/{s}.zig").{s}Model;
+        \\const pool_ref = &@import("../deps.zig").pool;
         \\
         \\pub fn list(ctx: *zfinal.Context) !void {{
-        \\    const db = try pool.acquire();
-        \\    defer pool.release(db) catch {{}};
+        \\    const db = try pool_ref.acquire();
+        \\    defer pool_ref.release(db) catch {{}};
         \\    const items = try {s}Model.findAll(db, ctx.allocator);
         \\    defer ctx.allocator.free(items);
         \\    try ctx.renderJson(.{{ .data = items }});
@@ -268,8 +277,8 @@ pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]
         \\        ctx.res_status = .bad_request;
         \\        return ctx.renderJson(.{{ .err = "Invalid ID" }});
         \\    }};
-        \\    const db = try pool.acquire();
-        \\    defer pool.release(db) catch {{}};
+        \\    const db = try pool_ref.acquire();
+        \\    defer pool_ref.release(db) catch {{}};
         \\    const item = try {s}Model.findById(db, id, ctx.allocator);
         \\    if (item == null) {{
         \\        ctx.res_status = .not_found;
@@ -279,13 +288,13 @@ pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]
         \\}}
         \\
         \\pub fn create(ctx: *zfinal.Context) !void {{
-        \\    const db = try pool.acquire();
-        \\    defer pool.release(db) catch {{}};
+        \\    const db = try pool_ref.acquire();
+        \\    defer pool_ref.release(db) catch {{}};
         \\    var instance = {s}Model.Instance{{
         \\        .data = .{{
         \\{s}        }},
         \\    }};
-        \\    try instance.save(&db);
+        \\    try instance.save(db);
         \\    try ctx.renderJson(.{{ .ok = true, .data = instance.data }});
         \\}}
         \\
@@ -298,13 +307,13 @@ pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]
         \\        ctx.res_status = .bad_request;
         \\        return ctx.renderJson(.{{ .err = "Invalid ID" }});
         \\    }};
-        \\    const db = try pool.acquire();
-        \\    defer pool.release(db) catch {{}};
+        \\    const db = try pool_ref.acquire();
+        \\    defer pool_ref.release(db) catch {{}};
         \\    var item = try {s}Model.findById(db, id, ctx.allocator) orelse {{
         \\        ctx.res_status = .not_found;
         \\        return ctx.renderJson(.{{ .err = "Not found" }});
         \\    }};
-        \\{s}    try item.save(&db);
+        \\{s}    try item.save(db);
         \\    try ctx.renderJson(.{{ .ok = true, .data = item.data }});
         \\}}
         \\
@@ -317,13 +326,13 @@ pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]
         \\        ctx.res_status = .bad_request;
         \\        return ctx.renderJson(.{{ .err = "Invalid ID" }});
         \\    }};
-        \\    const db = try pool.acquire();
-        \\    defer pool.release(db) catch {{}};
+        \\    const db = try pool_ref.acquire();
+        \\    defer pool_ref.release(db) catch {{}};
         \\    var item = try {s}Model.findById(db, id, ctx.allocator) orelse {{
         \\        ctx.res_status = .not_found;
         \\        return ctx.renderJson(.{{ .err = "Not found" }});
         \\    }};
-        \\    try item.delete(&db);
+        \\    try item.delete(db);
         \\    try ctx.renderJson(.{{ .ok = true }});
         \\}}
     , .{ name, name_low, name, name, name, name, create_fields.items, name, update_fields.items, name });

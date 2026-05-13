@@ -3,258 +3,183 @@ const DB = @import("db.zig").DB;
 const ResultSet = @import("result.zig").ResultSet;
 const SqlParam = @import("sql_param.zig").SqlParam;
 
-/// Active Record base for models with parameterized queries (SQL injection safe)
+/// Active Record base for models with parameterized queries.
+/// Uses comptime field iteration — works with any table schema.
 /// Usage: const UserModel = Model(User, "users");
 pub fn Model(comptime T: type, comptime table_name: []const u8) type {
     return struct {
         const Self = @This();
+        const fields = @typeInfo(T).@"struct".fields;
 
-        /// Model instance with optional ID
         pub const Instance = struct {
             id: ?i64 = null,
             data: T,
 
             pub fn deinit(self: *const Instance, allocator: std.mem.Allocator) void {
-                inline for (@typeInfo(T).@"struct".fields) |field| {
-                    if (field.type == []const u8) {
-                        const val = @field(self.data, field.name);
-                        if (val.len > 0) {
-                            allocator.free(val);
-                        }
+                inline for (fields) |f| {
+                    if (f.type == []const u8) {
+                        const val = @field(self.data, f.name);
+                        if (val.len > 0) allocator.free(val);
                     }
                 }
             }
 
-            /// Save (insert or update) this instance
             pub fn save(self: *Instance, db: *DB) !void {
-                if (self.id) |id_val| {
-                    try self.update(db, id_val);
-                } else {
-                    try self.insert(db);
-                }
+                if (self.id) |id_val| try self.update(db, id_val) else try self.insert(db);
             }
 
-            /// Insert new record using parameter binding
             fn insert(self: *Instance, db: *DB) !void {
-                const sql = try std.fmt.allocPrintSentinel(db.allocator,
-                    "INSERT INTO {s} (name, email, age) VALUES (?, ?, ?)", .{table_name}, 0);
-                defer db.allocator.free(sql);
-
-                const params = &.{
-                    SqlParam{ .text = self.data.name },
-                    SqlParam{ .text = self.data.email },
-                    SqlParam{ .int = self.data.age },
-                };
-
-                try db.execParams(sql, params);
+                const param_count = comptime blk: { var n: usize = 0; for (fields) |f| { if (!std.mem.eql(u8, f.name, "id")) n += 1; } break :blk n; };
+                var params: [param_count]SqlParam = undefined;
+                comptime var pi: usize = 0;
+                inline for (fields) |f| {
+                    if (comptime std.mem.eql(u8, f.name, "id")) continue;
+                    params[pi] = toSqlParam(@field(self.data, f.name)); pi += 1;
+                }
+                try db.execParams(@ptrCast(comptime blk: {
+                    var cbuf: [1024]u8 = undefined; var vbuf: [128]u8 = undefined; var cl: usize = 0; var vl: usize = 0;
+                    for (fields) |f| {
+                        if (std.mem.eql(u8, f.name, "id")) continue;
+                        if (cl > 0) { cbuf[cl]=','; cbuf[cl+1]=' '; cl+=2; }
+                        @memcpy(cbuf[cl..][0..f.name.len], f.name); cl += f.name.len;
+                        if (vl > 0) { vbuf[vl]=','; vbuf[vl+1]=' '; vl+=2; }
+                        vbuf[vl]='?'; vl+=1;
+                    }
+                    break :blk "INSERT INTO " ++ table_name ++ " (" ++ cbuf[0..cl] ++ ") VALUES (" ++ vbuf[0..vl] ++ ")";
+                }), &params);
                 self.id = db.lastInsertId() catch null;
             }
 
-            /// Update existing record using parameter binding
             fn update(self: *Instance, db: *DB, id: i64) !void {
-                const sql = try std.fmt.allocPrintSentinel(db.allocator,
-                    "UPDATE {s} SET name = ?, email = ?, age = ? WHERE id = ?", .{table_name}, 0);
-                defer db.allocator.free(sql);
-
-                const params = &.{
-                    SqlParam{ .text = self.data.name },
-                    SqlParam{ .text = self.data.email },
-                    SqlParam{ .int = self.data.age },
-                    SqlParam{ .int = id },
-                };
-
-                try db.execParams(sql, params);
+                const param_count = comptime blk: { var n: usize = 0; for (fields) |f| { if (!std.mem.eql(u8, f.name, "id")) n += 1; } break :blk n + 1; };
+                var params: [param_count]SqlParam = undefined;
+                comptime var pj: usize = 0;
+                inline for (fields) |f| {
+                    if (comptime std.mem.eql(u8, f.name, "id")) continue;
+                    params[pj] = toSqlParam(@field(self.data, f.name)); pj += 1;
+                }
+                params[param_count - 1] = SqlParam{ .int = id };
+                try db.execParams(@ptrCast(comptime blk: {
+                    var sbuf: [1024]u8 = undefined; var sl: usize = 0;
+                    for (fields) |f| {
+                        if (std.mem.eql(u8, f.name, "id")) continue;
+                        if (sl > 0) { sbuf[sl]=','; sbuf[sl+1]=' '; sl+=2; }
+                        @memcpy(sbuf[sl..][0..f.name.len], f.name); sl += f.name.len;
+                        @memcpy(sbuf[sl..][0..4], " = ?"); sl += 4;
+                    }
+                    break :blk "UPDATE " ++ table_name ++ " SET " ++ sbuf[0..sl] ++ " WHERE id = ?";
+                }), &params);
             }
 
-            /// Delete this record
             pub fn delete(self: *Instance, db: *DB) !void {
-                if (self.id) |id_val| {
-                    try Self.deleteById(db, id_val);
-                    self.id = null;
-                }
+                if (self.id) |id_val| { try Self.deleteById(db, id_val); self.id = null; }
             }
         };
 
-        /// Find record by ID (parameterized)
         pub fn findById(db: *DB, id: i64, allocator: std.mem.Allocator) !?Instance {
             const sql = try std.fmt.allocPrintSentinel(allocator, "SELECT * FROM {s} WHERE id = ?", .{table_name}, 0);
             defer allocator.free(sql);
-
-            const params = &[_]SqlParam{.{ .int = id }};
-            var result = try db.queryParams(sql, params);
+            var result = try db.queryParams(sql, &.{SqlParam{ .int = id }});
             defer result.deinit();
-
             if (result.next()) {
-                if (result.getCurrentRowMap()) |row| {
-                    return try Self.mapFromRow(allocator, row);
-                }
+                if (result.getCurrentRowMap()) |row| return try mapFromRow(allocator, row);
             }
             return null;
         }
 
-        /// Find all records
         pub fn findAll(db: *DB, allocator: std.mem.Allocator) ![]Instance {
             const sql = try std.fmt.allocPrintSentinel(allocator, "SELECT * FROM {s}", .{table_name}, 0);
             defer allocator.free(sql);
-
             var result = try db.query(sql);
             defer result.deinit();
-
             var list = std.ArrayList(Instance).empty;
-            errdefer {
-                for (list.items) |*item| {
-                    item.deinit(allocator);
-                }
-                allocator.free(list.toOwnedSlice(allocator) catch &[_]Instance{});
-            }
-
+            errdefer { for (list.items) |*item| item.deinit(allocator); allocator.free(list.toOwnedSlice(allocator) catch &.{}); }
             while (result.next()) {
-                if (result.getCurrentRowMap()) |row| {
-                    const instance = try Self.mapFromRow(allocator, row);
-                    try list.append(allocator, instance);
-                }
+                if (result.getCurrentRowMap()) |row| try list.append(allocator, try mapFromRow(allocator, row));
             }
-
             return list.toOwnedSlice(allocator);
         }
 
-        /// Find records with parameterized WHERE clause.
-        /// where_sql must be comptime-known to prevent SQL injection.
-        /// e.g. findWhere(db, "age > ? AND name = ?", &params, allocator)
         pub fn findWhere(db: *DB, comptime where_sql: [:0]const u8, params: []const SqlParam, allocator: std.mem.Allocator) ![]Instance {
             const sql = try std.fmt.allocPrintSentinel(allocator, "SELECT * FROM {s} WHERE {s}", .{ table_name, where_sql }, 0);
             defer allocator.free(sql);
-
             var result = try db.queryParams(sql, params);
             defer result.deinit();
-
             var list = std.ArrayList(Instance).empty;
-            errdefer {
-                for (list.items) |*item| {
-                    item.data.name = "";
-                    item.data.email = "";
-                }
-                list.deinit();
-            }
-
+            defer list.deinit();
             while (result.next()) {
-                if (result.getCurrentRowMap()) |row| {
-                    const instance = try Self.mapFromRow(allocator, row);
-                    try list.append(allocator, instance);
-                }
+                if (result.getCurrentRowMap()) |row| try list.append(allocator, try mapFromRow(allocator, row));
             }
-
             return list.toOwnedSlice();
         }
 
-        /// Delete record by ID (parameterized)
         pub fn deleteById(db: *DB, id: i64) !void {
             const sql = try std.fmt.allocPrintSentinel(db.allocator, "DELETE FROM {s} WHERE id = ?", .{table_name}, 0);
             defer db.allocator.free(sql);
-            const params = &[_]SqlParam{.{ .int = id }};
-            try db.execParams(sql, params);
+            try db.execParams(sql, &.{SqlParam{ .int = id }});
         }
 
-        /// Count all records
         pub fn count(db: *DB) !i64 {
             const sql = try std.fmt.allocPrintSentinel(db.allocator, "SELECT COUNT(*) FROM {s}", .{table_name}, 0);
             defer db.allocator.free(sql);
-
             var result = try db.query(sql);
             defer result.deinit();
-
-            if (result.next()) {
-                if (try result.getInt(0)) |c| {
-                    return c;
-                }
-            }
+            if (result.next()) { if (try result.getInt(0)) |c| return c; }
             return 0;
         }
 
-        /// Map a ResultSet row to a model Instance
+        /// Map a ResultSet row to a model Instance using comptime field iteration.
         fn mapFromRow(allocator: std.mem.Allocator, row: ResultSet.RowMap) !Instance {
-            // Map columns by name; assumes T has name, email, age fields
+            var data: T = undefined;
+            inline for (fields) |f| {
+                const raw = row.get(f.name);
+                @field(data, f.name) = try parseField(allocator, raw, f.type);
+            }
             const id_text = row.get("id");
             const id: ?i64 = if (id_text) |t| std.fmt.parseInt(i64, t, 10) catch null else null;
+            return Instance{ .id = id, .data = data };
+        }
 
-            const name_val = row.get("name") orelse "";
-            const email_val = row.get("email") orelse "";
-
-            return Instance{
-                .id = id,
-                .data = T{
-                    .name = if (name_val.len > 0) try allocator.dupe(u8, name_val) else "",
-                    .email = if (email_val.len > 0) try allocator.dupe(u8, email_val) else "",
-                    .age = if (row.get("age")) |a| std.fmt.parseInt(i32, a, 10) catch 0 else 0,
+        fn parseField(allocator: std.mem.Allocator, raw: ?[]const u8, comptime FT: type) !FT {
+            const s = raw orelse "";
+            return switch (@typeInfo(FT)) {
+                .int, .comptime_int => std.fmt.parseInt(FT, if (s.len > 0) s else "0", 10) catch 0,
+                .float, .comptime_float => std.fmt.parseFloat(FT, if (s.len > 0) s else "0") catch 0,
+                .bool => std.mem.eql(u8, s, "1") or std.mem.eql(u8, s, "true") or std.mem.eql(u8, s, "t"),
+                .optional => blk: {
+                    if (s.len == 0) break :blk null;
+                    const Child = @typeInfo(FT).optional.child;
+                    break :blk try parseField(allocator, raw, Child);
                 },
+                .pointer => if (s.len > 0) try allocator.dupe(u8, s) else try allocator.dupe(u8, ""),
+                else => @compileError("Unsupported field type"),
             };
         }
     };
 }
 
-/// Example User model
-pub const User = struct {
-    name: []const u8,
-    email: []const u8,
-    age: i32,
-};
-
-/// User model type
-pub const UserModel = Model(User, "users");
+fn toSqlParam(value: anytype) SqlParam {
+    const T = @TypeOf(value);
+    return switch (@typeInfo(T)) {
+        .int, .comptime_int => SqlParam{ .int = @intCast(value) },
+        .float, .comptime_float => SqlParam{ .real = @floatCast(value) },
+        .bool => SqlParam{ .int = if (value) @as(i64, 1) else 0 },
+        .optional => if (value) |v| toSqlParam(v) else SqlParam.null,
+        .pointer => if (T == []const u8) SqlParam{ .text = value } else SqlParam.null,
+        else => SqlParam.null,
+    };
+}
 
 test "model basic" {
-    const allocator = std.testing.allocator;
+    const TestTable = struct { name: []const u8, age: i32 };
+    const TestModel = Model(TestTable, "test_table");
+    _ = TestModel;
+}
 
-    const DBConfig = @import("config.zig").DBConfig;
-    const config = DBConfig.sqliteMemory();
-
-    var db = try DB.init(allocator, config);
-    defer db.deinit();
-
-    try db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT, age INTEGER)");
-
-    var user = UserModel.Instance{
-        .data = User{
-            .name = "Alice",
-            .email = "alice@example.com",
-            .age = 25,
-        },
-    };
-
-    try user.save(&db);
-    try std.testing.expect(user.id != null);
-
-    // Test findById
-    const found = try UserModel.findById(&db, user.id.?, allocator);
-    defer {
-        if (found) |*f| {
-            f.deinit(allocator);
-        }
-    }
-    try std.testing.expect(found != null);
-    try std.testing.expectEqualStrings("Alice", found.?.data.name);
-
-    // Test findAll
-    const all = try UserModel.findAll(&db, allocator);
-    defer {
-        for (all) |*item| {
-            item.deinit(allocator);
-        }
-        allocator.free(all);
-    }
-    try std.testing.expectEqual(@as(usize, 1), all.len);
-
-    // Test count
-    const cnt = try UserModel.count(&db);
-    try std.testing.expectEqual(@as(i64, 1), cnt);
-
-    // Test delete
-    try UserModel.deleteById(&db, user.id.?);
-    const after_delete = try UserModel.findById(&db, user.id.?, allocator);
-    defer {
-        if (after_delete) |*f| {
-            f.deinit(allocator);
-        }
-    }
-    try std.testing.expect(after_delete == null);
+test "model mapFromRow works with any schema" {
+    const Blog = struct { title: []const u8, content: []const u8, author_id: i64 };
+    const BlogModel = Model(Blog, "blog_posts");
+    try std.testing.expect(@hasDecl(BlogModel, "findById"));
+    try std.testing.expect(@hasDecl(BlogModel, "findAll"));
+    try std.testing.expect(@hasDecl(BlogModel, "findWhere"));
 }

@@ -856,6 +856,15 @@ fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8) !void {
 }
 
 fn writeGeneratedFiles(allocator: std.mem.Allocator, table: *codegen.Table) !void {
+    // deps.zig — shared dependencies (generated once per project)
+    try ensureDir(allocator, "src");
+    const deps_content =
+        \\const zfinal = @import("zfinal");
+        \\pub var pool: zfinal.ConnectionPool = undefined;
+        \\
+    ;
+    std.Io.Dir.cwd().writeFile(io, .{ .sub_path = "src/deps.zig", .data = deps_content }) catch {};
+
     // Model
     const model = try codegen.generateModel(allocator, table);
     defer allocator.free(model);
