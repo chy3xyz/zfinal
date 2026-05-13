@@ -1,0 +1,412 @@
+const std = @import("std");
+
+pub const Column = struct {
+    name: []const u8,
+    sql_type: []const u8,
+    is_nullable: bool,
+    is_primary_key: bool,
+    is_auto_increment: bool,
+    default_value: ?[]const u8,
+    max_length: ?usize,
+};
+
+pub const Table = struct {
+    name: []const u8,
+    pascal_name: []const u8,
+    columns: std.ArrayList(Column),
+    allocator: std.mem.Allocator,
+
+    pub fn deinit(self: *Table) void {
+        self.allocator.free(self.pascal_name);
+        for (self.columns.items) |c| {
+            self.allocator.free(c.name);
+            self.allocator.free(c.sql_type);
+            if (c.default_value) |v| self.allocator.free(v);
+        }
+        self.columns.deinit(self.allocator);
+    }
+};
+
+pub fn zigType(col: Column) []const u8 {
+    const upper = col.sql_type;
+    if (col.is_nullable and !col.is_primary_key and !col.is_auto_increment) {
+        if (std.mem.startsWith(u8, upper, "INT") or std.mem.startsWith(u8, upper, "BIGINT") or std.mem.startsWith(u8, upper, "SMALLINT") or std.mem.startsWith(u8, upper, "TINYINT") or std.mem.startsWith(u8, upper, "SERIAL") or std.mem.startsWith(u8, upper, "NUMERIC") or std.mem.startsWith(u8, upper, "DECIMAL")) return "?i64";
+        if (std.mem.startsWith(u8, upper, "REAL") or std.mem.startsWith(u8, upper, "FLOAT") or std.mem.startsWith(u8, upper, "DOUBLE")) return "?f64";
+        if (std.mem.startsWith(u8, upper, "BOOL") or std.mem.startsWith(u8, upper, "TINYINT(1)")) return "?bool";
+        return "?[]const u8";
+    }
+    if (std.mem.startsWith(u8, upper, "INT") or std.mem.startsWith(u8, upper, "BIGINT") or std.mem.startsWith(u8, upper, "SMALLINT") or std.mem.startsWith(u8, upper, "TINYINT") or std.mem.startsWith(u8, upper, "SERIAL") or std.mem.startsWith(u8, upper, "NUMERIC") or std.mem.startsWith(u8, upper, "DECIMAL")) return "i64";
+    if (std.mem.startsWith(u8, upper, "REAL") or std.mem.startsWith(u8, upper, "FLOAT") or std.mem.startsWith(u8, upper, "DOUBLE")) return "f64";
+    if (std.mem.startsWith(u8, upper, "BOOL") or std.mem.startsWith(u8, upper, "TINYINT(1)")) return "bool";
+    return "[]const u8";
+}
+
+pub fn defaultZigValue(col: Column) []const u8 {
+    if (col.is_auto_increment) return "null";
+    if (col.is_nullable) return "null";
+    if (col.default_value) |v| return v;
+    return switch (zigType(col)[0]) {
+        'i' => "0", 'f' => "0.0", 'b' => "false", '[' => "\"\"",
+        else => "null",
+    };
+}
+
+// ============================================================
+// SQL Parser
+// ============================================================
+
+pub fn parseCreateTable(allocator: std.mem.Allocator, sql: []const u8) !Table {
+    var table = Table{ .name = "", .pascal_name = "", .columns = std.ArrayList(Column).empty, .allocator = allocator };
+
+    var pos: usize = 0;
+    var upper_buf: [12]u8 = undefined;
+    _ = std.ascii.upperString(&upper_buf, sql[0..@min(12, sql.len)]);
+    _ = std.mem.indexOf(u8, &upper_buf, "CREATE TABLE") orelse return error.NoCreateTable;
+    pos = std.mem.indexOf(u8, sql, "TABLE") orelse return error.InvalidSyntax;
+    pos += 5;
+    pos = skipWhitespace(sql, pos);
+    if (std.mem.startsWith(u8, sql[pos..], "IF NOT EXISTS")) { pos += 13; pos = skipWhitespace(sql, pos); }
+
+    const name_end = blk: {
+        if (sql[pos] == '`' or sql[pos] == '"') { const q = sql[pos]; pos += 1; const e = std.mem.indexOfScalar(u8, sql[pos..], q) orelse return error.InvalidSyntax; break :blk e + pos; }
+        const e = std.mem.indexOfAny(u8, sql[pos..], " (\t\n\r") orelse return error.InvalidSyntax;
+        break :blk pos + e;
+    };
+    table.name = try allocator.dupe(u8, sql[pos..name_end]);
+    table.pascal_name = try toPascalCase(allocator, sql[pos..name_end]);
+
+    pos = std.mem.indexOfScalar(u8, sql[name_end..], '(') orelse return error.InvalidSyntax;
+    pos = name_end + pos + 1;
+
+    while (pos < sql.len) {
+        pos = skipWhitespace(sql, pos);
+        if (pos >= sql.len or sql[pos] == ')') break;
+        if (sql[pos] == ',') { pos += 1; continue; }
+        if (std.ascii.startsWithIgnoreCase(sql[pos..], "PRIMARY KEY") or std.ascii.startsWithIgnoreCase(sql[pos..], "FOREIGN KEY") or std.ascii.startsWithIgnoreCase(sql[pos..], "UNIQUE") or std.ascii.startsWithIgnoreCase(sql[pos..], "INDEX") or std.ascii.startsWithIgnoreCase(sql[pos..], "KEY") or std.ascii.startsWithIgnoreCase(sql[pos..], "CHECK") or std.ascii.startsWithIgnoreCase(sql[pos..], "CONSTRAINT")) {
+            while (pos < sql.len and sql[pos] != ',' and sql[pos] != '\n') : (pos += 1) {}
+            pos += 1;
+            continue;
+        }
+        const col = try parseColumnDef(allocator, sql, &pos);
+        try table.columns.append(allocator, col);
+    }
+    return table;
+}
+
+fn skipWhitespace(sql: []const u8, pos: usize) usize {
+    var p = pos;
+    while (p < sql.len and (sql[p] == ' ' or sql[p] == '\t' or sql[p] == '\n' or sql[p] == '\r')) : (p += 1) {}
+    return p;
+}
+
+fn parseColumnDef(allocator: std.mem.Allocator, sql: []const u8, pos_ptr: *usize) !Column {
+    var pos = pos_ptr.*;
+    const name_start: usize = if (sql[pos] == '`' or sql[pos] == '"') blk: { pos += 1; break :blk pos; } else pos;
+    const name_end = blk: {
+        if (sql[pos - 1] == '`' or sql[pos - 1] == '"') { const q = sql[name_start - 1]; const e = std.mem.indexOfScalar(u8, sql[name_start..], q) orelse return error.InvalidSyntax; break :blk name_start + e; }
+        const e = std.mem.indexOfAny(u8, sql[name_start..], " \t\n(") orelse sql.len;
+        break :blk name_start + e;
+    };
+    const col_name = try allocator.dupe(u8, sql[name_start..name_end]);
+    pos = if (sql[name_end] == '`' or sql[name_end] == '"') name_end + 1 else name_end;
+    pos = skipWhitespace(sql, pos);
+
+    const type_end = std.mem.indexOfAny(u8, sql[pos..], " ,\t\n(") orelse sql.len;
+    var col_type = sql[pos..@min(pos + type_end, sql.len)];
+    if (type_end < sql.len and sql[pos + type_end] == '(') {
+        const paren_end = std.mem.indexOfScalar(u8, sql[pos + type_end + 1 ..], ')') orelse return error.InvalidSyntax;
+        col_type = sql[pos .. pos + type_end + paren_end + 2];
+        pos = pos + type_end + paren_end + 2;
+    } else { pos = pos + type_end; }
+    pos = skipWhitespace(sql, pos);
+
+    var col = Column{ .name = col_name, .sql_type = try allocator.dupe(u8, col_type), .is_nullable = true, .is_primary_key = false, .is_auto_increment = false, .default_value = null, .max_length = null };
+
+    while (pos < sql.len and sql[pos] != ',' and sql[pos] != ')' and sql[pos] != '\n') {
+        pos = skipWhitespace(sql, pos);
+        if (pos >= sql.len) break;
+        if (std.ascii.startsWithIgnoreCase(sql[pos..], "NOT NULL")) { col.is_nullable = false; pos += 8; }
+        else if (std.ascii.startsWithIgnoreCase(sql[pos..], "PRIMARY KEY")) { col.is_primary_key = true; col.is_nullable = false; pos += 11; }
+        else if (std.ascii.startsWithIgnoreCase(sql[pos..], "AUTO_INCREMENT") or std.ascii.startsWithIgnoreCase(sql[pos..], "AUTOINCREMENT")) { col.is_auto_increment = true; col.is_nullable = false; pos += if (std.ascii.startsWithIgnoreCase(sql[pos..], "AUTO_INCREMENT")) @as(usize, 14) else @as(usize, 13); }
+        else if (std.ascii.startsWithIgnoreCase(sql[pos..], "DEFAULT")) {
+            pos += 7; pos = skipWhitespace(sql, pos);
+            if (sql[pos] == '\'' or sql[pos] == '"') { const q = sql[pos]; const e = std.mem.indexOfScalar(u8, sql[pos + 1 ..], q) orelse 0; col.default_value = try allocator.dupe(u8, sql[pos + 1 .. pos + 1 + e]); pos = pos + e + 2; }
+            else { const e = std.mem.indexOfAny(u8, sql[pos..], " ,\n\r)") orelse sql.len; col.default_value = try allocator.dupe(u8, sql[pos .. pos + e]); pos = pos + e; }
+        }
+        else if (std.ascii.startsWithIgnoreCase(sql[pos..], "NULL")) { col.is_nullable = true; pos += 4; }
+        else if (std.ascii.startsWithIgnoreCase(sql[pos..], "UNIQUE")) { pos += 6; }
+        else if (std.ascii.startsWithIgnoreCase(sql[pos..], "REFERENCES")) { while (pos < sql.len and sql[pos] != ',' and sql[pos] != ')') : (pos += 1) {} }
+        else { pos += 1; }
+        if (pos < sql.len and (sql[pos] == ',' or sql[pos] == ')')) break;
+    }
+    pos_ptr.* = pos;
+    return col;
+}
+
+pub fn parseSqlFile(allocator: std.mem.Allocator, sql: []const u8) !std.ArrayList(Table) {
+    var tables = std.ArrayList(Table).empty;
+    var pos: usize = 0;
+    while (pos < sql.len) {
+        const rest = sql[pos..];
+        const real_create = std.mem.indexOf(u8, rest, "CREATE TABLE") orelse break;
+        const paren_start = std.mem.indexOfScalar(u8, rest[real_create..], '(') orelse break;
+        var depth: usize = 1;
+        var end_pos = real_create + paren_start + 1;
+        while (end_pos < rest.len and depth > 0) { if (rest[end_pos] == '(') depth += 1; if (rest[end_pos] == ')') depth -= 1; end_pos += 1; }
+        if (depth > 0) break;
+        if (end_pos < rest.len and rest[end_pos] == ';') end_pos += 1;
+        const table = try parseCreateTable(allocator, rest[real_create..end_pos]);
+        try tables.append(allocator, table);
+        pos += end_pos;
+    }
+    return tables;
+}
+
+fn toPascalCase(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
+    var result = std.ArrayList(u8).empty;
+    var cap = true;
+    for (name) |c| {
+        if (c == '_' or c == '-') { cap = true; continue; }
+        try result.append(allocator, if (cap) std.ascii.toUpper(c) else c);
+        cap = false;
+    }
+    if (result.items.len == 0) return allocator.dupe(u8, "Untitled");
+    result.items[0] = std.ascii.toUpper(result.items[0]);
+    return result.toOwnedSlice(allocator);
+}
+
+fn toCamelCase(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
+    const pascal = try toPascalCase(allocator, name);
+    defer allocator.free(pascal);
+    if (pascal.len > 0) { var r = try allocator.dupe(u8, pascal); r[0] = std.ascii.toLower(r[0]); return r; }
+    return allocator.dupe(u8, "untitled");
+}
+
+// ============================================================
+// Code Generators (all use allocPrint — no ArrayList.writer needed)
+// ============================================================
+
+pub fn generateModel(allocator: std.mem.Allocator, table: *const Table) ![]const u8 {
+    var fields = std.ArrayList(u8).empty;
+    for (table.columns.items) |col| {
+        const zt = zigType(col);
+        const def = if (col.is_auto_increment) " = null" else if (col.is_nullable) " = null" else "";
+        const line = try std.fmt.allocPrint(allocator, "    {s}: {s}{s},\n", .{ col.name, zt, def });
+        defer allocator.free(line);
+        try fields.appendSlice(allocator, line);
+    }
+    defer fields.deinit(allocator);
+
+    return std.fmt.allocPrint(allocator,
+        \\const zfinal = @import("zfinal");
+        \\
+        \\pub const {s} = struct {{
+        \\{s}}};
+        \\
+        \\pub const {s}Model = zfinal.Model({s}, "{s}");
+        \\
+    , .{ table.pascal_name, fields.items, table.pascal_name, table.pascal_name, table.name });
+}
+
+pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]const u8 {
+    const name = table.pascal_name;
+    const name_low = try toCamelCase(allocator, table.pascal_name);
+    defer allocator.free(name_low);
+    const pl = try pluralize(allocator, name_low);
+    defer allocator.free(pl);
+
+    // Build create-field assignments
+    var create_fields = std.ArrayList(u8).empty;
+    for (table.columns.items) |col| {
+        if (col.is_auto_increment) continue;
+        const zt = zigType(col);
+        const line = if (std.mem.eql(u8, zt, "i64") or std.mem.eql(u8, zt, "?i64"))
+            try std.fmt.allocPrint(allocator, "            .{s} = try std.fmt.parseInt(i64, (try ctx.getPara(\"{s}\")) orelse \"0\", 10) catch 0,\n", .{ col.name, col.name })
+        else
+            try std.fmt.allocPrint(allocator, "            .{s} = (try ctx.getPara(\"{s}\")) orelse {s},\n", .{ col.name, col.name, defaultZigValue(col) });
+        defer allocator.free(line);
+        try create_fields.appendSlice(allocator, line);
+    }
+    defer create_fields.deinit(allocator);
+
+    // Build update-field assignments
+    var update_fields = std.ArrayList(u8).empty;
+    for (table.columns.items) |col| {
+        if (col.is_primary_key or col.is_auto_increment) continue;
+        const zt = zigType(col);
+        const line = if (std.mem.eql(u8, zt, "i64") or std.mem.eql(u8, zt, "?i64"))
+            try std.fmt.allocPrint(allocator, "    if (try ctx.getPara(\"{s}\")) |v| item.data.{s} = std.fmt.parseInt(i64, v, 10) catch item.data.{s};\n", .{ col.name, col.name, col.name })
+        else
+            try std.fmt.allocPrint(allocator, "    if (try ctx.getPara(\"{s}\")) |v| item.data.{s} = v;\n", .{ col.name, col.name });
+        defer allocator.free(line);
+        try update_fields.appendSlice(allocator, line);
+    }
+    defer update_fields.deinit(allocator);
+
+    return std.fmt.allocPrint(allocator,
+        \\const std = @import("std");
+        \\const zfinal = @import("zfinal");
+        \\const {s}Model = @import("../model/{s}.zig").{s}Model;
+        \\
+        \\pub fn list(ctx: *zfinal.Context) !void {{
+        \\    const db = try pool.acquire();
+        \\    defer pool.release(db) catch {{}};
+        \\    const items = try {s}Model.findAll(db, ctx.allocator);
+        \\    defer ctx.allocator.free(items);
+        \\    try ctx.renderJson(.{{ .data = items }});
+        \\}}
+        \\
+        \\pub fn show(ctx: *zfinal.Context) !void {{
+        \\    const id_str = ctx.getPathParam("id") orelse {{
+        \\        ctx.res_status = .bad_request;
+        \\        return ctx.renderJson(.{{ .err = "Missing ID" }});
+        \\    }};
+        \\    const id = std.fmt.parseInt(i64, id_str, 10) catch {{
+        \\        ctx.res_status = .bad_request;
+        \\        return ctx.renderJson(.{{ .err = "Invalid ID" }});
+        \\    }};
+        \\    const db = try pool.acquire();
+        \\    defer pool.release(db) catch {{}};
+        \\    const item = try {s}Model.findById(db, id, ctx.allocator);
+        \\    if (item == null) {{
+        \\        ctx.res_status = .not_found;
+        \\        return ctx.renderJson(.{{ .err = "Not found" }});
+        \\    }}
+        \\    try ctx.renderJson(.{{ .data = item }});
+        \\}}
+        \\
+        \\pub fn create(ctx: *zfinal.Context) !void {{
+        \\    const db = try pool.acquire();
+        \\    defer pool.release(db) catch {{}};
+        \\    var instance = {s}Model.Instance{{
+        \\        .data = .{{
+        \\{s}        }},
+        \\    }};
+        \\    try instance.save(&db);
+        \\    try ctx.renderJson(.{{ .ok = true, .data = instance.data }});
+        \\}}
+        \\
+        \\pub fn update(ctx: *zfinal.Context) !void {{
+        \\    const id_str = ctx.getPathParam("id") orelse {{
+        \\        ctx.res_status = .bad_request;
+        \\        return ctx.renderJson(.{{ .err = "Missing ID" }});
+        \\    }};
+        \\    const id = std.fmt.parseInt(i64, id_str, 10) catch {{
+        \\        ctx.res_status = .bad_request;
+        \\        return ctx.renderJson(.{{ .err = "Invalid ID" }});
+        \\    }};
+        \\    const db = try pool.acquire();
+        \\    defer pool.release(db) catch {{}};
+        \\    var item = try {s}Model.findById(db, id, ctx.allocator) orelse {{
+        \\        ctx.res_status = .not_found;
+        \\        return ctx.renderJson(.{{ .err = "Not found" }});
+        \\    }};
+        \\{s}    try item.save(&db);
+        \\    try ctx.renderJson(.{{ .ok = true, .data = item.data }});
+        \\}}
+        \\
+        \\pub fn delete(ctx: *zfinal.Context) !void {{
+        \\    const id_str = ctx.getPathParam("id") orelse {{
+        \\        ctx.res_status = .bad_request;
+        \\        return ctx.renderJson(.{{ .err = "Missing ID" }});
+        \\    }};
+        \\    const id = std.fmt.parseInt(i64, id_str, 10) catch {{
+        \\        ctx.res_status = .bad_request;
+        \\        return ctx.renderJson(.{{ .err = "Invalid ID" }});
+        \\    }};
+        \\    const db = try pool.acquire();
+        \\    defer pool.release(db) catch {{}};
+        \\    var item = try {s}Model.findById(db, id, ctx.allocator) orelse {{
+        \\        ctx.res_status = .not_found;
+        \\        return ctx.renderJson(.{{ .err = "Not found" }});
+        \\    }};
+        \\    try item.delete(&db);
+        \\    try ctx.renderJson(.{{ .ok = true }});
+        \\}}
+    , .{ name, name_low, name, name, name, name, create_fields.items, name, update_fields.items, name });
+}
+
+pub fn generateRoutes(allocator: std.mem.Allocator, table: *const Table) ![]const u8 {
+    const name = table.pascal_name;
+    const name_low = try toCamelCase(allocator, table.pascal_name);
+    defer allocator.free(name_low);
+    const pl = try pluralize(allocator, name_low);
+    defer allocator.free(pl);
+    return std.fmt.allocPrint(allocator,
+        \\try app.get("/{s}", {s}Controller.list);
+        \\try app.get("/{s}/:id", {s}Controller.show);
+        \\try app.post("/{s}", {s}Controller.create);
+        \\try app.put("/{s}/:id", {s}Controller.update);
+        \\try app.delete("/{s}/:id", {s}Controller.delete);
+        \\
+    , .{ pl, name, pl, name, pl, name, pl, name, pl, name });
+}
+
+pub fn generateTest(allocator: std.mem.Allocator, table: *const Table) ![]const u8 {
+    return std.fmt.allocPrint(allocator,
+        \\const std = @import("std");
+        \\const zfinal = @import("zfinal");
+        \\const testing = std.testing;
+        \\
+        \\test "{s} CRUD" {{
+        \\    const allocator = std.testing.allocator;
+        \\    const config = zfinal.DBConfig.sqliteMemory();
+        \\    var db = try zfinal.DB.init(allocator, config);
+        \\    defer db.deinit();
+        \\    try db.exec("CREATE TABLE {s} (id INTEGER PRIMARY KEY AUTOINCREMENT)");
+        \\    try testing.expect(true);
+        \\}}
+        \\
+    , .{ table.pascal_name, table.name });
+}
+
+pub fn generateMigrationPackage(allocator: std.mem.Allocator, tables: []Table) ![]const u8 {
+    var buf = std.ArrayList(u8).empty;
+    try buf.appendSlice(allocator, "// ZFinal Migration Package — Auto-generated from SQL schema\n// Copy files to your project src/ directories\n\n");
+    defer buf.deinit(allocator);
+
+    for (tables) |*table| {
+        const model = try generateModel(allocator, table);
+        defer allocator.free(model);
+        const model_hdr = try std.fmt.allocPrint(allocator, "\n// ── src/model/{s}.zig ──\n{s}\n", .{ table.name, model });
+        defer allocator.free(model_hdr);
+        try buf.appendSlice(allocator, model_hdr);
+
+        const ctrl = try generateController(allocator, table);
+        defer allocator.free(ctrl);
+        const ctrl_hdr = try std.fmt.allocPrint(allocator, "\n// ── src/controller/{s}_controller.zig ──\n{s}\n", .{ table.name, ctrl });
+        defer allocator.free(ctrl_hdr);
+        try buf.appendSlice(allocator, ctrl_hdr);
+
+        const routes = try generateRoutes(allocator, table);
+        defer allocator.free(routes);
+        const routes_hdr = try std.fmt.allocPrint(allocator, "\n// ── Routes for {s} ──\n{s}\n", .{ table.name, routes });
+        defer allocator.free(routes_hdr);
+        try buf.appendSlice(allocator, routes_hdr);
+
+        const test_code = try generateTest(allocator, table);
+        defer allocator.free(test_code);
+        const test_hdr = try std.fmt.allocPrint(allocator, "\n// ── test/{s}_test.zig ──\n{s}\n", .{ table.name, test_code });
+        defer allocator.free(test_hdr);
+        try buf.appendSlice(allocator, test_hdr);
+    }
+    return buf.toOwnedSlice(allocator);
+}
+
+fn isVowel(c: u8) bool {
+    return c == 'a' or c == 'e' or c == 'i' or c == 'o' or c == 'u' or
+        c == 'A' or c == 'E' or c == 'I' or c == 'O' or c == 'U';
+}
+
+fn pluralize(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
+    if (name.len == 0) return allocator.dupe(u8, "items");
+    if (name[name.len - 1] == 's') return allocator.dupe(u8, name);
+    if (name[name.len - 1] == 'x' or name[name.len - 1] == 'z') return std.fmt.allocPrint(allocator, "{s}es", .{name});
+    if (name[name.len - 1] == 'y' and name.len > 1 and !isVowel(name[name.len - 2])) {
+        var buf = try allocator.alloc(u8, name.len + 2);
+        @memcpy(buf[0 .. name.len - 1], name[0 .. name.len - 1]);
+        buf[name.len - 1] = 'i'; buf[name.len] = 'e'; buf[name.len + 1] = 's';
+        return buf;
+    }
+    return std.fmt.allocPrint(allocator, "{s}s", .{name});
+}

@@ -1,151 +1,135 @@
 ---
 name: zfinal-app
-description: Build full-stack web applications with ZFinal framework. Generate handlers, models, interceptors, database schemas, and complete CRUD endpoints following ZFinal best practices. Use when user asks to build a web app, API, or website with Zig/ZFinal.
+description: Build full-stack web apps with ZFinal. Three modes: new project (DB modeling + code gen), existing SQL (parse schema + code gen), legacy migration (extract SQL from Java/PHP/Go/Rust + code gen). Maximize code generation, then AI fills business logic.
 ---
 
-# ZFinal Application Builder
+# ZFinal Application Builder — 3-Mode Workflow
 
-You are an expert ZFinal developer. Follow these rules when building ZFinal applications.
+ZFinal's primary value: **maximize code generation from database schema, then AI fills what can't be generated.**
 
-## Framework Capabilities
+## Mode 1: New Project (Greenfield)
 
-ZFinal provides:
-- **Fiber-based async HTTP server** (kqueue/io_uring, keep-alive, zero heap per connection)
-- **ActiveRecord ORM** (SQLite/PostgreSQL/MySQL, parameterized queries, connection pooling)
-- **CSRF protection** (single-use tokens, auto-expiry, interceptor)
-- **Structured logging** (compile-time levels, key=value fields, stderr/writer backends)
-- **Template engine** (variables, loops, conditions, includes, extends, layouts)
-- **17 utility kits** (validation, hashing, JSON, file I/O, random/CSPRNG, etc.)
-- **Health endpoint** + **Metrics** (uptime, request counters, error ring buffer)
-- **Graceful shutdown** (SIGTERM/SIGINT handling)
+User describes domain → you design DB schema → ZF generates CRUD → you fill business logic.
 
-## Project Scaffold
-
-When creating a new ZFinal project, generate this structure:
+### Workflow
 
 ```
-myapp/
-├── build.zig           # Import zfinal as dependency
-├── build.zig.zon       # Package manifest  
-├── src/
-│   ├── main.zig        # App entry: init, routes, interceptors, start
-│   ├── controller/     # Route handlers (one file per resource)
-│   ├── model/          # ActiveRecord model definitions
-│   ├── interceptor/    # Custom interceptors
-│   └── config/         # DB config, route registration
-└── templates/          # HTML templates (if using HTMX)
+1. Model database: CREATE TABLE statements for all entities
+2. zf crud:sql schema.sql    ← generates everything
+3. AI fills: business rules, auth, validation, inter-service calls
+4. zig build test && zig build run
 ```
 
-## build.zig Template
+### Example
 
-```zig
-const std = @import("std");
+User: "Build a blog with users, posts, comments"
 
-pub fn build(b: *std.Build) void {
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
-
-    const exe = b.addExecutable(.{
-        .name = "APP_NAME",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    
-    const zfinal_path = "PATH_TO_ZFINAL"; // User must set this
-    const zfinal_mod = b.addModule("zfinal", .{
-        .root_source_file = b.path(zfinal_path ++ "/src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    zfinal_mod.link_libc = true;
-    zfinal_mod.linkSystemLibrary("sqlite3", .{});
-    exe.root_module.addImport("zfinal", zfinal_mod);
-
-    b.installArtifact(exe);
-    const run_cmd = b.addRunArtifact(exe);
-    run_cmd.step.dependOn(b.getInstallStep());
-    const run_step = b.step("run", "Run the app");
-    run_step.dependOn(&run_cmd.step);
-}
+```sql
+-- schema.sql
+CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id), title TEXT NOT NULL, body TEXT, published BOOLEAN DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE comments (id INTEGER PRIMARY KEY AUTOINCREMENT, post_id INTEGER NOT NULL REFERENCES posts(id), user_id INTEGER NOT NULL REFERENCES users(id), body TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
 ```
 
-## Handler Patterns
-
-### JSON API Handler
-```zig
-fn listUsers(ctx: *zfinal.Context) !void {
-    const db = try pool.acquire();
-    defer pool.release(db) catch {};
-    
-    var result = try UserModel.findAll(db, ctx.allocator);
-    defer ctx.allocator.free(result);
-    
-    try ctx.renderJson(.{ .users = result });
-}
+```bash
+zf crud:sql schema.sql  # Generates all models, controllers, routes, tests
 ```
 
-### Form Handler with Validation
-```zig
-fn createUser(ctx: *zfinal.Context) !void {
-    // CSRF check
-    const token = try ctx.getPara("csrf_token") orelse {
-        ctx.res_status = .forbidden;
-        return try ctx.renderJson(.{ .err = "Missing CSRF token" });
-    };
-    if (!try tokenMgr.validate(token)) {
-        ctx.res_status = .forbidden;
-        return try ctx.renderJson(.{ .err = "Invalid CSRF token" });
-    }
-    // Validate input
-    const name = try ctx.getPara("name") orelse {
-        ctx.res_status = .bad_request;
-        return try ctx.renderJson(.{ .err = "Name is required" });
-    };
-    // Save to database...
-}
+Then AI adds to each generated controller:
+- `posts_controller.zig`: check `user_id == current_user.id` before update/delete
+- `comments_controller.zig`: rate limit, spam detection
+- Auth interceptor: JWT/session validation
+- Password hashing in create/update user
+
+## Mode 2: Existing SQL Schema (Brownfield)
+
+User has SQL dump from existing database → parse schema → generate → AI fills.
+
+### Workflow
+
+```
+1. Collect SQL schema (mysqldump --no-data, pg_dump --schema-only, or .sql file)
+2. zf crud:sql dump.sql    ← parses all CREATE TABLE, generates full package
+3. AI reviews generated code, adds missing business logic
+4. Incrementally replace old API endpoints with generated ones
 ```
 
-## Model Pattern
+### Handling Multiple SQL Dialects
 
-```zig
-const User = struct {
-    id: ?i64 = null,
-    name: []const u8,
-    email: []const u8,
-    created_at: []const u8,
-};
-const UserModel = zfinal.Model(User, "users");
+The parser supports SQLite, MySQL, and PostgreSQL CREATE TABLE syntax:
+- `INTEGER PRIMARY KEY AUTOINCREMENT` (SQLite)
+- `INT AUTO_INCREMENT PRIMARY KEY` (MySQL)
+- `SERIAL PRIMARY KEY` (PostgreSQL)
+- Backtick, double-quote, and unquoted identifiers
+- `IF NOT EXISTS`, `DEFAULT`, `NOT NULL`, `UNIQUE`, `REFERENCES`
+
+## Mode 3: Legacy Migration (Java/PHP/Go/Rust)
+
+User has existing project → you extract SQL schema → generate Zig code → AI maps business logic.
+
+### Workflow
+
+```
+1. Extract SQL schema from legacy project:
+   - Java: find *.sql files, @Entity classes, application.properties (spring.datasource)
+   - PHP:  find *.sql, Schema.php, migration files
+   - Go:   find *.sql, migration/*.up.sql, model struct tags
+   - Rust: find *.sql, migration dir, diesel schema.rs
+2. Consolidate into single schema.sql
+3. zf crud:sql schema.sql    ← generates ZFinal package
+4. AI maps business logic:
+   - Read old controller → understand business rules → port to Zig
+   - Read old middleware → port to ZFinal interceptors
+   - Read old validation → port to ZFinal validator
+   - Read old tests → port to ZFinal test format
+5. Verify: compare old API responses with new
 ```
 
-## Interceptor Pattern
+### Legacy Pattern Mapping
 
-```zig
-fn authBefore(ctx: *zfinal.Context) !bool {
-    const token = ctx.getHeader("Authorization");
-    if (token == null) {
-        ctx.res_status = .unauthorized;
-        try ctx.renderJson(.{ .err = "Unauthorized" });
-        return false;
-    }
-    return true;
-}
+| Legacy Pattern | ZFinal Equivalent |
+|---------------|-------------------|
+| @RestController (Java) | Controller with `renderJson` |
+| @Entity + JpaRepository | Model + ActiveRecord |
+| @Transactional | `db.begin()` / `db.commit()` |
+| Spring Security Filter | Interceptor `.before` |
+| Bean Validation annotations | Validator.validate* |
+| Laravel Eloquent Model | Model + ActiveRecord |
+| Laravel Middleware | Interceptor |
+| Gin Handler (Go) | Handler function |
+| GORM Model (Go) | Model + ActiveRecord |
+| Actix Web Handler (Rust) | Handler function |
+| Diesel Schema (Rust) | Model + raw query |
 
-pub const AuthInterceptor = zfinal.Interceptor{
-    .name = "auth",
-    .before = authBefore,
-};
+## ZF CLI Commands
+
+```bash
+# Schema-based generation (primary workflow)
+zf crud:sql schema.sql        # Parse SQL file → generate everything
+zf crud db.sqlite3 users      # Read from live SQLite DB → generate CRUD
+
+# Manual code generation
+zf new project_name           # Create project scaffold
+zf g controller User          # Generate controller + HTMX template
+zf api Product                # Generate JSON API controller
+zf g model User               # Generate ActiveRecord model
+zf g interceptor Auth         # Generate interceptor
+zf g plugin Custom            # Generate plugin skeleton
+
+# Utilities
+zf migrate new init           # Create migration file
+zf test:gen UserService       # Generate test file
+zf docker                     # Generate Dockerfile + compose
 ```
 
-## Quality Checklist
+## Quality Checklist (After Generation)
 
-Before delivering code, verify:
-- [ ] Every `init()` has matching `defer deinit()`
-- [ ] SQL uses parameterized queries (`execParams`/`queryParams`), never string concatenation
-- [ ] State-changing routes (POST/PUT/DELETE) have CSRF protection
-- [ ] All user input validated with Validator or manual checks
-- [ ] Logger used instead of std.debug.print
-- [ ] Remote address used for rate limiting (not proxy headers unless explicitly trusted)
-- [ ] max_body_size set for file upload endpoints
-- [ ] Health endpoint registered at `/health`
-- [ ] Graceful shutdown registered with `shutdown.registerHandlers()`
+Before accepting generated code, verify:
+- [ ] All `init()` have matching `defer deinit()`
+- [ ] SQL uses parameterized queries (generator already does this)
+- [ ] POST/PUT/DELETE routes have CSRF protection (add manually)
+- [ ] Input validation added for non-trivial fields (email format, length limits)
+- [ ] Auth checks on sensitive endpoints
+- [ ] Rate limiting on public endpoints
+- [ ] Logger calls instead of std.debug.print
+- [ ] `zig build test` passes

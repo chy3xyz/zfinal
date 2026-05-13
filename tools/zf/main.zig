@@ -1,5 +1,6 @@
 const std = @import("std");
 const templates = @import("templates.zig");
+const codegen = @import("codegen.zig");
 
 const Command = enum {
     new,
@@ -14,6 +15,8 @@ const Command = enum {
     test_run,
     version,
     help,
+    crud,
+    crud_sql,
 };
 
 var io: std.Io = undefined;
@@ -108,6 +111,22 @@ pub fn main(init: std.process.Init) !void {
             std.debug.print("Zig Web Framework inspired by JFinal\n", .{});
         },
         .help => printHelp(args[0]),
+        .crud => {
+            if (args.len < 4) {
+                std.debug.print("Usage: {s} crud <db_path> <table_name>\n", .{args[0]});
+                std.debug.print("Example: {s} crud myapp.db users\n", .{args[0]});
+                return;
+            }
+            try handleCrud(allocator, args[2], args[3]);
+        },
+        .crud_sql => {
+            if (args.len < 3) {
+                std.debug.print("Usage: {s} crud:sql <sql_file>\n", .{args[0]});
+                std.debug.print("Example: {s} crud:sql schema.sql\n", .{args[0]});
+                return;
+            }
+            try handleCrudFromSql(allocator, args[2]);
+        },
     }
 }
 
@@ -124,6 +143,8 @@ fn parseCommand(cmd: []const u8) ?Command {
     if (std.mem.eql(u8, cmd, "test") or std.mem.eql(u8, cmd, "t")) return .test_run;
     if (std.mem.eql(u8, cmd, "version") or std.mem.eql(u8, cmd, "v")) return .version;
     if (std.mem.eql(u8, cmd, "help") or std.mem.eql(u8, cmd, "h")) return .help;
+    if (std.mem.eql(u8, cmd, "crud")) return .crud;
+    if (std.mem.eql(u8, cmd, "crud:sql")) return .crud_sql;
     return null;
 }
 
@@ -140,6 +161,8 @@ fn printHelp(exe_name: []const u8) void {
     std.debug.print("  api <name>              Generate API controller (JSON output)\n", .{});
     std.debug.print("  migrate <action> [name] Manage database migrations\n", .{});
     std.debug.print("  test:gen <name>         Generate test file\n", .{});
+    std.debug.print("  crud <db> <table>       Generate full CRUD from SQLite DB schema\n", .{});
+    std.debug.print("  crud:sql <file>         Generate migration package from SQL dump\n", .{});
     std.debug.print("  docker                  Generate Dockerfile\n", .{});
     std.debug.print("  deploy                  Deploy application\n", .{});
     std.debug.print("  build, b                Build release binary\n", .{});
@@ -695,6 +718,149 @@ fn generatePlugin(allocator: std.mem.Allocator, name: []const u8) !void {
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = filename, .data = content });
         std.debug.print("✅ Generated generic plugin: {s}\n", .{filename});
     }
+}
+
+fn handleCrud(allocator: std.mem.Allocator, db_path: []const u8, table_name: []const u8) !void {
+    const c = @cImport({ @cInclude("sqlite3.h"); });
+
+    var db: ?*c.sqlite3 = null;
+    const rc = c.sqlite3_open(db_path.ptr, &db);
+    if (rc != c.SQLITE_OK) {
+        std.debug.print("Failed to open database: {s}\n", .{db_path});
+        return;
+    }
+    defer _ = c.sqlite3_close(db);
+
+    // Read column info via PRAGMA
+    var stmt: ?*c.sqlite3_stmt = null;
+    var pragma_buf: [256]u8 = undefined;
+    const pragma_sql = try std.fmt.bufPrintZ(&pragma_buf, "PRAGMA table_info({s})", .{table_name});
+    _ = c.sqlite3_prepare_v2(db, pragma_sql.ptr, @intCast(pragma_sql.len + 1), &stmt, null);
+    if (stmt == null) {
+        std.debug.print("Table '{s}' not found in database.\n", .{table_name});
+        return;
+    }
+    defer _ = c.sqlite3_finalize(stmt);
+
+    var table = codegen.Table{
+        .name = try allocator.dupe(u8, table_name),
+        .pascal_name = try allocator.dupe(u8, table_name), // will be pascal-cased below
+        .columns = std.ArrayList(codegen.Column).empty,
+        .allocator = allocator,
+    };
+    allocator.free(table.pascal_name);
+    table.pascal_name = try pascalCaseConvert(allocator, table_name);
+
+    while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+        const col_name = c.sqlite3_column_text(stmt, 1);
+        const col_type = c.sqlite3_column_text(stmt, 2);
+        const not_null = c.sqlite3_column_int(stmt, 3);
+        const is_pk = c.sqlite3_column_int(stmt, 5);
+
+        try table.columns.append(allocator, codegen.Column{
+            .name = try allocator.dupe(u8, std.mem.span(col_name)),
+            .sql_type = try allocator.dupe(u8, std.mem.span(col_type)),
+            .is_nullable = not_null == 0,
+            .is_primary_key = is_pk > 0,
+            .is_auto_increment = is_pk > 0 and std.mem.startsWith(u8, std.mem.span(col_type), "INTEGER"),
+            .default_value = null,
+            .max_length = null,
+        });
+    }
+
+    try writeGeneratedFiles(allocator, &table);
+}
+
+fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8) !void {
+    const file = try std.Io.Dir.cwd().openFile(io, sql_path, .{});
+    defer file.close(io);
+
+    const stat = try file.stat(io);
+    var content = try allocator.alloc(u8, @intCast(stat.size));
+    defer allocator.free(content);
+    const n = try std.Io.File.readPositionalAll(file, io, content, 0);
+    content = content[0..n];
+
+    var tables = try codegen.parseSqlFile(allocator, content);
+    defer {
+        for (tables.items) |*t| t.deinit();
+        tables.deinit(allocator);
+    }
+
+    std.debug.print("Parsed {d} tables from {s}\n", .{ tables.items.len, sql_path });
+
+    // Generate combined migration package
+    const pkg = try codegen.generateMigrationPackage(allocator, tables.items);
+    defer allocator.free(pkg);
+
+    const out_path = try std.fmt.allocPrint(allocator, "zfinal_migration.zig", .{});
+    defer allocator.free(out_path);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = out_path, .data = pkg });
+
+    std.debug.print("✅ Generated migration package: {s}\n", .{out_path});
+    std.debug.print("   Copy model/controller files to your project src/\n", .{});
+    std.debug.print("   Add routes from the generated file to your config/routes.zig\n", .{});
+
+    // Also generate individual files for each table
+    for (tables.items) |*table| {
+        try writeGeneratedFiles(allocator, table);
+    }
+}
+
+fn writeGeneratedFiles(allocator: std.mem.Allocator, table: *codegen.Table) !void {
+    // Model
+    const model = try codegen.generateModel(allocator, table);
+    defer allocator.free(model);
+    const model_path = try std.fmt.allocPrint(allocator, "src/model/{s}.zig", .{table.name});
+    defer allocator.free(model_path);
+    try ensureDir(allocator, "src/model");
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = model_path, .data = model });
+    std.debug.print("✅ Generated model: {s}\n", .{model_path});
+
+    // Controller
+    const ctrl = try codegen.generateController(allocator, table);
+    defer allocator.free(ctrl);
+    const ctrl_path = try std.fmt.allocPrint(allocator, "src/controller/{s}_controller.zig", .{table.name});
+    defer allocator.free(ctrl_path);
+    try ensureDir(allocator, "src/controller");
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ctrl_path, .data = ctrl });
+    std.debug.print("✅ Generated controller: {s}\n", .{ctrl_path});
+
+    // Routes
+    const routes = try codegen.generateRoutes(allocator, table);
+    defer allocator.free(routes);
+    std.debug.print("✅ Routes for {s}:\n{s}\n", .{ table.name, routes });
+
+    // Test
+    const test_code = try codegen.generateTest(allocator, table);
+    defer allocator.free(test_code);
+    const test_path = try std.fmt.allocPrint(allocator, "test/{s}_test.zig", .{table.name});
+    defer allocator.free(test_path);
+    try ensureDir(allocator, "test");
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = test_path, .data = test_code });
+    std.debug.print("✅ Generated test: {s}\n", .{test_path});
+}
+
+fn ensureDir(allocator: std.mem.Allocator, path: []const u8) !void {
+    std.Io.Dir.cwd().createDirPath(io, path) catch |err| {
+        if (err != error.PathAlreadyExists) {
+            std.debug.print("Failed to create directory {s}: {}\n", .{ path, err });
+            return err;
+        }
+    };
+    _ = allocator;
+}
+
+fn pascalCaseConvert(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
+    var result = std.ArrayList(u8).empty;
+    var cap = true;
+    for (name) |c| {
+        if (c == '_' or c == '-') { cap = true; continue; }
+        try result.append(allocator, if (cap) std.ascii.toUpper(c) else c);
+        cap = false;
+    }
+    if (result.items.len > 0) result.items[0] = std.ascii.toUpper(result.items[0]);
+    return result.toOwnedSlice(allocator);
 }
 
 fn copyPluginFile(allocator: std.mem.Allocator, filename: []const u8) !void {

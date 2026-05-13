@@ -96,6 +96,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    zf_mod.link_libc = true;
+    zf_mod.linkSystemLibrary("sqlite3", .{});
     const zf_exe = b.addExecutable(.{
         .name = "zf",
         .root_module = zf_mod,
