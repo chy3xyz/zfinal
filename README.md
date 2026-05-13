@@ -105,19 +105,42 @@ zig build run-production   # Production example (logging, metrics, CSRF)
 
 ### Add to your project
 
+```bash
+# Zig package manager (recommended)
+zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.6.0.tar.gz
+```
+
 In your `build.zig`:
 
 ```zig
-const zfinal_mod = b.addModule("zfinal", .{
-    .root_source_file = b.path("path/to/zfinal/src/main.zig"),
+const zfinal_dep = b.dependency("zfinal", .{ .target = target, .optimize = optimize });
+const zfinal_mod = zfinal_dep.module("zfinal");
+
+const exe_mod = b.createModule(.{
+    .root_source_file = b.path("src/main.zig"),
     .target = target,
     .optimize = optimize,
+    .imports = &.{.{ .name = "zfinal", .module = zfinal_mod }},
 });
-zfinal_mod.link_libc = true;
-zfinal_mod.linkSystemLibrary("sqlite3", .{});
+exe_mod.link_libc = true;
+exe_mod.linkSystemLibrary("sqlite3", .{});
+```
 
-// With log level
-// zig build -Dlog-level=debug
+In your `build.zig.zon`:
+
+```zon
+.dependencies = .{
+    .zfinal = .{
+        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.6.0.tar.gz",
+        .hash = "...", // auto-filled by `zig fetch`
+    },
+},
+```
+
+Or use local path for development:
+
+```zon
+.zfinal = .{ .path = "../zfinal" },
 ```
 
 ---
