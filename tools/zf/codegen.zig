@@ -247,7 +247,7 @@ pub fn generateModel(allocator: std.mem.Allocator, table: *const Table, naming: 
     for (table.columns.items) |col| {
         const is_sensitive = std.mem.eql(u8, col.name, "password") or std.mem.eql(u8, col.name, "secret") or std.mem.eql(u8, col.name, "token") or std.mem.eql(u8, col.name, "hash") or std.mem.eql(u8, col.name, "key") or std.mem.eql(u8, col.name, "passwd") or std.mem.eql(u8, col.name, "pwd");
         if (!is_sensitive) {
-            const sline = try std.fmt.allocPrint(allocator, "        .{s},\n", .{col.name});
+            const sline = try std.fmt.allocPrint(allocator, "        \"{s}\",\n", .{col.name});
             defer allocator.free(sline);
             try safe_fields.appendSlice(allocator, sline);
         }

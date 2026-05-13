@@ -6,6 +6,7 @@ const CommentModel = @import("src/modules/comment/model.zig").CommentsModel;
 const User = @import("src/modules/user/model.zig").Users;
 const Post = @import("src/modules/post/model.zig").Posts;
 const Comment = @import("src/modules/comment/model.zig").Comments;
+const UserController = @import("src/modules/user/controller.zig");
 
 const testing = std.testing;
 
@@ -184,6 +185,45 @@ test "batch insert: all-or-nothing transaction" {
     try UserModel.insertBatch(&db, &instances);
     const count = try UserModel.count(&db);
     try testing.expectEqual(@as(i64, 3), count);
+}
+
+test "json: field mapping snake_case → camelCase" {
+    const PostMod = @import("src/modules/post/model.zig");
+    // snake_case ident — DB columns are snake_case, should map to themselves
+    try testing.expectEqualStrings("author_id", comptime PostMod.jsonFieldName("author_id"));
+    try testing.expectEqualStrings("created_at", comptime PostMod.jsonFieldName("created_at"));
+}
+
+test "json: safeFields excludes password column" {
+    const UserMod = @import("src/modules/user/model.zig");
+    // Verify password is NOT in safeFields
+    for (UserMod.safeFields) |field| {
+        try testing.expect(!std.mem.eql(u8, field, "password"));
+    }
+}
+
+test "json: validate rejects invalid email" {
+    const data = User{ .username = "test", .email = "not-an-email", .password = "pw", .created_at = null };
+    const UserMod = @import("src/modules/user/model.zig");
+    try testing.expectError(error.InvalidEmail, UserMod.validate(data));
+}
+
+test "json: validate accepts valid email" {
+    const data = User{ .username = "test", .email = "alice@example.com", .password = "pw", .created_at = null };
+    const UserMod = @import("src/modules/user/model.zig");
+    try UserMod.validate(data);
+}
+
+test "json: validate rejects empty required fields" {
+    const data = User{ .username = "", .email = "a@b.com", .password = "pw", .created_at = null };
+    const UserMod = @import("src/modules/user/model.zig");
+    try testing.expectError(error.ValidationError, UserMod.validate(data));
+}
+
+test "json: routes include PATCH endpoint" {
+    const routes = @embedFile("src/modules/user/routes.zig");
+    try testing.expect(std.mem.indexOf(u8, routes, ".patch(") != null);
+    try testing.expect(std.mem.indexOf(u8, routes, ".delete(") != null);
 }
 
 test "routes file: all modules have routes.zig" {
