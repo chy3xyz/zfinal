@@ -93,11 +93,20 @@ When version bumps → create `.life/fingerprints/vX.Y.Z.json`:
 }
 ```
 
+### Size Constraints — MUST ENFORCE
+- `evolution.md`: max 200 lines. When exceeded → keep last 10 entries, archive rest to `memory/archive-YYYY-MM.md`
+- `decisions/`: max 20 files. Mark deprecated ADRs as `**Status**: Deprecated` instead of deleting
+- `fingerprints/`: max 10 files. Keep latest 10, archive old to `fingerprints/archive/`
+- `dna.json`: max 80 lines. Remove old capabilities, keep only current
+- Single entry in evolution.md: 3-8 lines max. One sentence per change. No paragraphs.
+
 ### Anti-Patterns — NEVER
 - Skip .life/ update because "changes were small"
-- Modify old fingerprints (immutable — create new one)
-- Delete .life/ files (append only, never remove)
-- Write .life/ entries without date stamp
+- Write .life/ entries longer than 8 lines
+- Modify old fingerprints (immutable)
+- Delete .life/ files — archive instead
+- Write entries without date stamp
+- Add commentary/opinion to evolution.md — facts only
 
 - `std.ArrayList(T).empty` + explicit allocator on all methods
 - `std.Io.Mutex.init` (const, no parens)
