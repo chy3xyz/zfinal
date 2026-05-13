@@ -481,9 +481,10 @@ pub fn generateRoutes(allocator: std.mem.Allocator, table: *const Table) ![]cons
         \\try app.get("/{s}/:id", {s}Controller.show);
         \\try app.post("/{s}", {s}Controller.create);
         \\try app.put("/{s}/:id", {s}Controller.update);
+        \\try app.patch("/{s}/:id", {s}Controller.patch);
         \\try app.delete("/{s}/:id", {s}Controller.delete);
         \\
-    , .{ pl, name, pl, name, pl, name, pl, name, pl, name });
+    , .{ pl, name, pl, name, pl, name, pl, name, pl, name, pl, name });
 }
 
 pub fn generateTest(allocator: std.mem.Allocator, table: *const Table) ![]const u8 {
