@@ -122,6 +122,22 @@ zf test:gen UserService       # Generate test file
 zf docker                     # Generate Dockerfile + compose
 ```
 
+## .life/ Maintenance — AUTOMATIC
+
+**.life/ is app hippocampus. Update it every session, no exceptions.**
+
+### Start: Read `.life/dna.json` + last entry in `.life/evolution.md`
+### End: Append to `.life/evolution.md`:
+```markdown
+## YYYY-MM-DD — What changed
+**Mode**: 1|2|3 (new build | existing SQL | migration)
+**Changes**: bullet list of what was done
+**Tests**: N pass, M skip, 0 fail
+**Next**: what remains
+```
+### If new feature/capability: update `.life/dna.json` capabilities + metrics
+### If version bump: create `.life/fingerprints/vX.Y.Z.json`
+
 ## Quality Checklist (After Generation)
 
 Before accepting generated code, verify:

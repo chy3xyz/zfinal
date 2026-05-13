@@ -39,7 +39,65 @@ zig build install-zf    # Build CLI
 4. `zig build test` must pass
 5. Update README plugin table if applicable
 
-## Zig 0.16 Patterns
+## .life/ Maintenance Protocol — MANDATORY
+
+**.life/ is project hippocampus. Every session MUST read it at start, update it at end.**
+
+### Session Start — AUTOMATIC
+```
+1. Read .life/dna.json        → Know version, metrics, capabilities
+2. Read .life/evolution.md    → Last 2-3 entries for recent context
+3. Check .life/decisions/     → Relevant ADRs for planned changes
+```
+
+### During Session — CONDITIONAL
+If architecture decision made → create `.life/decisions/NNN-title.md`:
+```markdown
+# ADR-NNN: Title
+**Status**: Proposed | Accepted | Deprecated
+**Date**: YYYY-MM-DD
+
+## Context
+## Decision
+## Consequences
+```
+
+### Session End — MANDATORY
+Before exiting, append to `.life/evolution.md`:
+```markdown
+## YYYY-MM-DD — Summary line
+**Session**: What was worked on
+**Changes**:
+1. Key change — why, how, result
+2. ...
+**Errors**: What failed and why (if any)
+**Next**: What should follow
+```
+
+Update `.life/dna.json` if metrics changed:
+```
+"metrics": { "source_files": N, "tests": N, ... }
+"fingerprint": { "source_hash": "COMMIT_HASH" }
+```
+
+### Milestone / Release — CONDITIONAL
+When version bumps → create `.life/fingerprints/vX.Y.Z.json`:
+```json
+{
+  "version": "v0.4.0",
+  "fingerprint": "commit_hash",
+  "timestamp": "ISO8601",
+  "metrics": {...},
+  "changes": ["change1", "change2"],
+  "decisions": ["ADR-001", "ADR-002"]
+}
+```
+
+### Anti-Patterns — NEVER
+- Skip .life/ update because "changes were small"
+- Modify old fingerprints (immutable — create new one)
+- Delete .life/ files (append only, never remove)
+- Write .life/ entries without date stamp
 
 - `std.ArrayList(T).empty` + explicit allocator on all methods
 - `std.Io.Mutex.init` (const, no parens)
