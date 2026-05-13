@@ -139,7 +139,7 @@ pub const PostgresDB = struct {
         return self.last_affected;
     }
 
-    const Params = struct { values: []?[*:0]const u8, lengths: []c_int, formats: []c_int, strings: [][]const u8 };
+    const Params = struct { values: []?[*:0]const u8, lengths: []c_int, formats: []c_int, strings: [][]const u8, owned: []bool };
 
     fn buildParams(allocator: std.mem.Allocator, params: []const SqlParam) !Params {
         var values = try allocator.alloc(?[*:0]const u8, params.len);
@@ -150,6 +150,9 @@ pub const PostgresDB = struct {
         errdefer allocator.free(formats);
         var strings = try allocator.alloc([]const u8, params.len);
         errdefer allocator.free(strings);
+        var owned = try allocator.alloc(bool, params.len);
+        errdefer allocator.free(owned);
+        @memset(owned, false);
 
         for (params, 0..) |p, i| {
             formats[i] = 0;
@@ -158,12 +161,14 @@ pub const PostgresDB = struct {
                 .int => |v| {
                     const s = try std.fmt.allocPrint(allocator, "{d}", .{v});
                     strings[i] = s;
+                    owned[i] = true;
                     values[i] = @ptrCast(s.ptr);
                     lengths[i] = 0;
                 },
                 .real => |v| {
                     const s = try std.fmt.allocPrint(allocator, "{d}", .{v});
                     strings[i] = s;
+                    owned[i] = true;
                     values[i] = @ptrCast(s.ptr);
                     lengths[i] = 0;
                 },
@@ -178,12 +183,13 @@ pub const PostgresDB = struct {
                 },
             }
         }
-        return .{ .values = values, .lengths = lengths, .formats = formats, .strings = strings };
+        return .{ .values = values, .lengths = lengths, .formats = formats, .strings = strings, .owned = owned };
     }
 
     fn freeParams(allocator: std.mem.Allocator, p: Params) void {
-        for (p.strings) |s| allocator.free(s);
+        for (p.strings, p.owned) |s, own| if (own) allocator.free(s);
         allocator.free(p.strings);
+        allocator.free(p.owned);
         allocator.free(p.values);
         allocator.free(p.lengths);
         allocator.free(p.formats);
