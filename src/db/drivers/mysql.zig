@@ -56,18 +56,18 @@ pub const MySQLDB = struct {
     }
 
     pub fn execParams(self: *MySQLDB, sql: [:0]const u8, params: []const SqlParam) !void {
-        var stmt = c.mysql_stmt_init(self.conn) orelse return error.StmtInitFailed;
-        defer c.mysql_stmt_close(stmt);
+        const stmt = c.mysql_stmt_init(self.conn) orelse return error.StmtInitFailed;
+        defer _ = c.mysql_stmt_close(stmt);
 
         if (c.mysql_stmt_prepare(stmt, sql.ptr, sql.len) != 0) {
             std.debug.print("MySQL stmt prepare failed: {s}\n", .{c.mysql_stmt_error(stmt)});
             return error.PrepareFailed;
         }
 
-        const bind = try buildMysqlBind(self.allocator, params);
-        defer freeMysqlBind(self.allocator, bind);
+        var bind = try buildMysqlBind(self.allocator, params);
+        defer freeMysqlBind(self.allocator, &bind);
 
-        if (c.mysql_stmt_bind_param(stmt, bind.bind.ptr) != 0) {
+        if (c.mysql_stmt_bind_param(stmt, bind.bind.items.ptr)) {
             std.debug.print("MySQL bind failed: {s}\n", .{c.mysql_stmt_error(stmt)});
             return error.BindFailed;
         }
@@ -96,18 +96,18 @@ pub const MySQLDB = struct {
     }
 
     pub fn queryParams(self: *MySQLDB, sql: [:0]const u8, params: []const SqlParam) !ResultSet {
-        var stmt = c.mysql_stmt_init(self.conn) orelse return error.StmtInitFailed;
-        defer c.mysql_stmt_close(stmt);
+        const stmt = c.mysql_stmt_init(self.conn) orelse return error.StmtInitFailed;
+        defer _ = c.mysql_stmt_close(stmt);
 
         if (c.mysql_stmt_prepare(stmt, sql.ptr, sql.len) != 0) {
             std.debug.print("MySQL stmt prepare failed: {s}\n", .{c.mysql_stmt_error(stmt)});
             return error.PrepareFailed;
         }
 
-        const bind = try buildMysqlBind(self.allocator, params);
-        defer freeMysqlBind(self.allocator, bind);
+        var bind = try buildMysqlBind(self.allocator, params);
+        defer freeMysqlBind(self.allocator, &bind);
 
-        if (c.mysql_stmt_bind_param(stmt, bind.bind.ptr) != 0) {
+        if (c.mysql_stmt_bind_param(stmt, bind.bind.items.ptr)) {
             std.debug.print("MySQL bind failed: {s}\n", .{c.mysql_stmt_error(stmt)});
             return error.BindFailed;
         }
@@ -140,9 +140,9 @@ pub const MySQLDB = struct {
         defer self.allocator.free(col_bufs);
         var col_lengths = try self.allocator.alloc(c_ulong, n_cols);
         defer self.allocator.free(col_lengths);
-        var col_is_null = try self.allocator.alloc(c_my_bool, n_cols);
+        var col_is_null = try self.allocator.alloc(bool, n_cols);
         defer self.allocator.free(col_is_null);
-        var col_err = try self.allocator.alloc(c_my_bool, n_cols);
+        var col_err = try self.allocator.alloc(bool, n_cols);
         defer self.allocator.free(col_err);
 
         // Build MYSQL_BIND output array
@@ -155,10 +155,10 @@ pub const MySQLDB = struct {
                 .buffer_length = 4096,
                 .length = &col_lengths[i],
                 .is_null = &col_is_null[i],
-                .error = &col_err[i],
+                .@"error" = &col_err[i],
             };
         }
-        if (c.mysql_stmt_bind_result(stmt, out_bind.ptr) != 0) {
+        if (c.mysql_stmt_bind_result(stmt, out_bind.ptr)) {
             return error.BindFailed;
         }
 
@@ -178,7 +178,7 @@ pub const MySQLDB = struct {
                 self.allocator.free(cells);
             }
             for (0..n_cols) |i| {
-                if (col_is_null[i] != 0) {
+                if (col_is_null[i]) {
                     cells[i] = null;
                 } else {
                     cells[i] = try self.allocator.dupe(u8, col_bufs[i][0..@intCast(col_lengths[i])]);
@@ -204,7 +204,7 @@ pub const MySQLDB = struct {
         reals: std.ArrayList(f64),
         strings: std.ArrayList([]const u8),
         lengths: std.ArrayList(c_ulong),
-        is_nulls: std.ArrayList(c_my_bool),
+        is_nulls: std.ArrayList(bool),
     };
 
     fn buildMysqlBind(allocator: std.mem.Allocator, params: []const SqlParam) !MysqlBindData {
@@ -214,13 +214,13 @@ pub const MySQLDB = struct {
             .reals = std.ArrayList(f64).empty,
             .strings = std.ArrayList([]const u8).empty,
             .lengths = std.ArrayList(c_ulong).empty,
-            .is_nulls = std.ArrayList(c_my_bool).empty,
+            .is_nulls = std.ArrayList(bool).empty,
         };
 
         for (params) |p| {
             switch (p) {
                 .null => {
-                    try data.is_nulls.append(allocator, 1);
+                    try data.is_nulls.append(allocator, true);
                     try data.ints.append(allocator, 0);
                     try data.reals.append(allocator, 0);
                     try data.strings.append(allocator, "");
@@ -234,7 +234,7 @@ pub const MySQLDB = struct {
                     });
                 },
                 .int => |v| {
-                    try data.is_nulls.append(allocator, 0);
+                    try data.is_nulls.append(allocator, false);
                     try data.ints.append(allocator, v);
                     try data.reals.append(allocator, 0);
                     try data.strings.append(allocator, "");
@@ -248,7 +248,7 @@ pub const MySQLDB = struct {
                     });
                 },
                 .real => |v| {
-                    try data.is_nulls.append(allocator, 0);
+                    try data.is_nulls.append(allocator, false);
                     try data.ints.append(allocator, 0);
                     try data.reals.append(allocator, v);
                     try data.strings.append(allocator, "");
@@ -262,7 +262,7 @@ pub const MySQLDB = struct {
                     });
                 },
                 .text, .blob => |v| {
-                    try data.is_nulls.append(allocator, 0);
+                    try data.is_nulls.append(allocator, false);
                     try data.ints.append(allocator, 0);
                     try data.reals.append(allocator, 0);
                     try data.strings.append(allocator, v);
@@ -280,7 +280,7 @@ pub const MySQLDB = struct {
         return data;
     }
 
-    fn freeMysqlBind(allocator: std.mem.Allocator, data: MysqlBindData) void {
+    fn freeMysqlBind(allocator: std.mem.Allocator, data: *MysqlBindData) void {
         data.strings.deinit(allocator);
         data.ints.deinit(allocator);
         data.reals.deinit(allocator);
