@@ -28,11 +28,11 @@ pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
 
 /// Fields safe to expose in API responses (sensitive columns excluded).
 pub const safeFields = [_][]const u8{
-        .id,
-        .post_id,
-        .author_id,
-        .content,
-        .created_at,
+        "id",
+        "post_id",
+        "author_id",
+        "content",
+        "created_at",
 };
 
 /// Validate Comments data before insert/update.
