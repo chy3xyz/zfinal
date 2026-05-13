@@ -133,3 +133,78 @@ Before accepting generated code, verify:
 - [ ] Rate limiting on public endpoints
 - [ ] Logger calls instead of std.debug.print
 - [ ] `zig build test` passes
+
+## Migration Trigger Phrases
+
+Activate this skill when user says ANY of:
+- "migrate/move/port/rewrite this Java/PHP/Go/Rust/Python project to Zig/ZFinal"
+- "convert this Spring Boot / Laravel / Gin / Actix project"
+- "I have a legacy project and want to use ZFinal"
+- "help me extract schema from this codebase"
+- "generate CRUD from this database/schema/SQL"
+
+## Migration Execution (Self-Contained)
+
+When user triggers migration, follow EXACTLY:
+
+### 1. Discovery — ask user for project path, then run:
+
+```bash
+# Find SQL schema
+find PROJECT_PATH -name "*.sql" -not -path "*/target/*" -not -path "*/node_modules/*" | head -20
+
+# Find entities/models
+grep -rn "@Entity\|@Table\|@RestController\|@Repository" PROJECT_PATH/src/ --include="*.java" | head -20
+# PHP: grep -rn "Schema::create\|extends Model" PROJECT_PATH/
+# Go:  grep -rn "gorm.Model\|type.*struct" PROJECT_PATH/
+# Rust: grep -rn "#\[derive.*Queryable\|table!" PROJECT_PATH/
+
+# Find API endpoints
+grep -rn "@GetMapping\|@PostMapping\|@PutMapping\|@DeleteMapping\|@RequestMapping" PROJECT_PATH/src/ --include="*.java" | head -30
+```
+
+### 2. Schema extraction
+
+If SQL files exist → use directly: `zf crud:sql schema.sql`
+
+If only @Entity classes → extract manually:
+```sql
+-- From @Column annotations: name, nullable, length, unique
+-- From @Id + @GeneratedValue: auto_increment primary key
+-- From @ManyToOne/@OneToMany: foreign keys
+-- From @Enumerated: VARCHAR with enum values
+-- From @Lob: TEXT type
+```
+
+Consolidate all into single `schema.sql`, then: `zf crud:sql schema.sql`
+
+### 3. Map business logic
+
+For each generated controller, read the old Java/PHP/Go/Rust source and map:
+
+| Old Pattern | Look For | ZFinal Equivalent |
+|-------------|----------|-------------------|
+| Auth check | `@PreAuthorize`, `auth()->check()`, middleware | `Interceptor.before` returning bool |
+| Validation | `@Valid`, `$request->validate()`, `validator.Validate()` | `Validator.validateRequired/Email` |
+| Transaction | `@Transactional`, `DB::transaction()`, `db.Transaction()` | function with `defer` for rollback |
+| Cache | `@Cacheable`, `Cache::remember()`, `cache.Get()` | `CachePlugin.get/set` |
+| Pagination | `Pageable`, `paginate()`, `offset/limit` | manual `LIMIT ? OFFSET ?` with `queryParams` |
+| File upload | `@RequestParam MultipartFile` | `ctx.getFile("field_name")` |
+| Rate limit | `@RateLimiter`, `throttle:60,1` | `RateLimitHandler.handle(ctx)` |
+| Background job | `@Scheduled`, `dispatch(new Job())` | `CronPlugin.schedule()` |
+
+Full pattern table: `doc/java_migration.md`
+
+### 4. AI gap-filling
+
+After codegen, AI MUST add:
+- CSRF protection on all POST/PUT/DELETE handlers
+- Input validation for email, phone, length, range
+- Auth interceptor (JWT/session check)
+- Rate limiting on public endpoints
+- Logger.info for all state-changing operations
+- Error handling: return proper HTTP status codes
+- Password hashing if user model exists
+- Response filtering: never return password_hash, secret_token, etc.
+
+Reference implementation patterns in `AGENTS.md` and `examples/production/main.zig`.
