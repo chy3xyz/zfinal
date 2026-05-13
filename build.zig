@@ -53,13 +53,27 @@ pub fn build(b: *std.Build) void {
     log_opts.addOption([]const u8, "log_level", log_level);
     zfinal_mod.addImport("build_options", log_opts.createModule());
 
-    // Tests
+    // Tests (unit)
     const lib_unit_tests = b.addTest(.{
         .root_module = zfinal_mod,
     });
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
+
+    // Integration tests (generated CRUD against real DB)
+    const int_mod = b.createModule(.{
+        .root_source_file = b.path("test_gen_crud.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "zfinal", .module = zfinal_mod }},
+    });
+    int_mod.link_libc = true;
+    int_mod.linkSystemLibrary("sqlite3", .{});
+    const int_tests = b.addTest(.{ .root_module = int_mod });
+    const run_int_tests = b.addRunArtifact(int_tests);
+    const int_test_step = b.step("test-int", "Run integration tests (requires generated modules)");
+    int_test_step.dependOn(&run_int_tests.step);
 
     // Example runners
     addExample(b, zfinal_mod, "hello", "examples/hello-world/main.zig", "Run hello-world demo");
