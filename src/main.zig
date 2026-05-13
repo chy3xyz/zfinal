@@ -29,6 +29,12 @@ pub const JsonNaming = enum { snake_case, camelCase };
 pub const DB = @import("db/db.zig").DB;
 pub const DBConfig = @import("db/config.zig").DBConfig;
 pub const DBType = @import("db/config.zig").DBType;
+// Production PostgreSQL: import driver directly + link libpq
+//   const PG = @import("zfinal/db/drivers/postgres.zig").PostgresDB;
+//   var db = try PG.connect(allocator, config);
+// Production MySQL: import driver directly + link libmysqlclient
+//   const MY = @import("zfinal/db/drivers/mysql.zig").MySQLDB;
+//   var db = try MY.connect(allocator, config);
 pub const ResultSet = @import("db/result.zig").ResultSet;
 pub const SqlParam = @import("db/sql_param.zig").SqlParam;
 pub const ParamQuery = @import("db/sql_param.zig").ParamQuery;
