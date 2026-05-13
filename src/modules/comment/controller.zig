@@ -47,6 +47,7 @@ pub fn create(ctx: *zfinal.Context) !void {
     defer pool_ref.release(db) catch {};
     var instance = CommentsModel.Instance{
         .data = .{
+            .id = std.fmt.parseInt(i64, (try ctx.getPara("id")) orelse "0", 10) catch 0,
             .post_id = std.fmt.parseInt(i64, (try ctx.getPara("post_id")) orelse "0", 10) catch 0,
             .author_id = std.fmt.parseInt(i64, (try ctx.getPara("author_id")) orelse "0", 10) catch 0,
             .content = (try ctx.getPara("content")) orelse "",

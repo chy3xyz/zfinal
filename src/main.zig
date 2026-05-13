@@ -77,6 +77,7 @@ pub const HttpClient = @import("plugin/compat/stubs.zig").HttpClient;
 pub const BeanValidator = @import("plugin/compat/stubs.zig").BeanValidator;
 pub const TaskScheduler = @import("plugin/compat/stubs.zig").TaskScheduler;
 pub const QueueClient = @import("plugin/queue.zig").QueueClient;
+pub const QueueNatsClient = @import("plugin/queue_nats.zig").QueueNatsClient;
 pub const MessageQueue = @import("plugin/compat/stubs.zig").MessageQueue;
 pub const OAuth2Client = @import("plugin/compat/stubs.zig").OAuth2Client;
 pub const ObjectMapper = @import("plugin/compat/stubs.zig").ObjectMapper;

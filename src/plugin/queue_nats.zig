@@ -1,15 +1,16 @@
 const std = @import("std");
 const nats = @import("nats");
 
-/// NATS-backed message queue client. Requires nats.zig dependency.
+/// NATS-backed message queue client. Requires nats.zig v0.1.0 dependency.
 ///
-/// Setup:
-///   zig fetch --save https://github.com/nats-io/nats.zig/archive/refs/tags/v3.0.3.tar.gz
+/// Setup (in your build.zig.zon):
+///   zig fetch --save https://github.com/nats-io/nats.zig/archive/refs/tags/v0.1.0.tar.gz
 ///
 /// Usage:
-///   var nc = try nats.Client.connect(allocator, .{ .url = "nats://localhost:4222" });
+///   var threaded = std.Io.Threaded.init(allocator, .{});
+///   var nc = try nats.Client.connect(allocator, threaded.io(), "nats://localhost:4222", .{});
 ///   defer nc.deinit();
-///   var q = QueueNatsClient.init(allocator, &nc);
+///   var q = QueueNatsClient.init(allocator, nc);
 ///   try q.publish("orders.new", "{\"id\":1}");
 pub const QueueNatsClient = struct {
     allocator: std.mem.Allocator,
@@ -25,18 +26,24 @@ pub const QueueNatsClient = struct {
         try self.nc.publish(subject, data);
     }
 
-    pub fn subscribe(self: *const QueueNatsClient, subject: []const u8, comptime handler: fn (Message) void) !void {
-        _ = try self.nc.subscribe(subject, .{ .callback = struct {
-            fn cb(m: *nats.Message) void {
-                handler(.{ .subject = m.subject, .data = m.data, .reply = m.reply });
-            }
-        }.cb });
+    /// Subscribe with a context object whose onMessage(msg: *const nats.Message) void is called.
+    /// Uses nats.zig MsgHandler vtable pattern.
+    pub fn subscribe(self: *const QueueNatsClient, subject: []const u8, comptime T: type, ctx: *T) !void {
+        _ = try self.nc.subscribe(subject, nats.MsgHandler.init(T, ctx));
     }
 
-    pub fn request(self: *const QueueNatsClient, subject: []const u8, data: []const u8, timeout_ms: u64) !Message {
-        const msg = try self.nc.request(subject, data, std.time.ns_per_ms * timeout_ms);
-        return .{ .subject = msg.subject, .data = msg.data, .reply = msg.reply };
+    /// Subscribe with a plain function pointer (no context needed).
+    pub fn subscribeFn(self: *const QueueNatsClient, subject: []const u8, cb: *const fn (*const nats.Message) void) !void {
+        _ = try self.nc.subscribeFn(subject, cb);
     }
 
-    pub const Message = struct { subject: []const u8, data: []const u8, reply: ?[]const u8 };
+    /// Request/reply with timeout. Returns null if no responder within timeout_ms.
+    pub fn request(self: *const QueueNatsClient, subject: []const u8, data: []const u8, timeout_ms: u32) !?Message {
+        if (try self.nc.request(subject, data, timeout_ms)) |m| {
+            return .{ .subject = m.subject, .data = m.data, .reply_to = m.reply_to };
+        }
+        return null;
+    }
+
+    pub const Message = struct { subject: []const u8, data: []const u8, reply_to: ?[]const u8 };
 };

@@ -47,6 +47,7 @@ pub fn create(ctx: *zfinal.Context) !void {
     defer pool_ref.release(db) catch {};
     var instance = PostsModel.Instance{
         .data = .{
+            .id = std.fmt.parseInt(i64, (try ctx.getPara("id")) orelse "0", 10) catch 0,
             .title = (try ctx.getPara("title")) orelse "",
             .content = (try ctx.getPara("content")) orelse "",
             .author_id = std.fmt.parseInt(i64, (try ctx.getPara("author_id")) orelse "0", 10) catch 0,

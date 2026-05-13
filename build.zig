@@ -141,4 +141,24 @@ pub fn build(b: *std.Build) void {
     }
     const run_bench_step = b.step("run-bench", "Run benchmark tool");
     run_bench_step.dependOn(&run_bench_cmd.step);
+
+    // NATS integration test
+    const nats_dep = b.dependency("nats", .{ .target = target, .optimize = optimize });
+    const nats_test_mod = b.createModule(.{
+        .root_source_file = b.path("test_nats.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "nats", .module = nats_dep.module("nats") },
+        },
+    });
+    nats_test_mod.link_libc = true;
+    const nats_test_exe = b.addExecutable(.{
+        .name = "test-nats",
+        .root_module = nats_test_mod,
+    });
+    const run_nats_test = b.addRunArtifact(nats_test_exe);
+    run_nats_test.step.dependOn(b.getInstallStep());
+    const nats_test_step = b.step("test-nats", "Run NATS integration test (requires nats-server)");
+    nats_test_step.dependOn(&run_nats_test.step);
 }

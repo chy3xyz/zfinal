@@ -47,6 +47,7 @@ pub fn create(ctx: *zfinal.Context) !void {
     defer pool_ref.release(db) catch {};
     var instance = UsersModel.Instance{
         .data = .{
+            .id = std.fmt.parseInt(i64, (try ctx.getPara("id")) orelse "0", 10) catch 0,
             .username = (try ctx.getPara("username")) orelse "",
             .email = (try ctx.getPara("email")) orelse "",
             .password = (try ctx.getPara("password")) orelse "",

@@ -42,6 +42,11 @@ desktop.ini
 /myapp*/
 /test_sqlite*
 /test_transient*
+/test_crud*/
+/test*/
+/root
+/test_nats_build.zig
+/zfinal_migration.zig
 
 
 # Temporary files
@@ -57,6 +62,7 @@ temp/
 # Dependencies
 vendor/
 node_modules/
+zig-pkg/
 
 # Environment
 .env
