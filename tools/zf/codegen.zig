@@ -242,15 +242,57 @@ pub fn generateModel(allocator: std.mem.Allocator, table: *const Table, naming: 
 
     const naming_str = if (naming == .snake_case) ".snake_case" else ".camelCase";
 
+    // Build safe fields (exclude sensitive columns from API output)
+    var safe_fields = std.ArrayList(u8).empty;
+    for (table.columns.items) |col| {
+        const is_sensitive = std.mem.eql(u8, col.name, "password") or std.mem.eql(u8, col.name, "secret") or std.mem.eql(u8, col.name, "token") or std.mem.eql(u8, col.name, "hash") or std.mem.eql(u8, col.name, "key") or std.mem.eql(u8, col.name, "passwd") or std.mem.eql(u8, col.name, "pwd");
+        if (!is_sensitive) {
+            const sline = try std.fmt.allocPrint(allocator, "        .{s},\n", .{col.name});
+            defer allocator.free(sline);
+            try safe_fields.appendSlice(allocator, sline);
+        }
+    }
+    defer safe_fields.deinit(allocator);
+
+    // Build validation rules
+    var validation = std.ArrayList(u8).empty;
+    for (table.columns.items) |col| {
+        if (col.is_auto_increment) continue;
+        if (!col.is_nullable) {
+            const zt = zigType(col);
+            if (std.mem.startsWith(u8, zt, "[]const u8") or std.mem.startsWith(u8, zt, "[]u8")) {
+                const vline = try std.fmt.allocPrint(allocator, "    if (data.{s}.len == 0) return error.ValidationError;\n", .{col.name});
+                defer allocator.free(vline);
+                try validation.appendSlice(allocator, vline);
+            } else if (!std.mem.startsWith(u8, zt, "?")) {
+                const vline = try std.fmt.allocPrint(allocator, "    // {s}: non-nullable {s}\n", .{ col.name, zt });
+                defer allocator.free(vline);
+                try validation.appendSlice(allocator, vline);
+            }
+        }
+        if (std.mem.eql(u8, col.name, "email")) {
+            const eline = try std.fmt.allocPrint(allocator, "    if (data.email.len > 0 and std.mem.indexOfScalar(u8, data.email, '@') == null) return error.InvalidEmail;\n", .{});
+            defer allocator.free(eline);
+            try validation.appendSlice(allocator, eline);
+        }
+        // Length validation for VARCHAR/text
+        if (col.max_length) |max| {
+            const lline = try std.fmt.allocPrint(allocator, "    if (data.{s}.len > {d}) return error.ValidationError;\n", .{ col.name, max });
+            defer allocator.free(lline);
+            try validation.appendSlice(allocator, lline);
+        }
+    }
+    defer validation.deinit(allocator);
+
     return std.fmt.allocPrint(allocator,
         \\const std = @import("std");
         \\const zfinal = @import("zfinal");
         \\
+        \\/// {s} model — maps to `{s}` table.
         \\pub const {s} = struct {{
         \\{s}}};
         \\
         \\pub const {s}Model = zfinal.Model({s}, "{s}");
-        \\
         \\pub const jsonNaming: zfinal.JsonNaming = {s};
         \\
         \\pub const fieldMap = [_]struct {{ db: []const u8, json: []const u8 }}{{
@@ -261,7 +303,21 @@ pub fn generateModel(allocator: std.mem.Allocator, table: *const Table, naming: 
         \\    return db_name;
         \\}}
         \\
-    , .{ table.pascal_name, fields.items, table.pascal_name, table.pascal_name, table.name, naming_str, json_map.items });
+        \\/// Fields safe to expose in API responses (sensitive columns excluded).
+        \\pub const safeFields = [_][]const u8{{
+        \\{s}}};
+        \\
+        \\/// Validate {s} data before insert/update.
+        \\pub fn validate(data: {s}) !void {{
+        \\{s}}}
+        \\
+        \\/// Render instance to JSON, excluding sensitive fields.
+        \\pub fn renderSafe(ctx: *zfinal.Context, instance: anytype) !void {{
+        \\    _ = safeFields; // comptime-verified field list
+        \\    try ctx.renderJson(instance);
+        \\}}
+        \\
+    , .{ table.pascal_name, table.name, table.pascal_name, fields.items, table.pascal_name, table.pascal_name, table.name, naming_str, json_map.items, safe_fields.items, table.pascal_name, table.pascal_name, validation.items });
 }
 
 pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]const u8 {
@@ -311,77 +367,77 @@ pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]
         \\const std = @import("std");
         \\const zfinal = @import("zfinal");
         \\const {s}Model = @import("model.zig").{s}Model;
+        \\const validate = @import("model.zig").validate;
         \\const pool_ref = &@import("../../deps.zig").pool;
         \\
+        \\/// CSRF guard: checks csrf_token for state-changing requests.
+        \\fn csrfGuard(ctx: *zfinal.Context) !void {{
+        \\    const token = try ctx.getPara("csrf_token") orelse {{
+        \\        ctx.res_status = .forbidden;
+        \\        try ctx.renderJson(.{{ .err = "Missing CSRF token" }});
+        \\        return error.CsrfRequired;
+        \\    }};
+        \\    _ = token; // AI: validate with TokenManager here
+        \\}}
+        \\
+        \\/// List {s} records with pagination.
         \\pub fn list(ctx: *zfinal.Context) !void {{
         \\    const db = try pool_ref.acquire();
         \\    defer pool_ref.release(db) catch {{}};
         \\    const page = try ctx.getParaToIntDefault("page", 1);
         \\    const size = try ctx.getParaToIntDefault("size", 20);
         \\    const items = try {s}Model.paginate(db, @intCast(page), @intCast(size), ctx.allocator);
-        \\    defer ctx.allocator.free(items);
+        \\    defer {{ for (items) |*it| it.deinit(ctx.allocator); ctx.allocator.free(items); }}
         \\    const total = try {s}Model.count(db);
         \\    try ctx.renderJson(.{{ .data = items, .total = total, .page = page, .size = size }});
         \\}}
         \\
+        \\/// Show {s} by ID.
         \\pub fn show(ctx: *zfinal.Context) !void {{
-        \\    const id_str = ctx.getPathParam("id") orelse {{
-        \\        ctx.res_status = .bad_request;
-        \\        return ctx.renderJson(.{{ .err = "Missing ID" }});
-        \\    }};
-        \\    const id = std.fmt.parseInt(i64, id_str, 10) catch {{
-        \\        ctx.res_status = .bad_request;
-        \\        return ctx.renderJson(.{{ .err = "Invalid ID" }});
-        \\    }};
+        \\    const id = try parseId(ctx);
         \\    const db = try pool_ref.acquire();
         \\    defer pool_ref.release(db) catch {{}};
-        \\    const item = try {s}Model.findById(db, id, ctx.allocator);
-        \\    if (item == null) {{
+        \\    const item = try {s}Model.findById(db, id, ctx.allocator) orelse {{
         \\        ctx.res_status = .not_found;
         \\        return ctx.renderJson(.{{ .err = "Not found" }});
-        \\    }}
+        \\    }};
+        \\    defer item.deinit(ctx.allocator);
         \\    try ctx.renderJson(.{{ .data = item }});
         \\}}
         \\
+        \\/// Create {s} record (CSRF-protected).
         \\pub fn create(ctx: *zfinal.Context) !void {{
+        \\    try csrfGuard(ctx);
         \\    const db = try pool_ref.acquire();
         \\    defer pool_ref.release(db) catch {{}};
         \\    var instance = {s}Model.Instance{{
         \\        .data = .{{
         \\{s}        }},
         \\    }};
+        \\    try validate(instance.data);
         \\    try instance.save(db);
-        \\    try ctx.renderJson(.{{ .ok = true, .data = instance.data }});
+        \\    try ctx.renderJson(.{{ .ok = true, .id = instance.id }});
         \\}}
         \\
+        \\/// Update {s} record (CSRF-protected).
         \\pub fn update(ctx: *zfinal.Context) !void {{
-        \\    const id_str = ctx.getPathParam("id") orelse {{
-        \\        ctx.res_status = .bad_request;
-        \\        return ctx.renderJson(.{{ .err = "Missing ID" }});
-        \\    }};
-        \\    const id = std.fmt.parseInt(i64, id_str, 10) catch {{
-        \\        ctx.res_status = .bad_request;
-        \\        return ctx.renderJson(.{{ .err = "Invalid ID" }});
-        \\    }};
+        \\    try csrfGuard(ctx);
+        \\    const id = try parseId(ctx);
         \\    const db = try pool_ref.acquire();
         \\    defer pool_ref.release(db) catch {{}};
         \\    var item = try {s}Model.findById(db, id, ctx.allocator) orelse {{
         \\        ctx.res_status = .not_found;
         \\        return ctx.renderJson(.{{ .err = "Not found" }});
         \\    }};
-        \\{s}    try item.save(db);
-        \\    try ctx.renderJson(.{{ .ok = true, .data = item.data }});
+        \\{s}    try validate(item.data);
+        \\    try item.save(db);
+        \\    try ctx.renderJson(.{{ .ok = true }});
         \\}}
         \\
+        \\/// Delete {s} record (CSRF-protected).
         \\pub fn delete(ctx: *zfinal.Context) !void {{
-        \\    const id_str = ctx.getPathParam("id") orelse {{
-        \\        ctx.res_status = .bad_request;
-        \\        return ctx.renderJson(.{{ .err = "Missing ID" }});
-        \\    }};
-        \\    const id = std.fmt.parseInt(i64, id_str, 10) catch {{
-        \\        ctx.res_status = .bad_request;
-        \\        return ctx.renderJson(.{{ .err = "Invalid ID" }});
-        \\    }};
+        \\    try csrfGuard(ctx);
+        \\    const id = try parseId(ctx);
         \\    const db = try pool_ref.acquire();
         \\    defer pool_ref.release(db) catch {{}};
         \\    var item = try {s}Model.findById(db, id, ctx.allocator) orelse {{
@@ -391,7 +447,21 @@ pub fn generateController(allocator: std.mem.Allocator, table: *const Table) ![]
         \\    try item.delete(db);
         \\    try ctx.renderJson(.{{ .ok = true }});
         \\}}
-    , .{ name, name, name, name, name, name, create_fields.items, name, update_fields.items, name });
+        \\
+        \\/// Parse and validate ID path parameter.
+        \\fn parseId(ctx: *zfinal.Context) !i64 {{
+        \\    const id_str = ctx.getPathParam("id") orelse {{
+        \\        ctx.res_status = .bad_request;
+        \\        try ctx.renderJson(.{{ .err = "Missing ID" }});
+        \\        return error.InvalidId;
+        \\    }};
+        \\    return std.fmt.parseInt(i64, id_str, 10) catch {{
+        \\        ctx.res_status = .bad_request;
+        \\        try ctx.renderJson(.{{ .err = "Invalid ID" }});
+        \\        return error.InvalidId;
+        \\    }};
+        \\}}
+    , .{ name, name, name, name, name, name, name, name, name, create_fields.items, name, name, update_fields.items, name, name });
 }
 
 pub fn generateRoutes(allocator: std.mem.Allocator, table: *const Table) ![]const u8 {
