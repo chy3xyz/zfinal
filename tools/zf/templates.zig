@@ -387,6 +387,115 @@ pub const claude_md =
     \\```
 ;
 
+// ── .claude/skills/zfinal-app.md (Claude Code skill) ──
+pub const claude_skill =
+    \\# ZFinal Project Skill
+    \\
+    \\> **AI: This project uses ZFinal (Zig web framework). Follow these rules exactly.**
+    \\
+    \\## 🛑 RULES
+    \\
+    \\1. **Use `zf` tools ONLY.** Never hand-code model/handler/service from scratch.
+    \\2. **`.gen.zig` = READ-ONLY.** Edit `ext/*.zig` instead.
+    \\3. **Three-layer call chain:** handler → service → model.
+    \\4. **Run `zf check`** before committing.
+    \\
+    \\## ▶️ WORKFLOW
+    \\
+    \\```
+    \\Add table:   update schema.sql → zf crud:sql schema.sql → edit ext/*.zig
+    \\Add handler: zf g handler <Name>
+    \\Add model:   zf g model <Name>
+    \\Audit:       zf check
+    \\Upgrade:     zf upgrade
+    \\```
+    \\
+    \\## 📂 EDIT ZONE
+    \\
+    \\```
+    \\✅ ext/*.zig         — AI writes here
+    \\✅ src/routes.zig    — register new handlers
+    \\✅ src/middleware/   — add auth, CORS, rate-limit
+    \\❌ *.gen.zig         — DO NOT TOUCH (regenerated)
+    \\```
+    \\
+    \\Token-efficient: `find . -path '*/ext/*.zig'` → all editable files.
+;
+
+// ── .opencode/instructions.md (OpenCode tool) ──
+pub const opencode_instructions =
+    \\# ZFinal Project — OpenCode Instructions
+    \\
+    \\## Mandatory Rules
+    \\
+    \\1. **Use `zf` CLI tools** — never hand-code Zig from scratch.
+    \\2. **`.gen.zig` files are read-only** — edit `ext/*.zig` only.
+    \\3. **Three-layer architecture**: handler → service → model.
+    \\4. **Run `zf check`** before every commit.
+    \\
+    \\## Workflow
+    \\
+    \\```bash
+    \\# Add a table
+    \\zf crud:sql schema.sql
+    \\
+    \\# Edit business logic
+    \\# → src/modules/<sub>/<name>/ext/model.zig   (queries)
+    \\# → src/modules/<sub>/<name>/ext/service.zig (business logic)
+    \\# → src/modules/<sub>/<name>/ext/handler.zig (endpoints)
+    \\
+    \\# Verify
+    \\zf check && zig build
+    \\```
+    \\
+    \\## Structure
+    \\
+    \\```
+    \\src/modules/<sub>/<name>/
+    \\├── model.gen.zig    # DO NOT EDIT — generated
+    \\├── service.gen.zig  # DO NOT EDIT — generated
+    \\├── handler.gen.zig  # DO NOT EDIT — generated
+    \\└── ext/             # ← EDIT HERE
+    \\```
+    \\
+    \\All JSON uses **snake_case** (DB column names).
+;
+
+// ── .cursor/rules/zfinal.mdc (Cursor AI rules) ──
+pub const cursor_rules =
+    \\---
+    \\description: ZFinal project rules — Zig web framework best practices
+    \\globs: **/*.zig
+    \\alwaysApply: true
+    \\---
+    \\
+    \\# ZFinal Rules
+    \\
+    \\## CRITICAL
+    \\- Use `zf` CLI tools. Never hand-code model/handler/service.
+    \\- `.gen.zig` files are read-only. Edit `ext/*.zig` only.
+    \\- Three-layer chain: handler → service → model.
+    \\- Run `zf check` before commit.
+    \\
+    \\## Commands
+    \\```bash
+    \\zf crud:sql schema.sql   # generate from SQL
+    \\zf g handler <Name>      # scaffold handler ext
+    \\zf g model <Name>        # scaffold model ext
+    \\zf check                 # audit AI compliance
+    \\zf upgrade               # update zfinal dependency
+    \\zig build                # compile
+    \\```
+    \\
+    \\## Edit Zones
+    \\- ✅ `ext/*.zig` — custom queries, business logic, handlers
+    \\- ✅ `src/routes.zig` — register new endpoints
+    \\- ✅ `src/middleware/` — auth, CORS, rate limiting
+    \\- ❌ `*.gen.zig` — DO NOT EDIT (overwritten on regeneration)
+    \\
+    \\JSON naming: **snake_case** everywhere (request + response).
+;
+
 // ── src/common/errors.zig ──
 pub const common_errors_zig =
     \\// Unified error response shapes.

@@ -21,6 +21,7 @@ const Command = enum {
     crud_sql,
     crud_dsn,
     check,
+    upgrade,
     life,
 };
 
@@ -61,10 +62,12 @@ pub fn main(init: std.process.Init) !void {
     switch (command) {
         .new => {
             if (args.len < 3) {
-                std.debug.print("Usage: {s} new <project_name>\n", .{argv0});
+                std.debug.print("Usage: {s} new <project_name> [--clean]\n", .{argv0});
+                std.debug.print("  --clean  Skip demo files (handler/user.zig, model/user.zig)\n", .{});
                 return;
             }
-            try createProject(allocator, args[2]);
+            const clean = args.len > 3 and std.mem.eql(u8, args[3], "--clean");
+            try createProject(allocator, args[2], clean);
         },
         .generate => {
             if (args.len < 4) {
@@ -112,7 +115,7 @@ pub fn main(init: std.process.Init) !void {
             std.debug.print("Run: zig build test\n", .{});
         },
         .version => {
-            std.debug.print("ZFinal CLI (zf) version 0.3.0\n", .{});
+            std.debug.print("ZFinal CLI (zf) version {s}\n", .{zf_cfg.version});
             std.debug.print("Zig Web Framework inspired by JFinal\n", .{});
         },
         .help => printHelp(args[0]),
@@ -143,6 +146,9 @@ pub fn main(init: std.process.Init) !void {
         .check => {
             try handleCheck(allocator);
         },
+        .upgrade => {
+            try handleUpgrade(allocator);
+        },
         .life => {
             const sub = if (args.len > 2) args[2] else "status";
             try handleLife(allocator, sub, if (args.len > 3) args[3] else "");
@@ -167,6 +173,7 @@ fn parseCommand(cmd: []const u8) ?Command {
     if (std.mem.eql(u8, cmd, "crud:sql")) return .crud_sql;
     if (std.mem.eql(u8, cmd, "crud:dsn")) return .crud_dsn;
     if (std.mem.eql(u8, cmd, "check")) return .check;
+    if (std.mem.eql(u8, cmd, "upgrade")) return .upgrade;
     if (std.mem.eql(u8, cmd, "life")) return .life;
     return null;
 }
@@ -187,6 +194,7 @@ fn printHelp(exe_name: []const u8) void {
     std.debug.print("  crud <db> <table>       Generate full CRUD from SQLite DB schema\n", .{});
     std.debug.print("  crud:sql <file|--dsn>   Generate from .sql file or DSN URL (postgres:// mysql://)\n", .{});
     std.debug.print("  check                   Audit project for AI compliance (gen/ext boundaries)\n", .{});
+    std.debug.print("  upgrade                 Upgrade zfinal dependency to latest release\n", .{});
     std.debug.print("  docker                  Generate Dockerfile\n", .{});
     std.debug.print("  deploy                  Deploy application\n", .{});
     std.debug.print("  build, b                Build release binary\n", .{});
@@ -208,7 +216,7 @@ fn printHelp(exe_name: []const u8) void {
     std.debug.print("\n", .{});
 }
 
-fn createProject(allocator: std.mem.Allocator, project_name: []const u8) !void {
+fn createProject(allocator: std.mem.Allocator, project_name: []const u8, clean: bool) !void {
     const cwd = std.Io.Dir.cwd();
 
     // Create project directory
@@ -231,6 +239,9 @@ fn createProject(allocator: std.mem.Allocator, project_name: []const u8) !void {
     defer allocator.free(claude_md_content);
     try writeFile(project_dir, "CLAUDE.md", claude_md_content);
 
+    // AI tool configs (.claude/, .opencode/, .cursor/)
+    try writeAiConfigs(allocator, project_dir);
+
     // src/
     try project_dir.createDirPath(io, "src");
     var src_dir = try project_dir.openDir(io, "src", .{});
@@ -248,31 +259,49 @@ fn createProject(allocator: std.mem.Allocator, project_name: []const u8) !void {
     try writeFile(src_dir, "config.zig", templates.config_zig);
 
     // src/routes.zig — centralised route table
-    try writeFile(src_dir, "routes.zig", templates.routes_zig);
+    if (clean) {
+        try writeFile(src_dir, "routes.zig",
+            \\const zfinal = @import("zfinal");
+            \\const App = @import("App.zig").App;
+            \\
+            \\pub fn register(app: *App) !void {
+            \\    // zf crud:sql adds routes here
+            \\    _ = app;
+            \\}
+        );
+    } else {
+        try writeFile(src_dir, "routes.zig", templates.routes_zig);
+    }
 
     // src/handler/
     try src_dir.createDirPath(io, "handler");
-    var handler_dir = try src_dir.openDir(io, "handler", .{});
-    defer handler_dir.close(io);
-    const index_content = try std.fmt.allocPrint(allocator, templates.handler_index_zig, .{project_name});
-    defer allocator.free(index_content);
-    try writeFile(handler_dir, "index.zig", index_content);
-    try writeFile(handler_dir, "user.zig", templates.handler_user_zig);
+    if (!clean) {
+        var handler_dir = try src_dir.openDir(io, "handler", .{});
+        defer handler_dir.close(io);
+        const index_content = try std.fmt.allocPrint(allocator, templates.handler_index_zig, .{project_name});
+        defer allocator.free(index_content);
+        try writeFile(handler_dir, "index.zig", index_content);
+        try writeFile(handler_dir, "user.zig", templates.handler_user_zig);
+    }
 
     // src/service/ — business logic layer
     try src_dir.createDirPath(io, "service");
 
     // src/model/
     try src_dir.createDirPath(io, "model");
-    var model_dir = try src_dir.openDir(io, "model", .{});
-    defer model_dir.close(io);
-    try writeFile(model_dir, "user.zig", templates.model_user_zig);
+    if (!clean) {
+        var model_dir = try src_dir.openDir(io, "model", .{});
+        defer model_dir.close(io);
+        try writeFile(model_dir, "user.zig", templates.model_user_zig);
+    }
 
     // src/middleware/
     try src_dir.createDirPath(io, "middleware");
-    var middleware_dir = try src_dir.openDir(io, "middleware", .{});
-    defer middleware_dir.close(io);
-    try writeFile(middleware_dir, "auth.zig", templates.middleware_auth_zig);
+    if (!clean) {
+        var middleware_dir = try src_dir.openDir(io, "middleware", .{});
+        defer middleware_dir.close(io);
+        try writeFile(middleware_dir, "auth.zig", templates.middleware_auth_zig);
+    }
 
     // src/validator/
     try src_dir.createDirPath(io, "validator");
@@ -948,6 +977,12 @@ fn handleCrud(allocator: std.mem.Allocator, db_path: []const u8, table_name: []c
 }
 
 fn handleCrudFromDsn(allocator: std.mem.Allocator, dsn_url: []const u8) !void {
+    // Auto-bootstrap if needed
+    if (std.Io.Dir.cwd().access(io, "build.zig.zon", .{})) |_| {} else |_| {
+        std.debug.print("⚡ Bootstrapping clean project...\n", .{});
+        try bootstrapProject(allocator);
+    }
+
     var tables = extractTables: {
         if (std.mem.startsWith(u8, dsn_url, "postgres://") or std.mem.startsWith(u8, dsn_url, "postgresql://")) {
             if (!zf_cfg.enable_pg) {
@@ -994,6 +1029,12 @@ fn handleCrudFromDsn(allocator: std.mem.Allocator, dsn_url: []const u8) !void {
 }
 
 fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8) !void {
+    // Auto-bootstrap project if not already in one
+    if (std.Io.Dir.cwd().access(io, "build.zig.zon", .{})) |_| {} else |_| {
+        std.debug.print("⚡ Bootstrapping clean project...\n", .{});
+        try bootstrapProject(allocator);
+    }
+
     const file = try std.Io.Dir.cwd().openFile(io, sql_path, .{});
     defer file.close(io);
 
@@ -1224,6 +1265,77 @@ fn generateIntegrationTestEntry(allocator: std.mem.Allocator, tables: []codegen.
     std.debug.print("✅ Generated integration runner: test/integration/runner.zig\n", .{});
 }
 
+/// Bootstrap minimal project in CWD — no demo files, ready for zf crud:sql.
+fn bootstrapProject(allocator: std.mem.Allocator) !void {
+    const cwd = std.Io.Dir.cwd();
+
+    // build.zig
+    const build_zig_content = try std.fmt.allocPrint(allocator, templates.build_zig, .{"app"});
+    defer allocator.free(build_zig_content);
+    try writeFile(cwd, "build.zig", build_zig_content);
+
+    // build.zig.zon
+    const build_zon_content = try std.fmt.allocPrint(allocator, templates.build_zig_zon, .{"app"});
+    defer allocator.free(build_zon_content);
+    try writeFile(cwd, "build.zig.zon", build_zon_content);
+
+    // CLAUDE.md
+    const claude_content = try std.fmt.allocPrint(allocator, templates.claude_md, .{"app"});
+    defer allocator.free(claude_content);
+    try writeFile(cwd, "CLAUDE.md", claude_content);
+
+    // src/
+    try cwd.createDirPath(io, "src");
+    var src_dir = try cwd.openDir(io, "src", .{});
+    defer src_dir.close(io);
+
+    // src/main.zig
+    const main_content = try std.fmt.allocPrint(allocator, templates.main_zig, .{"app"});
+    defer allocator.free(main_content);
+    try writeFile(src_dir, "main.zig", main_content);
+
+    // src/App.zig
+    try writeFile(src_dir, "App.zig", templates.app_zig);
+
+    // src/config.zig
+    try writeFile(src_dir, "config.zig", templates.config_zig);
+
+    // src/routes.zig — empty, zf crud:sql will append routes
+    try writeFile(src_dir, "routes.zig",
+        \\const zfinal = @import("zfinal");
+        \\const App = @import("App.zig").App;
+        \\
+        \\pub fn register(app: *App) !void {
+        \\    // zf crud:sql adds routes here
+        \\    _ = app;
+        \\}
+    );
+
+    // Create empty dirs
+    try src_dir.createDirPath(io, "handler");
+    try src_dir.createDirPath(io, "service");
+    try src_dir.createDirPath(io, "model");
+    try src_dir.createDirPath(io, "middleware");
+    try src_dir.createDirPath(io, "validator");
+    try src_dir.createDirPath(io, "task");
+
+    // src/common/
+    try src_dir.createDirPath(io, "common");
+    var common_dir = try src_dir.openDir(io, "common", .{});
+    defer common_dir.close(io);
+    try writeFile(common_dir, "constants.zig", templates.common_constants_zig);
+    try writeFile(common_dir, "errors.zig", templates.common_errors_zig);
+
+    // test/
+    try cwd.createDirPath(io, "test");
+    try cwd.createDirPath(io, "test/handler");
+
+    // AI tool configs (.claude/, .opencode/, .cursor/)
+    try writeAiConfigs(allocator, cwd);
+
+    std.debug.print("✅ Clean project bootstrapped (no demo files)\n\n", .{});
+}
+
 /// Extract subsystem prefix from table name. system_users → "system", users → "".
 fn subsystemOf(alloc: std.mem.Allocator, name: []const u8) ![]const u8 {
     if (std.mem.indexOfScalar(u8, name, '_')) |pos| {
@@ -1305,18 +1417,27 @@ fn checkExtDirs(allocator: std.mem.Allocator, ok: *u32, miss: *u32, fail: *u32) 
     var walker = modules_dir.walk(allocator) catch return;
     defer walker.deinit();
 
-    var checked = std.StringHashMap(void).init(allocator);
-    defer checked.deinit();
+    // Use simple array for dedup — fewer than 256 modules is safe
+    var checked: [256][]const u8 = undefined;
+    var checked_count: usize = 0;
 
     while (walker.next(io) catch null) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.basename, ".gen.zig")) continue;
 
         const dir_path = std.fs.path.dirname(entry.path) orelse continue;
-        if (checked.contains(dir_path)) continue;
-        checked.put(dir_path, {}) catch continue;
 
-        // Open ext/ relative to modules_dir (not cwd — walker paths are relative)
+        // Check if we've already processed this directory
+        var seen = false;
+        for (checked[0..checked_count]) |c| {
+            if (std.mem.eql(u8, c, dir_path)) { seen = true; break; }
+        }
+        if (seen) continue;
+        if (checked_count < checked.len) {
+            checked[checked_count] = dir_path;
+            checked_count += 1;
+        }
+
         if (modules_dir.openDir(io, dir_path, .{})) |mod_dir| {
             defer mod_dir.close(io);
             if (mod_dir.openDir(io, "ext", .{})) |ext_dir| {
@@ -1358,6 +1479,50 @@ fn checkOrphanHandlers(allocator: std.mem.Allocator, warn: *u32) void {
     }
 }
 
+/// Show upgrade instructions — compares project version against the zf binary version.
+fn handleUpgrade(allocator: std.mem.Allocator) !void {
+    const latest = zf_cfg.version; // injected at build time (current framework version)
+    std.debug.print("\n⬆️  zf upgrade\n", .{});
+    std.debug.print("   zf version: {s}\n", .{latest});
+
+    // Read current build.zig.zon to find project's zfinal version
+    const zon_file = std.Io.Dir.cwd().openFile(io, "build.zig.zon", .{}) catch {
+        std.debug.print("   ⚠️  No build.zig.zon — not in a zfinal project?\n", .{});
+        return;
+    };
+    defer zon_file.close(io);
+
+    const stat = zon_file.stat(io) catch return;
+    var zon_buf = try allocator.alloc(u8, @intCast(stat.size));
+    defer allocator.free(zon_buf);
+    _ = std.Io.File.readPositionalAll(zon_file, io, zon_buf, 0) catch {
+        std.debug.print("   ❌ Failed to read build.zig.zon\n", .{});
+        return;
+    };
+
+    // Extract current tag from .url line
+    var current_tag: []const u8 = "unknown";
+    if (std.mem.indexOf(u8, zon_buf, "refs/tags/")) |tag_start| {
+        const t = zon_buf[tag_start + "refs/tags/".len ..];
+        if (std.mem.indexOf(u8, t, ".tar.gz")) |tag_end| {
+            current_tag = t[0..tag_end];
+        }
+    }
+    std.debug.print("   Project: {s}\n", .{current_tag});
+
+    if (std.mem.eql(u8, current_tag, latest)) {
+        std.debug.print("\n✅ Already at latest version ({s}).\n", .{latest});
+        return;
+    }
+
+    const url = try std.fmt.allocPrint(allocator, "https://github.com/chy3xyz/zfinal/archive/refs/tags/{s}.tar.gz", .{latest});
+    defer allocator.free(url);
+
+    std.debug.print("\n   Upgrade command:\n", .{});
+    std.debug.print("   zig fetch --save {s}\n", .{url});
+    std.debug.print("\n   Then: zig build\n\n", .{});
+}
+
 fn singularize(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
     if (name.len > 3 and std.mem.endsWith(u8, name, "ies")) {
         var r = try allocator.alloc(u8, name.len - 3);
@@ -1367,6 +1532,29 @@ fn singularize(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
     }
     if (name.len > 1 and name[name.len - 1] == 's' and name[name.len - 2] != 's') return allocator.dupe(u8, name[0 .. name.len - 1]);
     return allocator.dupe(u8, name);
+}
+
+/// Generate AI tool configs: Claude Code, OpenCode, Cursor.
+fn writeAiConfigs(allocator: std.mem.Allocator, cwd: std.Io.Dir) !void {
+    // .claude/skills/
+    try cwd.createDirPath(io, ".claude/skills");
+    var claude_dir = try cwd.openDir(io, ".claude/skills", .{});
+    defer claude_dir.close(io);
+    try writeFile(claude_dir, "zfinal-app.md", templates.claude_skill);
+
+    // .opencode/
+    try cwd.createDirPath(io, ".opencode");
+    var opencode_dir = try cwd.openDir(io, ".opencode", .{});
+    defer opencode_dir.close(io);
+    try writeFile(opencode_dir, "instructions.md", templates.opencode_instructions);
+
+    // .cursor/rules/
+    try cwd.createDirPath(io, ".cursor/rules");
+    var cursor_dir = try cwd.openDir(io, ".cursor/rules", .{});
+    defer cursor_dir.close(io);
+    try writeFile(cursor_dir, "zfinal.mdc", templates.cursor_rules);
+
+    _ = allocator;
 }
 
 fn ensureDir(allocator: std.mem.Allocator, path: []const u8) !void {

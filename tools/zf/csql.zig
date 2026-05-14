@@ -7,12 +7,12 @@ const Column = @import("codegen.zig").Column;
 const Table = @import("codegen.zig").Table;
 
 /// Extract table schemas by importing SQL into a temp SQLite DB and introspecting.
-/// Much more reliable than hand-parsing SQL text.
+/// Filters out INSERT/UPDATE/DELETE — only executes DDL (CREATE TABLE/INDEX).
+/// Handles large dump files (INSERTs are skipped, not loaded into memory).
 pub fn extractFromSql(allocator: std.mem.Allocator, sql: []const u8) !std.ArrayList(Table) {
     var db: ?*c.sqlite3 = null;
     var err_msg: [*c]u8 = undefined;
 
-    // Open in-memory database
     if (c.sqlite3_open(":memory:", &db) != c.SQLITE_OK) {
         const msg: [*c]const u8 = if (db != null) c.sqlite3_errmsg(db) else @ptrCast("unknown");
         std.debug.print("sqlite3_open failed: {s}\n", .{msg});
@@ -20,8 +20,12 @@ pub fn extractFromSql(allocator: std.mem.Allocator, sql: []const u8) !std.ArrayL
     }
     defer _ = c.sqlite3_close(db);
 
-    // Execute the SQL file
-    const sql_z = try allocator.dupeZ(u8, sql);
+    // Filter to DDL only (CREATE TABLE/INDEX) — skip INSERTs that may be huge
+    const ddl = try filterDdl(allocator, sql);
+    defer allocator.free(ddl);
+    std.debug.print("   SQL: {d} bytes total → {d} bytes DDL (CREATE TABLE only)\n", .{ sql.len, ddl.len });
+
+    const sql_z = try allocator.dupeZ(u8, ddl);
     defer allocator.free(sql_z);
     if (c.sqlite3_exec(db, sql_z.ptr, null, null, &err_msg) != c.SQLITE_OK) {
         std.debug.print("sqlite3_exec schema: {s}\n", .{err_msg});
@@ -95,6 +99,59 @@ pub fn extractFromSql(allocator: std.mem.Allocator, sql: []const u8) !std.ArrayL
 
     std.debug.print("Extracted {d} tables from database introspection\n", .{tables.items.len});
     return tables;
+}
+
+/// Filter SQL to DDL only (CREATE TABLE, CREATE INDEX).
+/// Skips INSERT, UPDATE, DELETE, DROP, ALTER, comments, etc.
+/// Reduces multi-GB dump files to KB of schema for sqlite3 import.
+fn filterDdl(allocator: std.mem.Allocator, sql: []const u8) ![]const u8 {
+    var out = std.ArrayList(u8).empty;
+    var i: usize = 0;
+
+    while (i < sql.len) {
+        // Skip whitespace
+        while (i < sql.len and (sql[i] == ' ' or sql[i] == '\n' or sql[i] == '\r' or sql[i] == '\t')) i += 1;
+        if (i >= sql.len) break;
+
+        // Skip single-line comments
+        if (i + 1 < sql.len and sql[i] == '-' and sql[i + 1] == '-') {
+            while (i < sql.len and sql[i] != '\n') i += 1;
+            continue;
+        }
+        // Skip block comments
+        if (i + 1 < sql.len and sql[i] == '/' and sql[i + 1] == '*') {
+            i += 2;
+            while (i + 1 < sql.len) {
+                if (sql[i] == '*' and sql[i + 1] == '/') { i += 2; break; }
+                i += 1;
+            }
+            continue;
+        }
+
+        // Check if this statement starts with CREATE
+        const is_create = i + 6 <= sql.len and
+            (sql[i] == 'C' or sql[i] == 'c') and
+            (sql[i + 1] == 'R' or sql[i + 1] == 'r') and
+            (sql[i + 2] == 'E' or sql[i + 2] == 'e') and
+            (sql[i + 3] == 'A' or sql[i + 3] == 'a') and
+            (sql[i + 4] == 'T' or sql[i + 4] == 't') and
+            (sql[i + 5] == 'E' or sql[i + 5] == 'e');
+
+        if (is_create) {
+            const start = i;
+            // Find the semicolon ending this statement
+            while (i < sql.len and sql[i] != ';') i += 1;
+            if (i < sql.len) i += 1; // skip semicolon
+            try out.appendSlice(allocator, sql[start..i]);
+            try out.append(allocator, '\n');
+        } else {
+            // Skip non-DDL statement: find next semicolon
+            while (i < sql.len and sql[i] != ';') i += 1;
+            if (i < sql.len) i += 1;
+        }
+    }
+
+    return out.toOwnedSlice(allocator);
 }
 
 fn toPascalCase(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
