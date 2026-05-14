@@ -1,6 +1,10 @@
 # AGENTS.md — ZFinal AI Development Guide
 
-> **AI: STOP HERE FIRST. Do NOT hand-code Zig files until you've read this entire section.**
+> **AI: STOP HERE FIRST.** Do NOT hand-code Zig files. Use `zf` CLI tools.
+> 
+> **Quick start:** `git checkout ai-start` → read this file → `zf new myapp`
+> **Release:** https://github.com/chy3xyz/zfinal/releases/tag/v0.7.0
+> **Tag:** `ai-start` always points to latest AI-optimized release.
 
 ## 🚨 MANDATORY WORKFLOW (skip = wrong code)
 
