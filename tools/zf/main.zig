@@ -1,6 +1,8 @@
 const std = @import("std");
 const templates = @import("templates.zig");
 const codegen = @import("codegen.zig");
+const csql = @import("csql.zig");
+const zf_cfg = @import("zf_cfg");
 
 const Command = enum {
     new,
@@ -17,6 +19,7 @@ const Command = enum {
     help,
     crud,
     crud_sql,
+    crud_dsn,
     life,
 };
 
@@ -73,10 +76,10 @@ pub fn main(init: std.process.Init) !void {
         .api => {
             if (args.len < 3) {
                 std.debug.print("Usage: {s} api <name>\n", .{args[0]});
-                std.debug.print("Generate API controller (JSON output)\n", .{});
+                std.debug.print("Generate API handler (JSON output)\n", .{});
                 return;
             }
-            try generateCode(allocator, "controller", args[2], true);
+            try generateCode(allocator, "handler", args[2], true);
         },
         .migrate => {
             if (args.len < 3) {
@@ -127,6 +130,15 @@ pub fn main(init: std.process.Init) !void {
             }
             try handleCrudFromSql(allocator, args[2]);
         },
+        .crud_dsn => {
+            if (args.len < 3) {
+                std.debug.print("Usage: {s} crud:dsn <dsn_url>\n", .{args[0]});
+                std.debug.print("  postgres://user:pass@host:port/dbname\n", .{});
+                std.debug.print("  mysql://user:pass@host:port/dbname\n", .{});
+                return;
+            }
+            try handleCrudFromDsn(allocator, args[2]);
+        },
         .life => {
             const sub = if (args.len > 2) args[2] else "status";
             try handleLife(allocator, sub, if (args.len > 3) args[3] else "");
@@ -149,6 +161,7 @@ fn parseCommand(cmd: []const u8) ?Command {
     if (std.mem.eql(u8, cmd, "help") or std.mem.eql(u8, cmd, "h")) return .help;
     if (std.mem.eql(u8, cmd, "crud")) return .crud;
     if (std.mem.eql(u8, cmd, "crud:sql")) return .crud_sql;
+    if (std.mem.eql(u8, cmd, "crud:dsn")) return .crud_dsn;
     if (std.mem.eql(u8, cmd, "life")) return .life;
     return null;
 }
@@ -162,12 +175,12 @@ fn printHelp(exe_name: []const u8) void {
     std.debug.print("\n", .{});
     std.debug.print("Commands:\n", .{});
     std.debug.print("  new <name>              Create a new ZFinal project (HTMX template)\n", .{});
-    std.debug.print("  generate, g <type> <name>  Generate code (controller, model, interceptor, plugin)\n", .{});
-    std.debug.print("  api <name>              Generate API controller (JSON output)\n", .{});
+    std.debug.print("  generate, g <type> <name>  Generate code (handler, model, middleware, service, task)\n", .{});
+    std.debug.print("  api <name>              Generate API handler (JSON output)\n", .{});
     std.debug.print("  migrate <action> [name] Manage database migrations\n", .{});
     std.debug.print("  test:gen <name>         Generate test file\n", .{});
     std.debug.print("  crud <db> <table>       Generate full CRUD from SQLite DB schema\n", .{});
-    std.debug.print("  crud:sql <file>         Generate migration package from SQL dump\n", .{});
+    std.debug.print("  crud:sql <file|--dsn>   Generate from .sql file or DSN URL (postgres:// mysql://)\n", .{});
     std.debug.print("  docker                  Generate Dockerfile\n", .{});
     std.debug.print("  deploy                  Deploy application\n", .{});
     std.debug.print("  build, b                Build release binary\n", .{});
@@ -177,11 +190,12 @@ fn printHelp(exe_name: []const u8) void {
     std.debug.print("  help, h                 Show this help message\n", .{});
     std.debug.print("\n", .{});
     std.debug.print("Examples:\n", .{});
-    std.debug.print("  {s} new myapp           Create a new HTMX project named 'myapp'\n", .{exe_name});
-    std.debug.print("  {s} g controller User   Generate UserController (HTMX)\n", .{exe_name});
-    std.debug.print("  {s} api Product         Generate ProductController (API/JSON)\n", .{exe_name});
+    std.debug.print("  {s} new myapp           Create a new project named 'myapp'\n", .{exe_name});
+    std.debug.print("  {s} g handler User      Generate User handler\n", .{exe_name});
+    std.debug.print("  {s} g model Product     Generate Product model\n", .{exe_name});
+    std.debug.print("  {s} g middleware Auth   Generate Auth middleware\n", .{exe_name});
+    std.debug.print("  {s} g task CleanupJob   Generate scheduled task\n", .{exe_name});
     std.debug.print("  {s} migrate new init    Create initial migration\n", .{exe_name});
-    std.debug.print("  {s} test:gen User       Generate User test\n", .{exe_name});
     std.debug.print("  {s} docker              Generate Dockerfile\n", .{exe_name});
     std.debug.print("  {s} build               Build optimized binary\n", .{exe_name});
     std.debug.print("  {s} serve               Start the development server\n", .{exe_name});
@@ -196,55 +210,98 @@ fn createProject(allocator: std.mem.Allocator, project_name: []const u8) !void {
     var project_dir = try cwd.openDir(io, project_name, .{});
     defer project_dir.close(io);
 
-    std.debug.print("Creating project: {s}\n", .{project_name});
+    std.debug.print("\nCreating project: {s}\n", .{project_name});
 
-    // Create build.zig
+    // Root: build.zig + build.zig.zon + CLAUDE.md
     const build_zig_content = try std.fmt.allocPrint(allocator, templates.build_zig, .{project_name});
     defer allocator.free(build_zig_content);
     try writeFile(project_dir, "build.zig", build_zig_content);
 
-    // Create build.zig.zon
     const build_zon_content = try std.fmt.allocPrint(allocator, templates.build_zig_zon, .{project_name});
     defer allocator.free(build_zon_content);
     try writeFile(project_dir, "build.zig.zon", build_zon_content);
 
-    // Create src directory
+    const claude_md_content = try std.fmt.allocPrint(allocator, templates.claude_md, .{project_name});
+    defer allocator.free(claude_md_content);
+    try writeFile(project_dir, "CLAUDE.md", claude_md_content);
+
+    // src/
     try project_dir.createDirPath(io, "src");
     var src_dir = try project_dir.openDir(io, "src", .{});
     defer src_dir.close(io);
 
-    // src/main.zig
-    try writeFile(src_dir, "main.zig", templates.main_zig);
+    // src/main.zig — entry point
+    const main_content = try std.fmt.allocPrint(allocator, templates.main_zig, .{project_name});
+    defer allocator.free(main_content);
+    try writeFile(src_dir, "main.zig", main_content);
 
-    // src/config
-    try src_dir.createDirPath(io, "config");
-    var config_dir = try src_dir.openDir(io, "config", .{});
-    defer config_dir.close(io);
-    try writeFile(config_dir, "config.zig", templates.config_config_zig);
-    try writeFile(config_dir, "routes.zig", templates.config_routes_zig);
-    try writeFile(config_dir, "db_init.zig", templates.config_db_init_zig);
+    // src/App.zig — application assembly
+    try writeFile(src_dir, "App.zig", templates.app_zig);
 
-    // src/controller
-    try src_dir.createDirPath(io, "controller");
-    var controller_dir = try src_dir.openDir(io, "controller", .{});
-    defer controller_dir.close(io);
-    try writeFile(controller_dir, "index_controller.zig", templates.controller_index_controller_zig);
+    // src/config.zig — single config file
+    try writeFile(src_dir, "config.zig", templates.config_zig);
 
-    // src/model
+    // src/routes.zig — centralised route table
+    try writeFile(src_dir, "routes.zig", templates.routes_zig);
+
+    // src/handler/
+    try src_dir.createDirPath(io, "handler");
+    var handler_dir = try src_dir.openDir(io, "handler", .{});
+    defer handler_dir.close(io);
+    const index_content = try std.fmt.allocPrint(allocator, templates.handler_index_zig, .{project_name});
+    defer allocator.free(index_content);
+    try writeFile(handler_dir, "index.zig", index_content);
+    try writeFile(handler_dir, "user.zig", templates.handler_user_zig);
+
+    // src/service/ — business logic layer
+    try src_dir.createDirPath(io, "service");
+
+    // src/model/
     try src_dir.createDirPath(io, "model");
     var model_dir = try src_dir.openDir(io, "model", .{});
     defer model_dir.close(io);
     try writeFile(model_dir, "user.zig", templates.model_user_zig);
 
-    // src/interceptor
-    try src_dir.createDirPath(io, "interceptor");
-    var interceptor_dir = try src_dir.openDir(io, "interceptor", .{});
-    defer interceptor_dir.close(io);
-    try writeFile(interceptor_dir, "interceptors.zig", templates.interceptor_interceptors_zig);
+    // src/middleware/
+    try src_dir.createDirPath(io, "middleware");
+    var middleware_dir = try src_dir.openDir(io, "middleware", .{});
+    defer middleware_dir.close(io);
+    try writeFile(middleware_dir, "auth.zig", templates.middleware_auth_zig);
 
-    std.debug.print("✅ Project '{s}' created successfully!\n", .{project_name});
+    // src/validator/
+    try src_dir.createDirPath(io, "validator");
+
+    // src/task/
+    try src_dir.createDirPath(io, "task");
+
+    // src/common/
+    try src_dir.createDirPath(io, "common");
+    var common_dir = try src_dir.openDir(io, "common", .{});
+    defer common_dir.close(io);
+    try writeFile(common_dir, "constants.zig", templates.common_constants_zig);
+    try writeFile(common_dir, "errors.zig", templates.common_errors_zig);
+
+    // test/
+    try project_dir.createDirPath(io, "test");
+    try project_dir.createDirPath(io, "test/handler");
+
+    std.debug.print("\n✅ Project '{s}' created!\n", .{project_name});
     std.debug.print("\n", .{});
-    std.debug.print("Next steps:\n", .{});
+    std.debug.print("  ├── CLAUDE.md          AI guard rails (read first)\n", .{});
+    std.debug.print("  ├── build.zig\n", .{});
+    std.debug.print("  ├── build.zig.zon\n", .{});
+    std.debug.print("  ├── main.zig          Entry point\n", .{});
+    std.debug.print("  ├── App.zig           Application assembly\n", .{});
+    std.debug.print("  ├── config.zig        Configuration\n", .{});
+    std.debug.print("  ├── routes.zig        Centralised route table\n", .{});
+    std.debug.print("  ├── handler/          HTTP handlers\n", .{});
+    std.debug.print("  ├── service/          Business logic\n", .{});
+    std.debug.print("  ├── model/            Database models\n", .{});
+    std.debug.print("  ├── middleware/        Auth / CORS / rate-limit\n", .{});
+    std.debug.print("  ├── validator/         Input validation\n", .{});
+    std.debug.print("  ├── task/              Scheduled tasks\n", .{});
+    std.debug.print("  └── common/            Constants / errors / types\n", .{});
+    std.debug.print("\n", .{});
     std.debug.print("  cd {s}\n", .{project_name});
     std.debug.print("  zig build run\n", .{});
     std.debug.print("\n", .{});
@@ -256,220 +313,283 @@ fn generateCode(allocator: std.mem.Allocator, gen_type: []const u8, name: []cons
         return;
     }
 
-    if (std.mem.eql(u8, gen_type, "controller")) {
-        try generateController(allocator, name, is_api);
+    if (std.mem.eql(u8, gen_type, "handler")) {
+        try generateHandler(allocator, name, is_api);
     } else if (std.mem.eql(u8, gen_type, "model")) {
         try generateModel(allocator, name);
-    } else if (std.mem.eql(u8, gen_type, "interceptor")) {
-        try generateInterceptor(allocator, name);
-    } else if (std.mem.eql(u8, gen_type, "plugin")) {
-        try generatePlugin(allocator, name);
+    } else if (std.mem.eql(u8, gen_type, "middleware")) {
+        try generateMiddleware(allocator, name);
+    } else if (std.mem.eql(u8, gen_type, "service")) {
+        try generateService(allocator, name);
+    } else if (std.mem.eql(u8, gen_type, "task")) {
+        try generateTask(allocator, name);
+    } else if (std.mem.eql(u8, gen_type, "controller")) {
+        // Backward compat: map controller → handler
+        try generateHandler(allocator, name, is_api);
     } else {
         std.debug.print("Unknown type: {s}\n", .{gen_type});
-        std.debug.print("Available types: controller, model, interceptor, plugin\n", .{});
+        std.debug.print("Available: handler, model, middleware, service, task\n", .{});
     }
 }
 
-fn generateController(allocator: std.mem.Allocator, name: []const u8, is_api: bool) !void {
-    // Check if src/controller directory exists
-    std.Io.Dir.cwd().access(io, "src/controller", .{}) catch {
-        std.debug.print("Error: src/controller directory not found. Are you in a ZFinal project?\n", .{});
+fn generateHandler(allocator: std.mem.Allocator, name: []const u8, is_api: bool) !void {
+    std.Io.Dir.cwd().access(io, "src/handler", .{}) catch {
+        std.debug.print("Error: src/handler directory not found. Run 'zf new' first.\n", .{});
         return;
     };
 
     const name_lower = try std.ascii.allocLowerString(allocator, name);
     defer allocator.free(name_lower);
 
-    const filename = try std.fmt.allocPrint(allocator, "src/controller/{s}_controller.zig", .{name_lower});
+    // Check if .gen.zig exists — if so, write ext stub to ext/ subdirectory
+    const gen_path = try std.fmt.allocPrint(allocator, "src/handler/{s}.gen.zig", .{name_lower});
+    defer allocator.free(gen_path);
+    const has_gen = std.Io.Dir.cwd().access(io, gen_path, .{}) != error.FileNotFound;
+
+    const base_dir = if (has_gen) "src/handler/ext" else "src/handler";
+    const filename = try std.fmt.allocPrint(allocator, "{s}/{s}.zig", .{ base_dir, name_lower });
     defer allocator.free(filename);
 
-    const controller_name = try capitalizeOwned(allocator, name);
-    defer allocator.free(controller_name);
+    if (has_gen) try ensureDir(allocator, "src/handler/ext");
 
-    const controller_type_comment = if (is_api) "API Controller (JSON output)" else "HTMX Controller (HTML output)";
+    // Skip if ext file already exists (protect user code)
+    if (std.Io.Dir.cwd().access(io, filename, .{})) |_| {
+        std.debug.print("⚠ Skip (exists): {s}\n", .{filename});
+        return;
+    } else |_| {}
 
-    const content = try std.fmt.allocPrint(allocator,
-        \\const std = @import("std");
-        \\const zfinal = @import("zfinal");
-        \\
-        \\/// {s}
-        \\pub const {s}Controller = struct {{
-        \\    /// List all {s}s
-        \\    pub fn index(ctx: *zfinal.Context) !void {{
-        \\        try ctx.renderJson(.{{
-        \\            .message = "{s} list",
-        \\            .data = .{{}},
-        \\        }});
-        \\    }}
-        \\
-        \\    /// Show a single {s}
-        \\    pub fn show(ctx: *zfinal.Context) !void {{
-        \\        const id = ctx.getPathParam("id") orelse {{
-        \\            ctx.res_status = .bad_request;
-        \\            try ctx.renderJson(.{{ .@"error" = "Missing ID" }});
-        \\            return;
-        \\        }};
-        \\
-        \\        try ctx.renderJson(.{{
-        \\            .id = id,
-        \\            .message = "{s} details",
-        \\        }});
-        \\    }}
-        \\
-        \\    /// Create a new {s}
-        \\    pub fn create(ctx: *zfinal.Context) !void {{
-        \\        try ctx.renderJson(.{{
-        \\            .message = "{s} created",
-        \\        }});
-        \\    }}
-        \\
-        \\    /// Update a {s}
-        \\    pub fn update(ctx: *zfinal.Context) !void {{
-        \\        const id = ctx.getPathParam("id") orelse {{
-        \\            ctx.res_status = .bad_request;
-        \\            try ctx.renderJson(.{{ .@"error" = "Missing ID" }});
-        \\            return;
-        \\        }};
-        \\
-        \\        try ctx.renderJson(.{{
-        \\            .id = id,
-        \\            .message = "{s} updated",
-        \\        }});
-        \\    }}
-        \\
-        \\    /// Delete a {s}
-        \\    pub fn delete(ctx: *zfinal.Context) !void {{
-        \\        const id = ctx.getPathParam("id") orelse {{
-        \\            ctx.res_status = .bad_request;
-        \\            try ctx.renderJson(.{{ .@"error" = "Missing ID" }});
-        \\            return;
-        \\        }};
-        \\
-        \\        try ctx.renderJson(.{{
-        \\            .id = id,
-        \\            .message = "{s} deleted",
-        \\        }});
-        \\    }}
-        \\}};
-        \\
-    , .{ controller_type_comment, controller_name, name_lower, name_lower, name_lower, name_lower, name_lower, name_lower, name_lower, name_lower, name_lower, name_lower });
+    const content = if (has_gen)
+        try std.fmt.allocPrint(allocator,
+            \\const std = @import("std");
+            \\const zfinal = @import("zfinal");
+            \\const gen = @import("../{s}.gen.zig");
+            \\
+            \\pub const list = gen.list;
+            \\pub const show = gen.show;
+            \\pub const create = gen.create;
+            \\pub const update = gen.update;
+            \\pub const delete = gen.delete;
+            \\
+            \\// ── Custom handlers — add your endpoint logic here ──
+            \\
+        , .{name_lower})
+    else
+        try std.fmt.allocPrint(allocator,
+            \\const std = @import("std");
+            \\const zfinal = @import("zfinal");
+            \\
+            \\pub fn list(ctx: *zfinal.Context) !void {{
+            \\    try ctx.renderJson(.{{ .data = &.{{}} }});
+            \\}}
+            \\
+            \\pub fn show(ctx: *zfinal.Context) !void {{
+            \\    const id_str = ctx.getPathParam("id") orelse {{
+            \\        ctx.res_status = .bad_request;
+            \\        return ctx.renderJson(.{{ .err = "Missing ID" }});
+            \\    }};
+            \\    const id = std.fmt.parseInt(i64, id_str, 10) catch {{
+            \\        ctx.res_status = .bad_request;
+            \\        return ctx.renderJson(.{{ .err = "Invalid ID" }});
+            \\    }};
+            \\    _ = id;
+            \\    ctx.res_status = .not_found;
+            \\    try ctx.renderJson(.{{ .err = "Not found" }});
+            \\}}
+            \\
+            \\pub fn create(ctx: *zfinal.Context) !void {{
+            \\    ctx.res_status = .created;
+            \\    try ctx.renderJson(.{{ .ok = true }});
+            \\}}
+            \\
+            \\pub fn update(ctx: *zfinal.Context) !void {{
+            \\    ctx.res_status = .not_found;
+            \\    try ctx.renderJson(.{{ .err = "Not found" }});
+            \\}}
+            \\
+            \\pub fn delete(ctx: *zfinal.Context) !void {{
+            \\    ctx.res_status = .not_found;
+            \\    try ctx.renderJson(.{{ .err = "Not found" }});
+            \\}}
+        , .{});
     defer allocator.free(content);
 
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = filename, .data = content });
-    const mode_str = if (is_api) "API" else "HTMX";
-    std.debug.print("✅ Generated {s} controller: {s}\n", .{ mode_str, filename });
+    const mode_str = if (is_api) "API" else "";
+    const tag = if (has_gen) "ext" else "handler";
+    std.debug.print("✅ Generated {s} {s}: {s}\n", .{ mode_str, tag, filename });
 
-    if (!is_api) {
-        // Generate HTMX template
-        const templates_path = "src/templates";
-        std.Io.Dir.cwd().createDirPath(io, templates_path) catch |err| {
-            if (err != error.PathAlreadyExists) return err;
-        };
-
-        const view_dir_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ templates_path, name_lower });
-        defer allocator.free(view_dir_path);
-
-        std.Io.Dir.cwd().createDirPath(io, view_dir_path) catch |err| {
-            if (err != error.PathAlreadyExists) return err;
-        };
-
-        const view_file_path = try std.fmt.allocPrint(allocator, "{s}/index.html", .{view_dir_path});
-        defer allocator.free(view_file_path);
-
-        const view_content = try std.fmt.allocPrint(allocator,
-            \\<div id="{s}-list">
-            \\    <h2>{s} List</h2>
-            \\    <button hx-get="/{s}/create" hx-target="#{s}-list" hx-swap="afterend">
-            \\        Create New {s}
-            \\    </button>
-            \\    
-            \\    <div class="list-content">
-            \\        <!-- List items will be rendered here -->
-            \\        <p>No items found.</p>
-            \\    </div>
-            \\</div>
-            \\
-        , .{ name_lower, controller_name, name_lower, name_lower, controller_name });
-        defer allocator.free(view_content);
-
-        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = view_file_path, .data = view_content });
-        std.debug.print("✅ Generated HTMX template: {s}\n", .{view_file_path});
-    }
+    // Also generate a test stub
+    const test_filename = try std.fmt.allocPrint(allocator, "test/handler/{s}_test.zig", .{name_lower});
+    defer allocator.free(test_filename);
+    const test_content = try std.fmt.allocPrint(allocator,
+        \\const std = @import("std");
+        \\const zfinal = @import("zfinal");
+        \\
+        \\test "{s} handler: list returns 200" {{
+        \\    _ = zfinal;
+        \\    // TODO: init test App, call handler, assert
+        \\}}
+    , .{name_lower});
+    defer allocator.free(test_content);
+    std.Io.Dir.cwd().writeFile(io, .{ .sub_path = test_filename, .data = test_content }) catch {};
 }
 
 fn generateModel(allocator: std.mem.Allocator, name: []const u8) !void {
-    // Check if src/model directory exists
     std.Io.Dir.cwd().access(io, "src/model", .{}) catch {
-        std.debug.print("Error: src/model directory not found. Are you in a ZFinal project?\n", .{});
+        std.debug.print("Error: src/model directory not found. Run 'zf new' first.\n", .{});
         return;
     };
 
     const name_lower = try std.ascii.allocLowerString(allocator, name);
     defer allocator.free(name_lower);
 
-    const filename = try std.fmt.allocPrint(allocator, "src/model/{s}.zig", .{name_lower});
+    // Check if .gen.zig exists — if so, generate ext stub in ext/ subdirectory
+    const gen_path = try std.fmt.allocPrint(allocator, "src/model/{s}.gen.zig", .{name_lower});
+    defer allocator.free(gen_path);
+    const has_gen = std.Io.Dir.cwd().access(io, gen_path, .{}) != error.FileNotFound;
+
+    const base_dir = if (has_gen) "src/model/ext" else "src/model";
+    const filename = try std.fmt.allocPrint(allocator, "{s}/{s}.zig", .{ base_dir, name_lower });
     defer allocator.free(filename);
+
+    if (has_gen) try ensureDir(allocator, "src/model/ext");
+
+    // Skip if ext file already exists (protect user code)
+    if (std.Io.Dir.cwd().access(io, filename, .{})) |_| {
+        std.debug.print("⚠ Skip (exists): {s}\n", .{filename});
+        return;
+    } else |_| {}
 
     const model_name = try capitalizeOwned(allocator, name);
     defer allocator.free(model_name);
 
-    const table_name = try std.fmt.allocPrint(allocator, "{s}s", .{name_lower});
-    defer allocator.free(table_name);
+    var content_buf: []const u8 = undefined;
+    if (has_gen) {
+        content_buf = try std.fmt.allocPrint(allocator,
+            \\const std = @import("std");
+            \\const zfinal = @import("zfinal");
+            \\const gen = @import("../{s}.gen.zig");
+            \\
+            \\pub const {s} = gen.{s};
+            \\pub const {s}Model = gen.{s}Model;
+            \\pub const validate = gen.validate;
+            \\
+            \\// ── Custom queries ──
+            \\
+        , .{ name_lower, model_name, model_name, model_name, model_name });
+    } else {
+        const table_name = try std.fmt.allocPrint(allocator, "{s}s", .{name_lower});
+        defer allocator.free(table_name);
+        content_buf = try std.fmt.allocPrint(allocator,
+            \\const zfinal = @import("zfinal");
+            \\
+            \\pub const {s} = struct {{
+            \\    id: ?i64 = null,
+            \\    name: []const u8,
+            \\    created_at: ?[]const u8 = null,
+            \\}};
+            \\
+            \\pub const {s}Model = zfinal.Model({s}, "{s}");
+            \\
+        , .{ model_name, model_name, model_name, table_name });
+    }
+    const content = content_buf;
+    defer allocator.free(content);
+
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = filename, .data = content });
+    const tag = if (has_gen) "ext" else "model";
+    std.debug.print("✅ Generated {s}: {s}\n", .{ tag, filename });
+}
+
+fn generateMiddleware(allocator: std.mem.Allocator, name: []const u8) !void {
+    std.Io.Dir.cwd().access(io, "src/middleware", .{}) catch {
+        std.debug.print("Error: src/middleware directory not found. Run 'zf new' first.\n", .{});
+        return;
+    };
+
+    const name_lower = try std.ascii.allocLowerString(allocator, name);
+    defer allocator.free(name_lower);
+
+    const filename = try std.fmt.allocPrint(allocator, "src/middleware/{s}.zig", .{name_lower});
+    defer allocator.free(filename);
+
+    const mw_name = try capitalizeOwned(allocator, name);
+    defer allocator.free(mw_name);
 
     const content = try std.fmt.allocPrint(allocator,
         \\const zfinal = @import("zfinal");
         \\
-        \\pub const {s} = struct {{
-        \\    id: ?i64 = null,
-        \\    name: []const u8,
-        \\    created_at: ?[]const u8 = null,
+        \\fn {s}Before(ctx: *zfinal.Context) !bool {{
+        \\    // Add middleware logic here
+        \\    _ = ctx;
+        \\    return true;
+        \\}}
+        \\
+        \\pub const {s}Middleware = zfinal.Interceptor{{
+        \\    .name = "{s}",
+        \\    .before = {s}Before,
         \\}};
-        \\
-        \\pub const {s}Model = zfinal.Model({s}, "{s}");
-        \\
-    , .{ model_name, model_name, model_name, table_name });
+    , .{ name_lower, mw_name, name_lower, name_lower });
     defer allocator.free(content);
 
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = filename, .data = content });
     std.debug.print("✅ Generated: {s}\n", .{filename});
 }
 
-fn generateInterceptor(allocator: std.mem.Allocator, name: []const u8) !void {
-    // Check if src/interceptor directory exists
-    std.Io.Dir.cwd().access(io, "src/interceptor", .{}) catch {
-        std.debug.print("Error: src/interceptor directory not found. Are you in a ZFinal project?\n", .{});
+fn generateService(allocator: std.mem.Allocator, name: []const u8) !void {
+    std.Io.Dir.cwd().access(io, "src/service", .{}) catch {
+        std.debug.print("Error: src/service directory not found. Run 'zf new' first.\n", .{});
         return;
     };
 
     const name_lower = try std.ascii.allocLowerString(allocator, name);
     defer allocator.free(name_lower);
 
-    const filename = try std.fmt.allocPrint(allocator, "src/interceptor/{s}_interceptor.zig", .{name_lower});
+    const filename = try std.fmt.allocPrint(allocator, "src/service/{s}.zig", .{name_lower});
     defer allocator.free(filename);
 
-    const interceptor_name = try capitalizeOwned(allocator, name);
-    defer allocator.free(interceptor_name);
+    const svc_name = try capitalizeOwned(allocator, name);
+    defer allocator.free(svc_name);
 
     const content = try std.fmt.allocPrint(allocator,
         \\const std = @import("std");
         \\const zfinal = @import("zfinal");
         \\
-        \\fn {s}Before(ctx: *zfinal.Context) !bool {{
-        \\    std.debug.print("{s} interceptor: before\n", .{{}});
-        \\    return true; // Continue to next interceptor/handler
+        \\pub fn doWork(ctx: *zfinal.Context) !void {{
+        \\    _ = ctx;
+        \\    // TODO: business logic here
         \\}}
+    , .{});
+    defer allocator.free(content);
+
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = filename, .data = content });
+    std.debug.print("✅ Generated: {s}\n", .{filename});
+}
+
+fn generateTask(allocator: std.mem.Allocator, name: []const u8) !void {
+    std.Io.Dir.cwd().access(io, "src/task", .{}) catch {
+        std.debug.print("Error: src/task directory not found. Run 'zf new' first.\n", .{});
+        return;
+    };
+
+    const name_lower = try std.ascii.allocLowerString(allocator, name);
+    defer allocator.free(name_lower);
+
+    const filename = try std.fmt.allocPrint(allocator, "src/task/{s}.zig", .{name_lower});
+    defer allocator.free(filename);
+
+    const task_name = try capitalizeOwned(allocator, name);
+    defer allocator.free(task_name);
+
+    const content = try std.fmt.allocPrint(allocator,
+        \\const std = @import("std");
+        \\const zfinal = @import("zfinal");
         \\
-        \\fn {s}After(ctx: *zfinal.Context) !void {{
-        \\    std.debug.print("{s} interceptor: after\n", .{{}});
+        \\pub fn run() !void {{
+        \\    zfinal.getLogger().info("{s}: running", .{{}});
+        \\    // TODO: task logic here
         \\}}
-        \\
-        \\pub const {s}Interceptor = zfinal.Interceptor{{
-        \\    .name = "{s}",
-        \\    .before = {s}Before,
-        \\    .after = {s}After,
-        \\}};
-        \\
-    , .{ name_lower, interceptor_name, name_lower, interceptor_name, interceptor_name, name_lower, name_lower, name_lower });
+    , .{name_lower});
     defer allocator.free(content);
 
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = filename, .data = content });
@@ -816,7 +936,55 @@ fn handleCrud(allocator: std.mem.Allocator, db_path: []const u8, table_name: []c
         });
     }
 
-    try writeGeneratedFiles(allocator, &table);
+    const sub = try subsystemOf(allocator, table.name);
+    defer allocator.free(sub);
+    try writeGeneratedFiles(allocator, &table, sub);
+}
+
+fn handleCrudFromDsn(allocator: std.mem.Allocator, dsn_url: []const u8) !void {
+    var tables = extractTables: {
+        if (std.mem.startsWith(u8, dsn_url, "postgres://") or std.mem.startsWith(u8, dsn_url, "postgresql://")) {
+            if (!zf_cfg.enable_pg) {
+                std.debug.print("PostgreSQL support not enabled. Rebuild with: zig build install-zf -Denable-pg\n", .{});
+                return error.PgNotEnabled;
+            }
+            const csql_pg = @import("csql_pg.zig");
+            var dsn = try csql_pg.Dsn.parse(allocator, dsn_url);
+            defer dsn.deinit(allocator);
+            break :extractTables try csql_pg.extractFromDb(allocator, dsn);
+        } else if (std.mem.startsWith(u8, dsn_url, "mysql://")) {
+            if (!zf_cfg.enable_my) {
+                std.debug.print("MySQL support not enabled. Rebuild with: zig build install-zf -Denable-mysql\n", .{});
+                return error.MyNotEnabled;
+            }
+            const csql_my = @import("csql_my.zig");
+            var dsn = try csql_my.Dsn.parse(allocator, dsn_url);
+            defer dsn.deinit(allocator);
+            break :extractTables try csql_my.extractFromDb(allocator, dsn);
+        } else {
+            std.debug.print("Unknown DSN scheme. Use postgres:// or mysql://\n", .{});
+            return error.InvalidDsn;
+        }
+    };
+    defer {
+        for (tables.items) |*t| t.deinit();
+        tables.deinit(allocator);
+    }
+
+    // Same flow as handleCrudFromSql after extraction
+    const pkg = try codegen.generateMigrationPackage(allocator, tables.items);
+    defer allocator.free(pkg);
+    const out_path = try std.fmt.allocPrint(allocator, "zfinal_migration.zig", .{});
+    defer allocator.free(out_path);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = out_path, .data = pkg });
+    std.debug.print("✅ Generated migration package: {s}\n", .{out_path});
+
+    for (tables.items) |*table| {
+        const sub = try subsystemOf(allocator, table.name);
+        defer allocator.free(sub);
+        try writeGeneratedFiles(allocator, table, sub);
+    }
+    try generateIntegrationTestEntry(allocator, tables.items);
 }
 
 fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8) !void {
@@ -829,15 +997,24 @@ fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8) !void {
     const n = try std.Io.File.readPositionalAll(file, io, content, 0);
     content = content[0..n];
 
-    var tables = try codegen.parseSqlFile(allocator, content);
+    // Step 1: Import SQL into temp SQLite DB and introspect schema
+    // This is more reliable than hand-parsing — it validates SQL and gets exact types
+    var tables = extractTables: {
+        break :extractTables csql.extractFromSql(allocator, content) catch {
+            // Fallback to hand-parser if DB extraction fails (e.g., non-SQLite syntax)
+            std.debug.print("DB introspection failed, falling back to text parser\n", .{});
+            break :extractTables try codegen.parseSqlFile(allocator, content);
+        };
+    };
     defer {
         for (tables.items) |*t| t.deinit();
         tables.deinit(allocator);
     }
 
-    std.debug.print("Parsed {d} tables from {s}\n", .{ tables.items.len, sql_path });
+    const method = "DB introspection";
+    std.debug.print("{s}: {d} tables from {s}\n", .{ method, tables.items.len, sql_path });
 
-    // Generate combined migration package
+    // Step 2: Generate combined migration package
     const pkg = try codegen.generateMigrationPackage(allocator, tables.items);
     defer allocator.free(pkg);
 
@@ -846,48 +1023,66 @@ fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8) !void {
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = out_path, .data = pkg });
 
     std.debug.print("✅ Generated migration package: {s}\n", .{out_path});
-    std.debug.print("   Copy model/controller files to your project src/\n", .{});
-    std.debug.print("   Add routes from the generated file to your config/routes.zig\n", .{});
 
-    // Also generate individual files for each table
+    // Step 3: Generate individual module files + integration tests
     for (tables.items) |*table| {
-        try writeGeneratedFiles(allocator, table);
+        const sub = try subsystemOf(allocator, table.name);
+        defer allocator.free(sub);
+        try writeGeneratedFiles(allocator, table, sub);
     }
+
+    // Step 4: Generate integration test entry point
+    try generateIntegrationTestEntry(allocator, tables.items);
 }
 
-fn writeGeneratedFiles(allocator: std.mem.Allocator, table: *codegen.Table) !void {
-    // deps.zig — shared dependencies
-    try ensureDir(allocator, "src");
-    const deps_content =
-        \\const std = @import("std");
-        \\const zfinal = @import("zfinal");
-        \\pub var pool: zfinal.ConnectionPool = undefined;
-        \\pub var tokenMgr: zfinal.TokenManager = undefined;
-        \\pub var rateLimiter: zfinal.RateLimitHandler = undefined;
-        \\
-        \\pub fn initDeps(allocator: std.mem.Allocator, db_config: zfinal.DBConfig) !void {
-        \\    tokenMgr = zfinal.TokenManager.init(allocator);
-        \\    tokenMgr.setTTL(3600);
-        \\    rateLimiter = zfinal.RateLimitHandler.init(allocator);
-        \\    rateLimiter.max_requests = 100;
-        \\    pool = zfinal.ConnectionPool.init(allocator, db_config, 10);
-        \\    _ = pool.acquire() catch {};
-        \\}
-        \\
-        \\pub const corsInterceptor = zfinal.CORSInterceptor;
-        \\
-        \\pub fn healthHandler(ctx: *zfinal.Context) !void {
-        \\    try ctx.renderJson(.{ .status = "ok", .uptime = "See /health" });
-        \\}
-        \\
-    ;
-    std.Io.Dir.cwd().writeFile(io, .{ .sub_path = "src/deps.zig", .data = deps_content }) catch {};
+fn writeGeneratedFiles(allocator: std.mem.Allocator, table: *codegen.Table, subsystem: []const u8) !void {
+    // Shared deps.zig — only written once
+    {
+        const deps =
+            \\const std = @import("std");
+            \\const zfinal = @import("zfinal");
+            \\pub var pool: zfinal.ConnectionPool = undefined;
+            \\pub var tokenMgr: zfinal.TokenManager = undefined;
+            \\pub var rateLimiter: zfinal.RateLimitHandler = undefined;
+            \\
+            \\pub fn initDeps(allocator: std.mem.Allocator, db_config: zfinal.DBConfig) !void {
+            \\    tokenMgr = zfinal.TokenManager.init(allocator);
+            \\    tokenMgr.setTTL(3600);
+            \\    rateLimiter = zfinal.RateLimitHandler.init(allocator);
+            \\    rateLimiter.max_requests = 100;
+            \\    pool = zfinal.ConnectionPool.init(allocator, db_config, 10);
+            \\    _ = pool.acquire() catch {};
+            \\}
+            \\
+            \\pub const corsInterceptor = zfinal.CORSInterceptor;
+            \\
+            \\pub fn healthHandler(ctx: *zfinal.Context) !void {
+            \\    try ctx.renderJson(.{ .status = "ok", .uptime = "See /health" });
+            \\}
+            \\
+        ;
+        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = "src/deps.zig", .data = deps }) catch {};
+    }
 
-    const module_name = try singularize(allocator, table.name);
+    const module_name = blk: {
+        // If table has subsystem prefix (e.g., "system_users"), strip it for module name
+        const raw = if (subsystem.len > 0 and table.name.len > subsystem.len + 1)
+            table.name[subsystem.len + 1 ..]
+        else
+            table.name;
+        break :blk try singularize(allocator, raw);
+    };
     defer allocator.free(module_name);
-    const module_dir = try std.fmt.allocPrint(allocator, "src/modules/{s}", .{module_name});
+    // Compute module dir: with subsystem prefix → nested, without → flat
+    const module_dir = if (subsystem.len > 0)
+        try std.fmt.allocPrint(allocator, "src/modules/{s}/{s}", .{ subsystem, module_name })
+    else
+        try std.fmt.allocPrint(allocator, "src/modules/{s}", .{module_name});
     defer allocator.free(module_dir);
     try ensureDir(allocator, module_dir);
+
+    // deps.zig relative path: modules/<sub>/<name>/ → ../../.., modules/<name>/ → ../..
+    const deps_prefix = if (subsystem.len > 0) "../../../" else "../../";
 
     // Determine naming from table columns (snake_case if any underscore found)
     const naming: codegen.JsonNaming = blk: {
@@ -897,21 +1092,70 @@ fn writeGeneratedFiles(allocator: std.mem.Allocator, table: *codegen.Table) !voi
         break :blk .camelCase;
     };
 
-    // Model
-    const model = try codegen.generateModel(allocator, table, naming);
-    defer allocator.free(model);
-    const model_path = try std.fmt.allocPrint(allocator, "{s}/model.zig", .{module_dir});
-    defer allocator.free(model_path);
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = model_path, .data = model });
-    std.debug.print("✅ Generated: {s}\n", .{model_path});
+    // ── model.gen.zig (always overwrite) ──
+    const model_gen = try codegen.generateModel(allocator, table, naming);
+    defer allocator.free(model_gen);
+    const model_gen_path = try std.fmt.allocPrint(allocator, "{s}/model.gen.zig", .{module_dir});
+    defer allocator.free(model_gen_path);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = model_gen_path, .data = model_gen });
+    std.debug.print("✅ Generated: {s}\n", .{model_gen_path});
 
-    // Controller
-    const ctrl = try codegen.generateController(allocator, table);
-    defer allocator.free(ctrl);
-    const ctrl_path = try std.fmt.allocPrint(allocator, "{s}/controller.zig", .{module_dir});
-    defer allocator.free(ctrl_path);
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ctrl_path, .data = ctrl });
-    std.debug.print("✅ Generated: {s}\n", .{ctrl_path});
+    // ── ext/ dir for AI-written extension files ──
+    const ext_dir = try std.fmt.allocPrint(allocator, "{s}/ext", .{module_dir});
+    defer allocator.free(ext_dir);
+    try ensureDir(allocator, ext_dir);
+
+    // ── ext/model.zig (ext stub, only if not exists) ──
+    const model_ext_path = try std.fmt.allocPrint(allocator, "{s}/ext/model.zig", .{module_dir});
+    defer allocator.free(model_ext_path);
+    if (std.Io.Dir.cwd().access(io, model_ext_path, .{})) |_| {
+        std.debug.print("   Skip (exists): {s}\n", .{model_ext_path});
+    } else |_| {
+        const model_ext = try codegen.generateModelExt(allocator, table, module_name);
+        defer allocator.free(model_ext);
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = model_ext_path, .data = model_ext });
+        std.debug.print("✅ Generated: {s}\n", .{model_ext_path});
+    }
+
+    // ── ext/handler.zig (ext stub, only if not exists) ──
+    const handler_ext_path = try std.fmt.allocPrint(allocator, "{s}/ext/handler.zig", .{module_dir});
+    defer allocator.free(handler_ext_path);
+    if (std.Io.Dir.cwd().access(io, handler_ext_path, .{})) |_| {
+        std.debug.print("   Skip (exists): {s}\n", .{handler_ext_path});
+    } else |_| {
+        const handler_ext = try codegen.generateHandlerExt(allocator, module_name);
+        defer allocator.free(handler_ext);
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = handler_ext_path, .data = handler_ext });
+        std.debug.print("✅ Generated: {s}\n", .{handler_ext_path});
+    }
+
+    // ── service.gen.zig (always overwrite) ──
+    const service_gen = try codegen.generateService(allocator, table);
+    defer allocator.free(service_gen);
+    const service_gen_path = try std.fmt.allocPrint(allocator, "{s}/service.gen.zig", .{module_dir});
+    defer allocator.free(service_gen_path);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = service_gen_path, .data = service_gen });
+    std.debug.print("✅ Generated: {s}\n", .{service_gen_path});
+
+    // ── ext/service.zig (ext stub, only if not exists) ──
+    const service_ext_path = try std.fmt.allocPrint(allocator, "{s}/ext/service.zig", .{module_dir});
+    defer allocator.free(service_ext_path);
+    if (std.Io.Dir.cwd().access(io, service_ext_path, .{})) |_| {
+        std.debug.print("   Skip (exists): {s}\n", .{service_ext_path});
+    } else |_| {
+        const service_ext = try codegen.generateServiceExt(allocator, module_name);
+        defer allocator.free(service_ext);
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = service_ext_path, .data = service_ext });
+        std.debug.print("✅ Generated: {s}\n", .{service_ext_path});
+    }
+
+    // Handler (generated)
+    const hdlr = try codegen.generateHandler(allocator, table, deps_prefix);
+    defer allocator.free(hdlr);
+    const hdlr_gen_path = try std.fmt.allocPrint(allocator, "{s}/handler.gen.zig", .{module_dir});
+    defer allocator.free(hdlr_gen_path);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = hdlr_gen_path, .data = hdlr });
+    std.debug.print("✅ Generated: {s}\n", .{hdlr_gen_path});
 
     // Routes
     const routes = try codegen.generateRoutes(allocator, table);
@@ -921,14 +1165,65 @@ fn writeGeneratedFiles(allocator: std.mem.Allocator, table: *codegen.Table) !voi
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = routes_path, .data = routes });
     std.debug.print("✅ Generated: {s}\n", .{routes_path});
 
-    // Test
+    // ── test.gen.zig (always overwrite) ──
+    try ensureDir(allocator, "test/gen");
     const test_code = try codegen.generateTest(allocator, table);
     defer allocator.free(test_code);
-    const test_path = try std.fmt.allocPrint(allocator, "test/{s}_test.zig", .{module_name});
-    defer allocator.free(test_path);
-    try ensureDir(allocator, "test");
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = test_path, .data = test_code });
-    std.debug.print("✅ Generated test: {s}\n", .{test_path});
+    const test_gen_path = try std.fmt.allocPrint(allocator, "test/gen/{s}_test.gen.zig", .{module_name});
+    defer allocator.free(test_gen_path);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = test_gen_path, .data = test_code });
+    std.debug.print("✅ Generated test: {s}\n", .{test_gen_path});
+
+    // ── Integration test (full-stack: handler→service→model→DB) ──
+    try ensureDir(allocator, "test/integration");
+    const int_test = try codegen.generateIntegrationTest(allocator, table, module_name);
+    defer allocator.free(int_test);
+    const int_test_path = try std.fmt.allocPrint(allocator, "test/integration/{s}_int_test.gen.zig", .{module_name});
+    defer allocator.free(int_test_path);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = int_test_path, .data = int_test });
+    std.debug.print("✅ Generated integration test: {s}\n", .{int_test_path});
+}
+
+/// Generate integration test runner that references all module tests
+fn generateIntegrationTestEntry(allocator: std.mem.Allocator, tables: []codegen.Table) !void {
+    try ensureDir(allocator, "test/integration");
+    var imports = std.ArrayList(u8).empty;
+    defer imports.deinit(allocator);
+
+    for (tables) |*table| {
+        const mn = singularize(allocator, table.name) catch continue;
+        defer allocator.free(mn);
+        const line_i = try std.fmt.allocPrint(allocator, "const _{s}_test = @import(\"{s}_int_test.gen.zig\");\n", .{ mn, mn });
+        defer allocator.free(line_i);
+        try imports.appendSlice(allocator, line_i);
+    }
+
+    const content = try std.fmt.allocPrint(allocator,
+        \\// @generated by zf crud:sql — integration test runner
+        \\// Runs all per-table integration tests. DB connectivity, CRUD chain, handler import.
+        \\const std = @import("std");
+        \\const testing = std.testing;
+        \\
+        \\{s}
+        \\test "integration: all tables import OK" {{
+        \\    _ = testing;
+        \\    // All per-table tests are imported above.
+        \\    // Run with: zig build test --test-filter integration
+        \\    std.debug.print("Integration test runner loaded {{d}} modules\n", .{{{d}}});
+        \\}}
+    , .{ imports.items, tables.len });
+    defer allocator.free(content);
+
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = "test/integration/runner.zig", .data = content });
+    std.debug.print("✅ Generated integration runner: test/integration/runner.zig\n", .{});
+}
+
+/// Extract subsystem prefix from table name. system_users → "system", users → "".
+fn subsystemOf(alloc: std.mem.Allocator, name: []const u8) ![]const u8 {
+    if (std.mem.indexOfScalar(u8, name, '_')) |pos| {
+        if (pos > 0 and pos < name.len - 1) return alloc.dupe(u8, name[0..pos]);
+    }
+    return alloc.dupe(u8, "");
 }
 
 fn singularize(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {

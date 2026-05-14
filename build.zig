@@ -105,13 +105,26 @@ pub fn build(b: *std.Build) void {
     run_pb_step.dependOn(&run_pb.step);
 
     // CLI tool (zf)
+    const enable_pg = b.option(bool, "enable-pg", "Enable PostgreSQL introspection (requires libpq)") orelse false;
+    const enable_mysql = b.option(bool, "enable-mysql", "Enable MySQL introspection (requires libmysqlclient)") orelse false;
+
+    const zf_opts = b.addOptions();
+    zf_opts.addOption(bool, "enable_pg", enable_pg);
+    zf_opts.addOption(bool, "enable_my", enable_mysql);
+
     const zf_mod = b.createModule(.{
         .root_source_file = b.path("tools/zf/main.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zf_cfg", .module = zf_opts.createModule() },
+        },
     });
     zf_mod.link_libc = true;
     zf_mod.linkSystemLibrary("sqlite3", .{});
+    if (enable_pg) zf_mod.linkSystemLibrary("pq", .{});
+    if (enable_mysql) zf_mod.linkSystemLibrary("mysqlclient", .{});
+
     const zf_exe = b.addExecutable(.{
         .name = "zf",
         .root_module = zf_mod,
