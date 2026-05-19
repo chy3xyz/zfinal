@@ -72,3 +72,21 @@ test "JsonKit parse and stringify" {
 
     try std.testing.expect(std.mem.indexOf(u8, stringified, "Alice") != null);
 }
+
+test "JsonKit parse array" {
+    const a = std.testing.allocator;
+    const json = "[1, 2, 3]";
+    const parsed = try std.json.parseFromSlice([]i32, a, json, .{});
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(usize, 3), parsed.value.len);
+}
+
+test "JsonKit null and bool" {
+    const a = std.testing.allocator;
+    const json = "{\"active\": true, \"deleted\": false}";
+    const S = struct { active: bool, deleted: bool };
+    const parsed = try JsonKit.parse(S, a, json);
+    defer parsed.deinit();
+    try std.testing.expect(parsed.value.active);
+    try std.testing.expect(!parsed.value.deleted);
+}

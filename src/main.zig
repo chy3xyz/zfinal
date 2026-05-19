@@ -11,6 +11,9 @@ test {
 pub const ZFinal = @import("core/zfinal.zig").ZFinal;
 pub const RouteGroup = @import("core/zfinal.zig").RouteGroup;
 pub const Context = @import("core/context.zig").Context;
+pub const Router = @import("core/router.zig").Router;
+pub const Handler = @import("core/router.zig").Handler;
+pub const HttpMethod = @import("core/router.zig").HttpMethod;
 pub const Server = @import("core/server.zig").Server;
 pub const ServerConfig = @import("core/server.zig").ServerConfig;
 pub const ThreadPool = @import("core/thread_pool.zig").ThreadPool;
@@ -39,6 +42,7 @@ pub const ResultSet = @import("db/result.zig").ResultSet;
 pub const SqlParam = @import("db/sql_param.zig").SqlParam;
 pub const ParamQuery = @import("db/sql_param.zig").ParamQuery;
 pub const Model = @import("db/model.zig").Model;
+pub const ModelWithPK = @import("db/model.zig").ModelWithPK;
 pub const ConnectionPool = @import("db/pool.zig").ConnectionPool;
 pub const Page = @import("db/pagination.zig").Page;
 pub const SqlTemplate = @import("db/sql_template.zig").SqlTemplate;

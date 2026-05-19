@@ -6,14 +6,17 @@ const SqlParam = @import("sql_param.zig").SqlParam;
 
 const builtin = @import("builtin");
 const SQLiteDB = @import("drivers/sqlite.zig").SQLiteDB;
+const build_opts = @import("build_options");
 
-// PostgreSQL and MySQL full drivers exist in drivers/. They require native
-// C client libraries (libpq / libmysqlclient) and Zig evaluates ALL @import
-// at compile time — even in dead branches. So stubs are the default.
-// To use PG/MySQL: manually swap the import below and link the library.
-//   const PostgresDB = @import("drivers/postgres.zig").PostgresDB;
-const PostgresDB = DriverStub;
-const MySQLDB = DriverStub;
+const PostgresDB = if (build_opts.enable_pg)
+    @import("drivers/postgres.zig").PostgresDB
+else
+    DriverStub;
+
+const MySQLDB = if (build_opts.enable_mysql)
+    @import("drivers/mysql.zig").MySQLDB
+else
+    DriverStub;
 
 const DriverStub = struct {
     conn: ?*anyopaque = null,
@@ -29,115 +32,90 @@ const DriverStub = struct {
     pub fn affectedRows(_: *@This()) i64 { return 0; }
 };
 
-/// Unified database interface
+pub const Driver = union(DBType) {
+    postgres: PostgresDB,
+    mysql: MySQLDB,
+    sqlite: SQLiteDB,
+};
+
 pub const DB = struct {
     driver: Driver,
     allocator: std.mem.Allocator,
 
-    pub const Driver = union(DBType) {
-        postgres: PostgresDB,
-        mysql: MySQLDB,
-        sqlite: SQLiteDB,
-    };
-
-    /// Initialize database connection
     pub fn init(allocator: std.mem.Allocator, config: DBConfig) !DB {
         const driver = switch (config.db_type) {
+            .sqlite => Driver{ .sqlite = try SQLiteDB.open(allocator, config) },
             .postgres => Driver{ .postgres = try PostgresDB.connect(allocator, config) },
             .mysql => Driver{ .mysql = try MySQLDB.connect(allocator, config) },
-            .sqlite => Driver{ .sqlite = try SQLiteDB.open(allocator, config) },
         };
-
-        return DB{
-            .driver = driver,
-            .allocator = allocator,
-        };
+        return .{ .driver = driver, .allocator = allocator };
     }
 
-    /// Close database connection
     pub fn deinit(self: *DB) void {
         switch (self.driver) {
-            .postgres => |*pg| pg.close(),
-            .mysql => |*my| my.close(),
-            .sqlite => |*sq| sq.close(),
+            .postgres => |*d| d.close(),
+            .mysql => |*d| d.close(),
+            .sqlite => |*d| d.close(),
         }
     }
 
-    /// Health check: returns true if the connection is alive.
     pub fn ping(self: *DB) bool {
-        switch (self.driver) {
-            .postgres => |*pg| return pg.ping(),
-            .mysql => |*my| return my.ping(),
-            .sqlite => |*sq| return sq.ping(),
-        }
+        return switch (self.driver) {
+            .postgres => |*d| d.ping(),
+            .mysql => |*d| d.ping(),
+            .sqlite => |*d| d.ping(),
+        };
     }
 
-    /// Execute SQL statement (INSERT, UPDATE, DELETE, CREATE, etc.)
     pub fn exec(self: *DB, sql: [:0]const u8) !void {
         switch (self.driver) {
-            .postgres => |*pg| try pg.exec(sql),
-            .mysql => |*my| try my.exec(sql),
-            .sqlite => |*sq| try sq.exec(sql),
+            .postgres => |*d| try d.exec(sql),
+            .mysql => |*d| try d.exec(sql),
+            .sqlite => |*d| try d.exec(sql),
         }
     }
 
-    /// Execute with parameter binding (safe against SQL injection)
     pub fn execParams(self: *DB, sql: [:0]const u8, params: []const SqlParam) !void {
         switch (self.driver) {
-            .postgres => |*pg| try pg.execParams(sql, params),
-            .mysql => |*my| try my.execParams(sql, params),
-            .sqlite => |*sq| try sq.execParams(sql, params),
+            .postgres => |*d| try d.execParams(sql, params),
+            .mysql => |*d| try d.execParams(sql, params),
+            .sqlite => |*d| try d.execParams(sql, params),
         }
     }
 
-    /// Execute query and return result set
-    pub fn query(self: *DB, sql: [:0]const u8) !ResultSet {
-        return switch (self.driver) {
-            .postgres => |*pg| try pg.query(sql),
-            .mysql => |*my| try my.query(sql),
-            .sqlite => |*sq| try sq.query(sql),
-        };
-    }
-
-    /// Execute query with parameter binding
-    pub fn queryParams(self: *DB, sql: [:0]const u8, params: []const SqlParam) !ResultSet {
-        return switch (self.driver) {
-            .postgres => |*pg| try pg.queryParams(sql, params),
-            .mysql => |*my| try my.queryParams(sql, params),
-            .sqlite => |*sq| try sq.queryParams(sql, params),
-        };
-    }
-
-    /// Get last insert ID (for auto-increment columns)
     pub fn lastInsertId(self: *DB) !i64 {
         return switch (self.driver) {
-            .postgres => error.NotSupported, // Postgres uses RETURNING clause
-            .mysql => |*my| try my.lastInsertId(),
-            .sqlite => |*sq| sq.lastInsertId(),
+            .postgres => |*d| d.lastInsertId(),
+            .mysql => |*d| d.lastInsertId(),
+            .sqlite => |*d| d.lastInsertId(),
         };
     }
 
-    /// Get number of affected rows from last statement
-    pub fn affectedRows(self: *DB) !i64 {
+    pub fn affectedRows(self: *DB) i64 {
         return switch (self.driver) {
-            .postgres => |*pg| try pg.affectedRows(),
-            .mysql => |*my| try my.affectedRows(),
-            .sqlite => |*sq| sq.affectedRows(),
+            .postgres => |*d| d.affectedRows(),
+            .mysql => |*d| d.affectedRows(),
+            .sqlite => |*d| d.affectedRows(),
         };
     }
 
-    /// Begin transaction
-    pub fn begin(self: *DB) !void {
-        try self.exec("BEGIN");
+    pub fn query(self: *DB, sql: [:0]const u8) !ResultSet {
+        return switch (self.driver) {
+            .postgres => |*d| d.query(sql),
+            .mysql => |*d| d.query(sql),
+            .sqlite => |*d| d.query(sql),
+        };
     }
 
-    /// Commit transaction
-    pub fn commit(self: *DB) !void {
-        try self.exec("COMMIT");
-    }
-
-    /// Rollback transaction
-    pub fn rollback(self: *DB) !void {
-        try self.exec("ROLLBACK");
+    pub fn queryParams(self: *DB, sql: [:0]const u8, params: []const SqlParam) !ResultSet {
+        return switch (self.driver) {
+            .postgres => |*d| d.queryParams(sql, params),
+            .mysql => |*d| d.queryParams(sql, params),
+            .sqlite => |*d| d.queryParams(sql, params),
+        };
     }
 };
+
+test {
+    _ = @import("integration_test.zig");
+}

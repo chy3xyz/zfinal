@@ -14,7 +14,7 @@ pub const PostgresDB = struct {
 
     pub fn connect(allocator: std.mem.Allocator, config: DBConfig) !PostgresDB {
         var conn_buf: [1024]u8 = undefined;
-        const conn_str = try std.fmt.bufPrint(&conn_buf,
+        const conn_str = try std.fmt.bufPrintZ(&conn_buf,
             "host={s} port={d} dbname={s} user={s} password={s}",
             .{
                 config.host orelse "localhost",
@@ -25,7 +25,7 @@ pub const PostgresDB = struct {
             },
         );
 
-        const conn = c.PQconnectdb(conn_str.ptr);
+        const conn = c.PQconnectdb(conn_str);
         if (c.PQstatus(conn) != c.CONNECTION_OK) {
             const msg = c.PQerrorMessage(conn);
             std.debug.print("PostgreSQL connect failed: {s}\n", .{msg});
@@ -139,6 +139,15 @@ pub const PostgresDB = struct {
         return self.last_affected;
     }
 
+    pub fn lastInsertId(self: *PostgresDB) !i64 {
+        var result = try self.query("SELECT lastval()");
+        defer result.deinit();
+        if (result.next()) {
+            if (try result.getInt(0)) |id| return id;
+        }
+        return error.NoLastInsertId;
+    }
+
     const Params = struct { values: []?[*:0]const u8, lengths: []c_int, formats: []c_int, strings: [][]const u8, owned: []bool };
 
     fn buildParams(allocator: std.mem.Allocator, params: []const SqlParam) !Params {
@@ -160,20 +169,33 @@ pub const PostgresDB = struct {
                 .null => { values[i] = null; lengths[i] = 0; },
                 .int => |v| {
                     const s = try std.fmt.allocPrint(allocator, "{d}", .{v});
-                    strings[i] = s;
+                    defer allocator.free(s);
+                    const s0 = try allocator.alloc(u8, s.len + 1);
+                    @memcpy(s0[0..s.len], s);
+                    s0[s.len] = 0;
+                    strings[i] = s0;
                     owned[i] = true;
-                    values[i] = @ptrCast(s.ptr);
+                    values[i] = @ptrCast(s0.ptr);
                     lengths[i] = 0;
                 },
                 .real => |v| {
                     const s = try std.fmt.allocPrint(allocator, "{d}", .{v});
-                    strings[i] = s;
+                    defer allocator.free(s);
+                    const s0 = try allocator.alloc(u8, s.len + 1);
+                    @memcpy(s0[0..s.len], s);
+                    s0[s.len] = 0;
+                    strings[i] = s0;
                     owned[i] = true;
-                    values[i] = @ptrCast(s.ptr);
+                    values[i] = @ptrCast(s0.ptr);
                     lengths[i] = 0;
                 },
                 .text => |v| {
-                    values[i] = @constCast(@ptrCast(v.ptr));
+                    const s = try allocator.alloc(u8, v.len + 1);
+                    @memcpy(s[0..v.len], v);
+                    s[v.len] = 0;
+                    strings[i] = s;
+                    owned[i] = true;
+                    values[i] = @ptrCast(s.ptr);
                     lengths[i] = 0;
                 },
                 .blob => |v| {

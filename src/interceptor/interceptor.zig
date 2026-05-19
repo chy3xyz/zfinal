@@ -86,6 +86,21 @@ pub const InterceptorChain = struct {
 
 // Common interceptors
 
+test "interceptor chain structure" {
+    const a = std.testing.allocator;
+    var chain = InterceptorChain.init(a);
+    defer chain.deinit();
+    const before_fn = struct { fn f(_: *Context) !bool { return true; } }.f;
+    const after_fn = struct { fn f(_: *Context) !void {} }.f;
+    const int1 = Interceptor{ .name = "first", .before = before_fn };
+    const int2 = Interceptor{ .name = "second", .after = after_fn };
+    try chain.add(int1);
+    try chain.add(int2);
+    try std.testing.expectEqual(@as(usize, 2), chain.interceptors.items.len);
+    try std.testing.expectEqualStrings("first", chain.interceptors.items[0].name);
+    try std.testing.expectEqualStrings("second", chain.interceptors.items[1].name);
+}
+
 /// Logging interceptor
 pub fn loggingBefore(ctx: *Context) !bool {
     const target = ctx.req.head.target;

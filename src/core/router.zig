@@ -122,6 +122,7 @@ pub const Router = struct {
 
     pub fn deinit(self: *Router) void {
         for (self.routes.items) |*route| {
+            self.allocator.free(route.pattern);
             route.interceptors.deinit();
             self.allocator.free(route.segments);
             self.allocator.free(route.param_names);
@@ -140,8 +141,11 @@ pub const Router = struct {
         // 解析路由段和参数名
         const parsed = try parseRoute(path, self.allocator);
 
+        // Dupe path so Route owns it — caller may free the original
+        const owned_path = try self.allocator.dupe(u8, path);
+
         const route = Route{
-            .pattern = path,
+            .pattern = owned_path,
             .method = method,
             .handler = handler,
             .interceptors = InterceptorChain.init(self.allocator),
@@ -165,8 +169,11 @@ pub const Router = struct {
             self.allocator.free(parsed.param_names);
         }
 
+        const owned_path = try self.allocator.dupe(u8, path);
+        errdefer self.allocator.free(owned_path);
+
         const route = Route{
-            .pattern = path,
+            .pattern = owned_path,
             .method = method,
             .handler = handler,
             .interceptors = interceptors,
@@ -215,6 +222,12 @@ pub const Router = struct {
                 try route.handler(ctx);
             }
         } else {
+            // Route not matched — still run global interceptors (e.g. CORS preflight)
+            for (self.global_interceptors.interceptors.items) |interceptor| {
+                if (interceptor.before) |before| {
+                    if (!(try before(ctx))) return;
+                }
+            }
             ctx.res_status = .not_found;
             try ctx.renderText("404 Not Found");
         }
@@ -273,4 +286,93 @@ test "path parameter parsing" {
     try std.testing.expectEqual(@as(usize, 4), parsed.segments.len);
     try std.testing.expect(parsed.segments[0].type == .static); // users
     try std.testing.expect(parsed.segments[1].type == .param); // :id
+}
+
+test "route static matching" {
+    const allocator = std.testing.allocator;
+    var router = Router.init(allocator);
+    defer router.deinit();
+
+    // Dummy handler
+    const h = struct { fn f(_: *Context) !void {} }.f;
+    try router.addWithMethod("/api/health", .GET, h);
+    try router.addWithMethod("/api/users", .POST, h);
+
+    // Exact match
+    try std.testing.expect(router.match("/api/health", .GET) != null);
+    try std.testing.expect(router.match("/api/users", .POST) != null);
+
+    // Method mismatch
+    try std.testing.expect(router.match("/api/health", .POST) == null);
+    try std.testing.expect(router.match("/api/users", .GET) == null);
+
+    // Path mismatch
+    try std.testing.expect(router.match("/api/unknown", .GET) == null);
+}
+
+test "route parameter matching" {
+    const allocator = std.testing.allocator;
+    var router = Router.init(allocator);
+    defer router.deinit();
+
+    const h = struct { fn f(_: *Context) !void {} }.f;
+    try router.addWithMethod("/users/:id", .GET, h);
+    try router.addWithMethod("/users/:id/posts/:post_id", .GET, h);
+
+    // Parameterized paths match
+    try std.testing.expect(router.match("/users/42", .GET) != null);
+    try std.testing.expect(router.match("/users/abc", .GET) != null);
+    try std.testing.expect(router.match("/users/42/posts/7", .GET) != null);
+
+    // Empty param should not match
+    try std.testing.expect(router.match("/users//", .GET) == null);
+    try std.testing.expect(router.match("/users//posts/7", .GET) == null);
+
+    // Extra path segments should not match
+    try std.testing.expect(router.match("/users/42/extra", .GET) == null);
+}
+
+test "route param extraction" {
+    const allocator = std.testing.allocator;
+    var router = Router.init(allocator);
+    defer router.deinit();
+
+    const h = struct { fn f(_: *Context) !void {} }.f;
+    try router.addWithMethod("/users/:id/posts/:post_id", .GET, h);
+
+    const route = router.match("/users/42/posts/7", .GET).?;
+    var params = try route.extractParams("/users/42/posts/7", allocator);
+    defer params.deinit();
+
+    try std.testing.expectEqualStrings("42", params.get("id").?);
+    try std.testing.expectEqualStrings("7", params.get("post_id").?);
+}
+
+test "route any method matching" {
+    const allocator = std.testing.allocator;
+    var router = Router.init(allocator);
+    defer router.deinit();
+
+    const h = struct { fn f(_: *Context) !void {} }.f;
+    try router.add("/api/any", h); // .ANY method
+
+    try std.testing.expect(router.match("/api/any", .GET) != null);
+    try std.testing.expect(router.match("/api/any", .POST) != null);
+    try std.testing.expect(router.match("/api/any", .DELETE) != null);
+}
+
+test "route registration order priority" {
+    const allocator = std.testing.allocator;
+    var router = Router.init(allocator);
+    defer router.deinit();
+
+    const h1 = struct { fn f(_: *Context) !void {} }.f;
+    const h2 = struct { fn f(_: *Context) !void {} }.f;
+    try router.addWithMethod("/api/data", .GET, h1);
+    try router.addWithMethod("/api/data", .GET, h2); // duplicate, both stored
+
+    // First registered route matches (linear scan)
+    const route = router.match("/api/data", .GET).?;
+    // Both registered — priority is first-match
+    try std.testing.expect(route.handler == h1);
 }

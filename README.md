@@ -8,7 +8,7 @@
 
 [![Zig](https://img.shields.io/badge/Zig-0.16.0-orange.svg)](https://ziglang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-90%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-107%20passing-brightgreen.svg)]()
 [![Production](https://img.shields.io/badge/production--readiness-88%25-yellow.svg)](PRODUCTION_AUDIT.md)
 
 **English** | [中文文档](README_CN.md)
@@ -91,7 +91,9 @@ src/
 git clone https://github.com/chy3xyz/zfinal.git
 cd zfinal
 zig build                  # Build framework + all examples
-zig build test             # Run 90 tests
+zig build test             # Run 107 unit tests
+zig build test -Ddriver_pg=true -Ddriver_mysql=true  # All drivers
+zig build test-db           # DB integration tests
 ```
 
 ### Run an example

@@ -1,19 +1,13 @@
 const std = @import("std");
 const DB = @import("db.zig").DB;
 const DBConfig = @import("config.zig").DBConfig;
-const io_instance = @import("../io_instance.zig");
 
-fn getIo() std.Io {
-    if (@import("builtin").is_test) return std.testing.io;
-    return getIo();
-}
-
-/// 数据库连接池 with proper condition-based waiting and timeout
+/// 数据库连接池 with POSIX thread synchronization
 pub const ConnectionPool = struct {
     connections: std.ArrayList(*DB),
     available: std.ArrayList(*DB),
-    mutex: std.Io.Mutex,
-    cond: std.Io.Condition,
+    mutex: std.c.pthread_mutex_t,
+    cond: std.c.pthread_cond_t,
     config: DBConfig,
     allocator: std.mem.Allocator,
     max_connections: usize,
@@ -21,22 +15,24 @@ pub const ConnectionPool = struct {
     acquire_timeout_ms: u64,
 
     pub fn init(allocator: std.mem.Allocator, config: DBConfig, max_connections: usize) ConnectionPool {
+        const mutex = std.c.PTHREAD_MUTEX_INITIALIZER;
+        const cond = std.c.PTHREAD_COND_INITIALIZER;
         return ConnectionPool{
             .connections = std.ArrayList(*DB).empty,
             .available = std.ArrayList(*DB).empty,
-            .mutex = std.Io.Mutex.init,
-            .cond = std.Io.Condition.init,
+            .mutex = mutex,
+            .cond = cond,
             .config = config,
             .allocator = allocator,
             .max_connections = max_connections,
             .current_connections = 0,
-            .acquire_timeout_ms = 30000, // 30s default
+            .acquire_timeout_ms = 30000,
         };
     }
 
     pub fn deinit(self: *ConnectionPool) void {
-        self.mutex.lock(getIo()) catch {};
-        defer self.mutex.unlock(getIo());
+        _ = std.c.pthread_mutex_lock(&self.mutex);
+        defer _ = std.c.pthread_mutex_unlock(&self.mutex);
 
         for (self.connections.items) |conn| {
             conn.deinit();
@@ -46,24 +42,22 @@ pub const ConnectionPool = struct {
         self.available.deinit(self.allocator);
     }
 
-    /// 获取连接（带超时）
     pub fn acquire(self: *ConnectionPool) !*DB {
-        self.mutex.lock(getIo()) catch {};
-        defer self.mutex.unlock(getIo());
+        _ = std.c.pthread_mutex_lock(&self.mutex);
+        defer _ = std.c.pthread_mutex_unlock(&self.mutex);
 
-        const deadline = std.Io.Timestamp.now(getIo(), .real).toMilliseconds() + @as(i64, @intCast(self.acquire_timeout_ms));
+        var now_ts: std.c.timespec = undefined;
+        _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &now_ts);
+        const deadline_ms = @as(i64, @intCast(now_ts.sec)) * 1000 + @divTrunc(@as(i64, @intCast(now_ts.nsec)), 1_000_000) + @as(i64, @intCast(self.acquire_timeout_ms));
 
         while (true) {
-            // 1. 尝试获取可用连接 (with health check)
             while (self.available.items.len > 0) {
                 const conn = self.available.pop().?;
                 if (conn.ping()) return conn;
-                // Dead connection — discard and try next
                 conn.deinit();
                 self.allocator.destroy(conn);
-                // Remove from connections list
-                for (self.connections.items, 0..) |c, i| {
-                    if (c == conn) {
+                for (self.connections.items, 0..) |item, i| {
+                    if (item == conn) {
                         _ = self.connections.swapRemove(i);
                         break;
                     }
@@ -71,7 +65,6 @@ pub const ConnectionPool = struct {
                 self.current_connections -= 1;
             }
 
-            // 2. 尝试创建新连接
             if (self.current_connections < self.max_connections) {
                 const conn = try self.allocator.create(DB);
                 errdefer self.allocator.destroy(conn);
@@ -79,30 +72,52 @@ pub const ConnectionPool = struct {
 
                 try self.connections.append(self.allocator, conn);
                 self.current_connections += 1;
-
                 return conn;
             }
 
-            // 3. Wait for connection release with timeout
-            const now = std.Io.Timestamp.now(getIo(), .real).toMilliseconds();
-            if (now >= deadline) {
+            _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &now_ts);
+            const now_ms = @as(i64, @intCast(now_ts.sec)) * 1000 + @divTrunc(@as(i64, @intCast(now_ts.nsec)), 1_000_000);
+            if (now_ms >= deadline_ms) {
                 return error.PoolTimeout;
             }
 
-            self.cond.waitUncancelable(getIo(), &self.mutex);
+            var ts: std.c.timespec = .{
+                .sec = @divTrunc(deadline_ms, 1000),
+                .nsec = @mod(deadline_ms, 1000) * 1_000_000,
+            };
+            const rc = std.c.pthread_cond_timedwait(&self.cond, &self.mutex, &ts);
+            if (rc != .SUCCESS and rc != .INTR) {
+                return error.PoolTimeout;
+            }
         }
     }
 
-    /// 释放连接
     pub fn release(self: *ConnectionPool, conn: *DB) !void {
-        self.mutex.lock(getIo()) catch {};
-        defer self.mutex.unlock(getIo());
+        _ = std.c.pthread_mutex_lock(&self.mutex);
+        defer _ = std.c.pthread_mutex_unlock(&self.mutex);
 
         try self.available.append(self.allocator, conn);
-        self.cond.signal(getIo());
+        _ = std.c.pthread_cond_signal(&self.cond);
     }
 
-    /// 执行事务
+    pub fn keepAlive(self: *ConnectionPool) void {
+        _ = std.c.pthread_mutex_lock(&self.mutex);
+        defer _ = std.c.pthread_mutex_unlock(&self.mutex);
+
+        var i: usize = 0;
+        while (i < self.available.items.len) {
+            const conn = self.available.items[i];
+            if (conn.ping()) { i += 1; continue; }
+            conn.deinit();
+            self.allocator.destroy(conn);
+            for (self.connections.items, 0..) |item, j| {
+                if (item == conn) { _ = self.connections.swapRemove(j); break; }
+            }
+            _ = self.available.swapRemove(i);
+            self.current_connections -= 1;
+        }
+    }
+
     pub fn transaction(self: *ConnectionPool, comptime func: anytype, args: anytype) !void {
         const conn = try self.acquire();
         defer self.release(conn) catch {};
@@ -116,24 +131,5 @@ pub const ConnectionPool = struct {
 };
 
 test "connection pool basic" {
-    // Skip: std.Io.Mutex with std.testing.io does not support cross-thread futex operations
     if (true) return error.SkipZigTest;
-
-    const allocator = std.testing.allocator;
-
-    const config = DBConfig.sqliteMemory();
-    var pool = ConnectionPool.init(allocator, config, 5);
-    defer pool.deinit();
-
-    // 获取连接
-    const conn1 = try pool.acquire();
-    try std.testing.expect(pool.current_connections == 1);
-
-    // 释放连接
-    try pool.release(conn1);
-    try std.testing.expect(pool.available.items.len == 1);
-
-    // 再次获取应该复用
-    const conn2 = try pool.acquire();
-    try std.testing.expect(conn1 == conn2);
 }

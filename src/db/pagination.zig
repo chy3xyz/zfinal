@@ -64,6 +64,18 @@ pub fn buildPaginationSql(
     return try std.fmt.allocPrint(allocator, "{s} LIMIT {d} OFFSET {d}", .{ base_sql, page_size, offset });
 }
 
+test "page totals" {
+    const a = std.testing.allocator;
+    const Item = struct { id: i64 };
+    var page = Page(Item).init(a, &.{}, 1, 10, 25);
+    defer page.deinit();
+    try std.testing.expectEqual(@as(usize, 0), page.list.len);
+    try std.testing.expectEqual(@as(usize, 3), page.total_page);
+    try std.testing.expectEqual(@as(usize, 25), page.total_row);
+    try std.testing.expect(page.hasNext());
+    try std.testing.expect(!page.hasPrevious());
+}
+
 test "page basic" {
     const allocator = std.testing.allocator;
 

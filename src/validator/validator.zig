@@ -213,6 +213,61 @@ test "validator range" {
     try std.testing.expect(v.hasErrors());
 }
 
+test "validator range valid" {
+    const a = std.testing.allocator;
+    var v = Validator.init(a);
+    defer v.deinit();
+    try v.validateRange("age", 25, 0, 120);
+    try std.testing.expect(!v.hasErrors());
+}
+
+test "validator required null" {
+    const a = std.testing.allocator;
+    var v = Validator.init(a);
+    defer v.deinit();
+    try v.validateRequired("name", null);
+    try std.testing.expect(v.hasErrors());
+}
+
+test "validator required valid" {
+    const a = std.testing.allocator;
+    var v = Validator.init(a);
+    defer v.deinit();
+    try v.validateRequired("name", "Alice");
+    try std.testing.expect(!v.hasErrors());
+}
+
+test "validator max length" {
+    const a = std.testing.allocator;
+    var v = Validator.init(a);
+    defer v.deinit();
+    try v.validateMaxLength("bio", "too long bio text here", 10);
+    try std.testing.expect(v.hasErrors());
+}
+
+test "validator numeric" {
+    const a = std.testing.allocator;
+    var v = Validator.init(a);
+    defer v.deinit();
+    try v.validateNumeric("zip", "abc");
+    try std.testing.expect(v.hasErrors());
+    var v2 = Validator.init(a);
+    defer v2.deinit();
+    try v2.validateNumeric("zip", "12345");
+    try std.testing.expect(!v2.hasErrors());
+}
+
+test "validator multiple errors" {
+    const a = std.testing.allocator;
+    var v = Validator.init(a);
+    defer v.deinit();
+    try v.validateRequired("name", null);
+    try v.validateEmail("email", "bad");
+    try std.testing.expect(v.hasErrors());
+    const errors = v.getErrors();
+    try std.testing.expect(errors.count() >= 2);
+}
+
 test "validator min length" {
     const allocator = std.testing.allocator;
 

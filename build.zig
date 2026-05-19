@@ -51,6 +51,8 @@ pub fn build(b: *std.Build) void {
     // Inject compile-time log level via a generated options module
     const log_opts = b.addOptions();
     log_opts.addOption([]const u8, "log_level", log_level);
+    log_opts.addOption(bool, "enable_mysql", b.option(bool, "driver_mysql", "Enable MySQL driver") orelse false);
+    log_opts.addOption(bool, "enable_pg", b.option(bool, "driver_pg", "Enable PostgreSQL driver") orelse false);
     zfinal_mod.addImport("build_options", log_opts.createModule());
 
     // Tests (unit)
@@ -75,6 +77,10 @@ pub fn build(b: *std.Build) void {
     const int_test_step = b.step("test-int", "Run integration tests (requires generated modules)");
     int_test_step.dependOn(&run_int_tests.step);
 
+    // DB integration tests — run as part of unit tests (imported via main.zig)
+    const db_int_test_step = b.step("test-db", "Run DB integration tests (alias for test)");
+    db_int_test_step.dependOn(&run_lib_unit_tests.step);
+
     // Example runners
     addExample(b, zfinal_mod, "hello", "examples/hello-world/main.zig", "Run hello-world demo");
     addExample(b, zfinal_mod, "blog", "examples/blog-single/main.zig", "Run blog-single demo");
@@ -84,6 +90,23 @@ pub fn build(b: *std.Build) void {
     addExample(b, zfinal_mod, "auth", "examples/auth/main.zig", "Run auth demo");
     addExample(b, zfinal_mod, "captcha", "examples/captcha/main.zig", "Run captcha demo");
     addExample(b, zfinal_mod, "production", "examples/production/main.zig", "Run production example");
+    // RuoYi example — needs MySQL driver
+    {
+        const ruoyi_mod = b.createModule(.{
+            .root_source_file = b.path("examples/ruoyi-gen/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "zfinal", .module = zfinal_mod }},
+        });
+        ruoyi_mod.link_libc = true;
+        ruoyi_mod.linkSystemLibrary("mysqlclient", .{});
+        const ruoyi_exe = b.addExecutable(.{ .name = "ruoyi-gen", .root_module = ruoyi_mod });
+        b.installArtifact(ruoyi_exe);
+        const ruoyi_run = b.addRunArtifact(ruoyi_exe);
+        ruoyi_run.step.dependOn(b.getInstallStep());
+        const ruoyi_step = b.step("run-ruoyi-gen", "Run RuoYi generated API (MySQL)");
+        ruoyi_step.dependOn(&ruoyi_run.step);
+    }
 
     // PocketBase demo (more complex, has its own src/ tree)
     const pb_mod = b.createModule(.{

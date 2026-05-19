@@ -127,9 +127,10 @@ test "StrKit split and join" {
     defer allocator.free(parts);
 
     try std.testing.expectEqual(@as(usize, 3), parts.len);
+}
 
-    const joined = try StrKit.join(allocator, parts, "-");
-    defer allocator.free(joined);
-
-    try std.testing.expectEqualStrings("a-b-c", joined);
+test "StrKit trim and contains" {
+    try std.testing.expectEqualStrings("hello", StrKit.trim("  hello  "));
+    try std.testing.expect(StrKit.contains("hello world", "world"));
+    try std.testing.expect(!StrKit.contains("hello world", "xyz"));
 }

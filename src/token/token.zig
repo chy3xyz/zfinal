@@ -24,7 +24,7 @@ pub const Token = struct {
 pub const TokenManager = struct {
     tokens: std.StringHashMap(Token),
     allocator: std.mem.Allocator,
-    mutex: std.Io.Mutex = std.Io.Mutex.init,
+    mutex: std.c.pthread_mutex_t = std.c.PTHREAD_MUTEX_INITIALIZER,
     default_: i64 = 3600, // 默认 1 小时
 
     pub fn init(allocator: std.mem.Allocator) TokenManager {
@@ -45,8 +45,8 @@ pub const TokenManager = struct {
 
     /// 生成新 Token
     pub fn generate(self: *TokenManager) ![]const u8 {
-        try self.mutex.lock(io_instance.io);
-        defer self.mutex.unlock(io_instance.io);
+        _ = std.c.pthread_mutex_lock(&self.mutex);
+        defer _ = std.c.pthread_mutex_unlock(&self.mutex);
 
         // 生成随机 Token
         var random_bytes: [32]u8 = undefined;
@@ -79,8 +79,8 @@ pub const TokenManager = struct {
 
     /// 验证并移除 Token
     pub fn validate(self: *TokenManager, token_value: []const u8) !bool {
-        try self.mutex.lock(io_instance.io);
-        defer self.mutex.unlock(io_instance.io);
+        _ = std.c.pthread_mutex_lock(&self.mutex);
+        defer _ = std.c.pthread_mutex_unlock(&self.mutex);
 
         // 清理过期 Token
         try self.cleanExpired();
@@ -98,8 +98,8 @@ pub const TokenManager = struct {
 
     /// 检查 Token 是否存在（不移除）
     pub fn exists(self: *TokenManager, token_value: []const u8) bool {
-        self.mutex.lock(io_instance.io) catch {};
-        defer self.mutex.unlock(io_instance.io);
+        _ = std.c.pthread_mutex_lock(&self.mutex);
+        defer _ = std.c.pthread_mutex_unlock(&self.mutex);
 
         if (self.tokens.get(token_value)) |token| {
             return !token.isExpired(self.default_);

@@ -30,21 +30,23 @@ pub const ArrayKit = struct {
     }
 
     /// 去重
-    pub fn unique(comptime T: type, _allocator: std.mem.Allocator, array: []const T) ![]T {
-        var seen = std.AutoHashMap(T, void).init(_allocator);
-        defer seen.deinit();
-
-        var result = std.ArrayList(T).empty;
-        defer result.deinit(_allocator);
+    pub fn unique(comptime T: type, allocator: std.mem.Allocator, array: []const T) ![]T {
+        var seen = std.AutoArrayHashMapUnmanaged(T, void){};
+        defer seen.deinit(allocator);
 
         for (array) |item| {
             if (!seen.contains(item)) {
-                try seen.put(item, {});
-                try result.append(item);
+                try seen.put(allocator, item, {});
             }
         }
 
-        return result.toOwnedSlice();
+        var result = try allocator.alloc(T, seen.count());
+        var i: usize = 0;
+        var it = seen.iterator();
+        while (it.next()) |entry| : (i += 1) {
+            result[i] = entry.key_ptr.*;
+        }
+        return result;
     }
 
     /// 过滤数组
@@ -102,7 +104,7 @@ pub const ArrayKit = struct {
     }
 };
 
-test "ArrayKit contains" {
+test "ArrayKit has" {
     const array = [_]i32{ 1, 2, 3, 4, 5 };
     try std.testing.expect(ArrayKit.contains(i32, &array, 3));
     try std.testing.expect(!ArrayKit.contains(i32, &array, 10));
@@ -111,4 +113,10 @@ test "ArrayKit contains" {
 test "ArrayKit sum" {
     const array = [_]i32{ 1, 2, 3, 4, 5 };
     try std.testing.expectEqual(@as(i32, 15), ArrayKit.sum(i32, &array));
+}
+
+test "ArrayKit find in slice" {
+    const arr = [_]i32{ 1, 2, 3, 4, 5 };
+    try std.testing.expect(ArrayKit.contains(i32, arr[0..], 3));
+    try std.testing.expect(!ArrayKit.contains(i32, arr[0..], 99));
 }

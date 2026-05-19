@@ -61,6 +61,7 @@ pub const ZFinal = struct {
 
     /// Add GET route
     pub fn get(self: *ZFinal, path: []const u8, handler: Handler) !void {
+        std.debug.print("REGISTER GET: {s}\n", .{path});
         try self.router.addWithMethod(path, .GET, handler);
     }
     pub fn getWithInterceptors(self: *ZFinal, path: []const u8, handler: Handler, interceptors: []const Interceptor) !void {
@@ -71,6 +72,7 @@ pub const ZFinal = struct {
 
     /// Add POST route
     pub fn post(self: *ZFinal, path: []const u8, handler: Handler) !void {
+        std.debug.print("REGISTER POST: {s}\n", .{path});
         try self.router.addWithMethod(path, .POST, handler);
     }
     pub fn postWithInterceptors(self: *ZFinal, path: []const u8, handler: Handler, interceptors: []const Interceptor) !void {

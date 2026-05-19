@@ -4,6 +4,7 @@ const Router = @import("router.zig").Router;
 const HttpMethod = @import("router.zig").HttpMethod;
 const Context = @import("context.zig").Context;
 const getLog = @import("logger.zig").getLogger;
+const shutdown = @import("shutdown.zig");
 
 pub const ServerConfig = struct {
     host: []const u8 = "0.0.0.0",
@@ -77,12 +78,12 @@ pub const Server = struct {
 
 fn acceptLoopImpl(io: std.Io, server: *Server, addr: std.Io.net.IpAddress, group: *std.Io.Group) !void {
     var listener = try addr.listen(io, .{ .reuse_address = true });
-    defer listener.deinit();
+    defer listener.deinit(io);
 
     getLog().infoFmt("Server listening on http://{s}:{d}", .{ server.config.host, server.config.port });
 
     var backoff: u64 = 1;
-    while (true) {
+    while (!shutdown.isShuttingDown()) {
         const conn = listener.accept(io) catch |err| {
             getLog().warnFmt("Accept error: {} — retrying in {d}ms", .{ err, backoff });
             io.sleep(std.Io.Duration.fromMilliseconds(@intCast(backoff)), .awake) catch {};
@@ -103,6 +104,9 @@ fn acceptLoopImpl(io: std.Io, server: *Server, addr: std.Io.net.IpAddress, group
 
         group.async(io, handleConn, .{ io, conn, server });
     }
+    // Graceful shutdown: cancel pending fibers, drain connections
+    getLog().info("Shutting down server...", .{});
+    group.cancel(io);
 }
 
 /// Handler fiber — manages keep-alive request loop for one connection.

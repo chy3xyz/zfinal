@@ -379,6 +379,23 @@ pub const Context = struct {
         });
     }
 
+    // === JSON Body ===
+
+    /// Read request body as raw text.
+    pub fn getBodyText(self: *Context) ![]const u8 {
+        var read_buf: [4096]u8 = undefined;
+        var reader = self.req.readerExpectNone(&read_buf);
+        return try reader.allocRemaining(self.allocator, std.Io.Limit.limited(self.max_body_size));
+    }
+
+    /// Parse JSON request body into the given type.
+    /// Caller owns the returned Parsed(T) and must call .deinit().
+    pub fn parseJsonBody(self: *Context, comptime T: type) !std.json.Parsed(T) {
+        const body = try self.getBodyText();
+        defer self.allocator.free(body);
+        return std.json.parseFromSlice(T, self.allocator, body, .{ .ignore_unknown_fields = true, .allocate = .alloc_always });
+    }
+
     // === File Upload ===
 
     /// Get uploaded file by field name
@@ -427,15 +444,14 @@ pub const Context = struct {
         }
 
         // Read request body
-        var body_buffer = std.ArrayList(u8).empty;
-        defer body_buffer.deinit(self.allocator);
-
-        var reader = try self.req.reader();
-        try reader.readAllArrayList(self.allocator, &body_buffer, self.max_body_size);
+        var read_buf: [4096]u8 = undefined;
+        var reader = self.req.readerExpectNone(&read_buf);
+        const body = try reader.allocRemaining(self.allocator, std.Io.Limit.limited(self.max_body_size));
+        defer self.allocator.free(body);
 
         // Parse multipart
         var parser = try MultipartParser.init(self.allocator, content_type.?);
-        return try parser.parse(body_buffer.items);
+        return try parser.parse(body);
     }
 
     // === File Download ===

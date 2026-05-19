@@ -107,7 +107,7 @@ pub const StaticHandler = struct {
 pub const RateLimitHandler = struct {
     requests: std.StringHashMap(RequestInfo),
     allocator: std.mem.Allocator,
-    mutex: std.Io.Mutex = std.Io.Mutex.init,
+    mutex: std.c.pthread_mutex_t = std.c.PTHREAD_MUTEX_INITIALIZER,
     max_requests: usize = 100,
     window_seconds: i64 = 60,
     /// Set to true when behind a trusted reverse proxy (nginx, haproxy).
@@ -147,10 +147,12 @@ pub const RateLimitHandler = struct {
         else
             "unknown";
 
-        self.mutex.lock(io_instance.io) catch {};
-        defer self.mutex.unlock(io_instance.io);
+        _ = std.c.pthread_mutex_lock(&self.mutex);
+        defer _ = std.c.pthread_mutex_unlock(&self.mutex);
 
-        const now: i64 = std.Io.Timestamp.now(io_instance.io, .real).toSeconds();
+        var ts: std.c.timespec = undefined;
+        _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+        const now: i64 = @intCast(ts.sec);
 
         // Periodic cleanup of stale entries
         self.cleanup_counter += 1;

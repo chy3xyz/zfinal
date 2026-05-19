@@ -97,3 +97,9 @@ test "HttpKit getStatusText" {
     try std.testing.expectEqualStrings("OK", HttpKit.getStatusText(200));
     try std.testing.expectEqualStrings("Not Found", HttpKit.getStatusText(404));
 }
+
+test "HttpKit mime types" {
+    try std.testing.expectEqualStrings("image/png", HttpKit.getMimeType("png"));
+    try std.testing.expectEqualStrings("text/plain; charset=utf-8", HttpKit.getMimeType("txt"));
+    try std.testing.expectEqualStrings("text/plain; charset=utf-8", HttpKit.getMimeType("unknown_ext"));
+}

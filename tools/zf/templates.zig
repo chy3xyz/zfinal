@@ -8,12 +8,23 @@ pub const build_zig =
     \\    const target = b.standardTargetOptions(.{{}});
     \\    const optimize = b.standardOptimizeOption(.{{}});
     \\
-    \\    // ZFinal dependency
-    \\    const zfinal_dep = b.dependency("zfinal", .{{
+    \\    // ZFinal framework — addModule directly (same build graph, no sub-build)
+    \\    const zfinal_mod = b.addModule("zfinal", .{{
+    \\        .root_source_file = b.path("{s}"),
     \\        .target = target,
     \\        .optimize = optimize,
     \\    }});
-    \\    const zfinal_mod = zfinal_dep.module("zfinal");
+    \\    zfinal_mod.link_libc = true;
+    \\    zfinal_mod.linkSystemLibrary("sqlite3", .{{}});
+    \\
+    \\    // Inject driver options into zfinal's build_options
+    \\    const use_mysql = b.option(bool, "driver-mysql", "Enable MySQL driver (libmysqlclient)") orelse false;
+    \\    const use_pg = b.option(bool, "driver-pg", "Enable PostgreSQL driver (libpq)") orelse false;
+    \\    const zfinal_opts = b.addOptions();
+    \\    zfinal_opts.addOption([]const u8, "log_level", "info");
+    \\    zfinal_opts.addOption(bool, "enable_mysql", use_mysql);
+    \\    zfinal_opts.addOption(bool, "enable_pg", use_pg);
+    \\    zfinal_mod.addImport("build_options", zfinal_opts.createModule());
     \\
     \\    const exe_mod = b.createModule(.{{
     \\        .root_source_file = b.path("src/main.zig"),
@@ -22,7 +33,8 @@ pub const build_zig =
     \\        .imports = &.{{.{{ .name = "zfinal", .module = zfinal_mod }}}},
     \\    }});
     \\    exe_mod.link_libc = true;
-    \\    exe_mod.linkSystemLibrary("sqlite3", .{{}});
+    \\    if (use_mysql) exe_mod.linkSystemLibrary("mysqlclient", .{{}});
+    \\    if (use_pg) exe_mod.linkSystemLibrary("pq", .{{}});
     \\
     \\    const exe = b.addExecutable(.{{
     \\        .name = "{s}",
@@ -49,11 +61,7 @@ pub const build_zig_zon =
     \\    .version = "0.1.0",
     \\    .fingerprint = 0xd3da709fcd7fc3,
     \\    .minimum_zig_version = "0.16.0",
-    \\    .dependencies = .{{
-    \\        .zfinal = .{{
-    \\            .path = "../zfinal",
-    \\        }},
-    \\    }},
+    \\    .dependencies = .{{}},
     \\    .paths = .{{
     \\        "build.zig",
     \\        "build.zig.zon",
@@ -70,8 +78,9 @@ pub const main_zig =
     \\const config = @import("config.zig");
     \\const routes = @import("routes.zig");
     \\
-    \\pub fn main() !void {{
-    \\    const allocator = std.heap.page_allocator;
+    \\pub fn main(init: std.process.Init) !void {{
+    \\    zfinal.io_instance.init(init);
+    \\    const allocator = init.gpa;
     \\
     \\    var logger = zfinal.Logger.init(allocator);
     \\    logger.setLevel(switch (zfinal.LOG_LEVEL) {{
@@ -91,9 +100,7 @@ pub const main_zig =
     \\    try routes.register(&app);
     \\
     \\    // Start
-    \\    zfinal.getLogger().info("starting", .{{
-    \\        zfinal.Field{{ .key = "port", .value = .{{ .int = config.server.port }} }},
-    \\    }});
+    \\    zfinal.getLogger().infoFmt("starting on :{{d}}", .{{config.server.port}});
     \\    try app.start();
     \\}}
 ;
@@ -208,10 +215,10 @@ pub const routes_zig =
     \\
     \\    // User endpoints — replace with real handlers
     \\    try app.get("/api/v1/users", handler.user.list);
-    \\    try app.get("/api/v1/users/:id", handler.user.show);
+    \\    try app.get("/api/v1/users/{id}", handler.user.show);
     \\    try app.post("/api/v1/users", handler.user.create);
-    \\    try app.put("/api/v1/users/:id", handler.user.update);
-    \\    try app.delete("/api/v1/users/:id", handler.user.delete);
+    \\    try app.put("/api/v1/users/{id}", handler.user.update);
+    \\    try app.delete("/api/v1/users/{id}", handler.user.delete);
     \\
     \\    // Attach middleware to protected routes
     \\    try app.addGlobalMiddleware(middleware.logging);
@@ -494,6 +501,100 @@ pub const cursor_rules =
     \\- ❌ `*.gen.zig` — DO NOT EDIT (overwritten on regeneration)
     \\
     \\JSON naming: **snake_case** everywhere (request + response).
+;
+
+// ── src/validator/validate.zig — basic validation functions ──
+pub const validator_validate =
+    \\const std = @import("std");
+    \\
+    \\/// Validate email format.
+    \\pub fn email(v: []const u8) bool {
+    \\    return std.mem.indexOfScalar(u8, v, '@') != null and v.len >= 3;
+    \\}
+    \\
+    \\/// Validate Chinese mobile phone number.
+    \\pub fn phone(v: []const u8) bool {
+    \\    return v.len == 11 and v[0] == '1';
+    \\}
+    \\
+    \\/// Value must not be null or empty.
+    \\pub fn required(v: ?[]const u8) bool {
+    \\    if (v) |val| return val.len > 0;
+    \\    return false;
+    \\}
+    \\
+    \\/// String length in [min, max].
+    \\pub fn length(v: []const u8, min: usize, max: usize) bool {
+    \\    return v.len >= min and v.len <= max;
+    \\}
+    \\
+    \\/// Minimum string length.
+    \\pub fn minLen(v: []const u8, n: usize) bool {
+    \\    return v.len >= n;
+    \\}
+    \\
+    \\/// Maximum string length.
+    \\pub fn maxLen(v: []const u8, n: usize) bool {
+    \\    return v.len <= n;
+    \\}
+    \\
+    \\/// Integer in [lo, hi].
+    \\pub fn range(val: i64, lo: i64, hi: i64) bool {
+    \\    return val >= lo and val <= hi;
+    \\}
+    \\
+    \\/// String matches regex pattern (compile-time pattern).
+    \\pub fn pattern(v: []const u8, regex: []const u8) bool {
+    \\    _ = regex;
+    \\    return v.len > 0; // stub — full regex requires external lib
+    \\}
+    \\
+    \\/// Value is a valid integer string.
+    \\pub fn isInt(v: []const u8) bool {
+    \\    return std.fmt.parseInt(i64, v, 10) != error.InvalidCharacter;
+    \\}
+;
+
+// ── src/task/runner.zig — simple cron/fixed-interval task runner ──
+pub const task_runner =
+    \\const std = @import("std");
+    \\
+    \\pub const Task = struct {
+    \\    name: []const u8,
+    \\    /// Cron expression like "0 */5 * * *" or "fixed:300" for 300-second interval.
+    \\    schedule: []const u8,
+    \\    run: *const fn () anyerror!void,
+    \\};
+    \\
+    \\var tasks: std.ArrayList(Task) = undefined;
+    \\var started: bool = false;
+    \\
+    \\pub fn init(allocator: std.mem.Allocator) void {
+    \\    tasks = std.ArrayList(Task).init(allocator);
+    \\}
+    \\
+    \\pub fn register(task: Task) !void {
+    \\    try tasks.append(task);
+    \\}
+    \\
+    \\/// Start all registered tasks. Each task runs on its own schedule.
+    \\pub fn start(io: std.Io) !void {
+    \\    if (started) return;
+    \\    started = true;
+    \\    for (tasks.items) |task| {
+    \\        if (std.mem.startsWith(u8, task.schedule, "fixed:")) {
+    \\            const sec_str = task.schedule["fixed:".len..];
+    \\            const sec = std.fmt.parseInt(u64, sec_str, 10) catch 60;
+    \\            _ = sec; // TODO: spawn timer
+    \\        }
+    \\        _ = task;
+    \\        _ = io;
+    \\    }
+    \\}
+    \\
+    \\pub fn deinit() void {
+    \\    tasks.deinit();
+    \\}
 ;
 
 // ── src/common/errors.zig ──
