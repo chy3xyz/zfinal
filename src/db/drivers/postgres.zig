@@ -3,9 +3,7 @@ const DBConfig = @import("../config.zig").DBConfig;
 const ResultSet = @import("../result.zig").ResultSet;
 const SqlParam = @import("../sql_param.zig").SqlParam;
 
-const c = @cImport({
-    @cInclude("libpq-fe.h");
-});
+const c = @import("c_pg");
 
 pub const PostgresDB = struct {
     conn: ?*c.PGconn,
@@ -14,7 +12,7 @@ pub const PostgresDB = struct {
 
     pub fn connect(allocator: std.mem.Allocator, config: DBConfig) !PostgresDB {
         var conn_buf: [1024]u8 = undefined;
-        const conn_str = try std.fmt.bufPrintZ(&conn_buf,
+        const conn_slice = try std.fmt.bufPrint(&conn_buf,
             "host={s} port={d} dbname={s} user={s} password={s}",
             .{
                 config.host orelse "localhost",
@@ -24,8 +22,11 @@ pub const PostgresDB = struct {
                 config.password orelse "",
             },
         );
+        conn_buf[conn_slice.len] = 0;
+        const conn_str: [:0]const u8 = conn_buf[0..conn_slice.len :0];
 
         const conn = c.PQconnectdb(conn_str);
+        @memset(&conn_buf, 0);
         if (c.PQstatus(conn) != c.CONNECTION_OK) {
             const msg = c.PQerrorMessage(conn);
             std.debug.print("PostgreSQL connect failed: {s}\n", .{msg});

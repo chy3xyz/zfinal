@@ -52,6 +52,7 @@ pub const CaptchaManager = struct {
             entry.value_ptr.deinit();
         }
         self.captchas.deinit();
+        self.* = undefined;
     }
 
     /// 生成验证码

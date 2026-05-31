@@ -41,7 +41,7 @@ pub const ThreadPool = struct {
         }
 
         pub fn push(self: *TaskQueue, task: Task) !void {
-            self.mutex.lock(getIo()) catch {};
+            try self.mutex.lock(getIo());
             defer self.mutex.unlock(getIo());
             try self.items.append(self.allocator, task);
             self.cond.signal(getIo());
@@ -50,7 +50,7 @@ pub const ThreadPool = struct {
         /// Blocking pop. Waits on condition variable when queue is empty.
         /// Returns null when shutting down.
         pub fn pop(self: *TaskQueue) ?Task {
-            self.mutex.lock(getIo()) catch {};
+            self.mutex.lock(getIo()) catch @panic("thread_pool: mutex lock failed");
             defer self.mutex.unlock(getIo());
 
             while (self.items.items.len == 0 and !self.shutting_down) {
@@ -62,7 +62,7 @@ pub const ThreadPool = struct {
         }
 
         pub fn signalShutdown(self: *TaskQueue) void {
-            self.mutex.lock(getIo()) catch {};
+            self.mutex.lock(getIo()) catch @panic("thread_pool: mutex lock failed");
             defer self.mutex.unlock(getIo());
             self.shutting_down = true;
             self.cond.broadcast(getIo());

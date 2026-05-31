@@ -38,6 +38,7 @@ pub const PluginManager = struct {
             plugin.stop() catch {};
         }
         self.plugins.deinit(self.allocator);
+        self.* = undefined;
     }
 
     /// 添加插件

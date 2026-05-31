@@ -3,9 +3,7 @@ const DBConfig = @import("../config.zig").DBConfig;
 const ResultSet = @import("../result.zig").ResultSet;
 const SqlParam = @import("../sql_param.zig").SqlParam;
 
-const c = @cImport({
-    @cInclude("sqlite3.h");
-});
+const c = @import("c_sqlite3");
 
 /// SQLite database driver with prepared statement support
 pub const SQLiteDB = struct {
@@ -19,7 +17,9 @@ pub const SQLiteDB = struct {
 
         // Convert to null-terminated string
         var path_buf: [512]u8 = undefined;
-        const path_z = try std.fmt.bufPrintZ(&path_buf, "{s}", .{config.database});
+        const path = try std.fmt.bufPrint(&path_buf, "{s}", .{config.database});
+        path_buf[path.len] = 0;
+        const path_z: [:0]const u8 = path_buf[0..path.len :0];
 
         const rc = c.sqlite3_open(path_z.ptr, &db);
         if (rc != c.SQLITE_OK) {

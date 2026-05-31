@@ -129,6 +129,7 @@ pub const Router = struct {
         }
         self.routes.deinit(self.allocator);
         self.global_interceptors.deinit();
+        self.* = undefined;
     }
 
     /// 添加路由（任意 HTTP 方法）

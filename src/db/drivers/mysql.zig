@@ -3,9 +3,7 @@ const DBConfig = @import("../config.zig").DBConfig;
 const ResultSet = @import("../result.zig").ResultSet;
 const SqlParam = @import("../sql_param.zig").SqlParam;
 
-const c = @cImport({
-    @cInclude("mysql/mysql.h");
-});
+const c = @import("c_mysql");
 
 pub const MySQLDB = struct {
     conn: ?*c.MYSQL,
@@ -20,17 +18,24 @@ pub const MySQLDB = struct {
         var p_buf: [256]u8 = undefined;
         var d_buf: [256]u8 = undefined;
 
-        const h = try std.fmt.bufPrintZ(&h_buf, "{s}", .{config.host orelse "localhost"});
-        const u = try std.fmt.bufPrintZ(&u_buf, "{s}", .{config.username orelse "root"});
-        const pw = try std.fmt.bufPrintZ(&p_buf, "{s}", .{config.password orelse ""});
-        const db = try std.fmt.bufPrintZ(&d_buf, "{s}", .{config.database});
+        const h_slice = try std.fmt.bufPrint(&h_buf, "{s}", .{config.host orelse "localhost"});
+        h_buf[h_slice.len] = 0; const h: [:0]const u8 = h_buf[0..h_slice.len :0];
+        const u_slice = try std.fmt.bufPrint(&u_buf, "{s}", .{config.username orelse "root"});
+        u_buf[u_slice.len] = 0; const u: [:0]const u8 = u_buf[0..u_slice.len :0];
+        const pw_slice = try std.fmt.bufPrint(&p_buf, "{s}", .{config.password orelse ""});
+        p_buf[pw_slice.len] = 0; const pw: [:0]const u8 = p_buf[0..pw_slice.len :0];
+        const db_slice = try std.fmt.bufPrint(&d_buf, "{s}", .{config.database});
+        d_buf[db_slice.len] = 0; const db: [:0]const u8 = d_buf[0..db_slice.len :0];
 
         if (c.mysql_real_connect(conn, h.ptr, u.ptr, pw.ptr, db.ptr, config.port orelse 3306, null, 0) == null) {
+            @memset(&p_buf, 0);
             const msg = c.mysql_error(conn);
             std.debug.print("MySQL connect failed: {s}\n", .{msg});
             c.mysql_close(conn);
             return error.ConnectionFailed;
         }
+        @memset(&p_buf, 0);
+        @memset(&u_buf, 0);
 
         return .{ .conn = conn, .allocator = allocator };
     }

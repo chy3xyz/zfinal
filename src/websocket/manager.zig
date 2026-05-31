@@ -35,6 +35,7 @@ pub const WebSocketManager = struct {
             self.allocator.destroy(ws);
         }
         self.connections.deinit(self.allocator);
+        self.* = undefined;
     }
 
     /// 添加 WebSocket 路由
@@ -57,14 +58,14 @@ pub const WebSocketManager = struct {
 
     /// 添加连接
     pub fn addConnection(self: *WebSocketManager, ws: *WebSocket) !void {
-        self.mutex.lock(io_instance.io) catch {};
+        try self.mutex.lock(io_instance.io);
         defer self.mutex.unlock(io_instance.io);
         try self.connections.append(self.allocator, ws);
     }
 
     /// 移除连接
     pub fn removeConnection(self: *WebSocketManager, ws: *WebSocket) void {
-        self.mutex.lock(io_instance.io) catch {};
+        self.mutex.lock(io_instance.io) catch @panic("ws: mutex lock failed");
         defer self.mutex.unlock(io_instance.io);
 
         for (self.connections.items, 0..) |conn, i| {
@@ -77,7 +78,7 @@ pub const WebSocketManager = struct {
 
     /// 广播消息到所有连接
     pub fn broadcast(self: *WebSocketManager, message: []const u8) !void {
-        self.mutex.lock(io_instance.io) catch {};
+        try self.mutex.lock(io_instance.io);
         defer self.mutex.unlock(io_instance.io);
 
         for (self.connections.items) |ws| {
@@ -89,7 +90,7 @@ pub const WebSocketManager = struct {
 
     /// 广播消息到所有连接（除了指定的）
     pub fn broadcastExcept(self: *WebSocketManager, message: []const u8, except: *WebSocket) !void {
-        self.mutex.lock(io_instance.io) catch {};
+        try self.mutex.lock(io_instance.io);
         defer self.mutex.unlock(io_instance.io);
 
         for (self.connections.items) |ws| {

@@ -264,42 +264,9 @@ fn toCamelCaseSnake(allocator: std.mem.Allocator, snake: []const u8) ![]const u8
 // Extension stubs (AI/human write business logic here)
 // ============================================================
 
-pub fn generateModelExt(allocator: std.mem.Allocator, table: *const Table, module_name: []const u8) ![]const u8 {
+// generateModelExt removed — single .zig files maintained by AI
 
-    _ = module_name;
-    return std.fmt.allocPrint(allocator,
-        \\const std = @import("std");
-        \\const zfinal = @import("zfinal");
-        \\const gen = @import("../model.gen.zig");
-        \\
-        \\pub const {s} = gen.{s};
-        \\pub const {s}Model = gen.{s}Model;
-        \\pub const validate = gen.validate;
-        \\
-        \\// ── Custom queries ──
-        \\// Add your business-specific query methods below.
-        \\
-    , .{ table.pascal_name, table.pascal_name, table.pascal_name, table.pascal_name });
-}
-
-pub fn generateHandlerExt(allocator: std.mem.Allocator, module_name: []const u8) ![]const u8 {
-    _ = module_name;
-    return std.fmt.allocPrint(allocator,
-        \\const std = @import("std");
-        \\const zfinal = @import("zfinal");
-        \\const gen = @import("../handler.gen.zig");
-        \\
-        \\pub const list = gen.list;
-        \\pub const show = gen.show;
-        \\pub const create = gen.create;
-        \\pub const update = gen.update;
-        \\pub const delete = gen.delete;
-        \\
-        \\// ── Custom handlers ──
-        \\// Add your custom endpoint handlers below.
-        \\
-    , .{});
-}
+// generateHandlerExt removed — single .zig files maintained by AI
 
 // ── Integration test: full-stack handler→service→model→DB ──
 pub fn generateIntegrationTest(allocator: std.mem.Allocator, table: *const Table, module_name: []const u8) ![]const u8 {
@@ -334,8 +301,8 @@ pub fn generateIntegrationTest(allocator: std.mem.Allocator, table: *const Table
         \\const std = @import("std");
         \\const zfinal = @import("zfinal");
         \\const testing = std.testing;
-        \\const handler = @import("{s}/handler.gen.zig");
-        \\const service = @import("{s}/service.gen.zig");
+        \\const handler = @import("{s}/handler.zig");
+        \\const service = @import("{s}/service.zig");
         \\const deps = @import("{s}/deps.zig");
         \\
         \\test "{s}: DB connectivity — init + schema" {{
@@ -389,41 +356,22 @@ pub fn generateIntegrationTest(allocator: std.mem.Allocator, table: *const Table
 }
 
 // ── src/modules/<name>/ext/service.zig (ext stub, only if not exists) ──
-pub fn generateServiceExt(allocator: std.mem.Allocator, module_name: []const u8) ![]const u8 {
-    _ = module_name;
-    return std.fmt.allocPrint(allocator,
-        \\const std = @import("std");
-        \\const zfinal = @import("zfinal");
-        \\const gen = @import("../service.gen.zig");
-        \\
-        \\pub const findAll = gen.findAll;
-        \\pub const findById = gen.findById;
-        \\pub const paginate = gen.paginate;
-        \\pub const count = gen.count;
-        \\pub const create = gen.create;
-        \\pub const update = gen.update;
-        \\pub const deleteOne = gen.deleteOne;
-        \\
-        \\// ── Custom business logic ──
-        \\// Add your cross-model operations, transactions, complex validation below.
-        \\
-    , .{});
-}
+// generateServiceExt removed — single .zig files maintained by AI
 
 // ============================================================
 // Code Generators
 // ============================================================
 
-// ── service.gen.zig: Business logic layer, delegates CRUD to Model ──
+// ── service.zig: Business logic layer, delegates CRUD to Model ──
 pub fn generateService(allocator: std.mem.Allocator, table: *const Table) ![]const u8 {
     const name = table.pascal_name;
 
     return std.fmt.allocPrint(allocator,
-        \\// @generated — DO NOT EDIT. AI: edit ext/<name>.zig instead.
+        \\// @generated — DO NOT EDIT. AI: edit directly.
         \\// Regenerate: zf crud:sql <schema.sql> — runs zf check after
         \\const std = @import("std");
         \\const zfinal = @import("zfinal");
-        \\const model = @import("model.gen.zig");
+        \\const model = @import("model.zig");
         \\const {s}Model = model.{s}Model;
         \\const validate = model.validate;
         \\
@@ -561,7 +509,7 @@ pub fn generateModel(allocator: std.mem.Allocator, table: *const Table, naming: 
     defer validation.deinit(allocator);
 
     return std.fmt.allocPrint(allocator,
-        \\// @generated — DO NOT EDIT. AI: edit ext/<name>.zig instead.
+        \\// @generated — DO NOT EDIT. AI: edit directly.
         \\// Regenerate: zf crud:sql <schema.sql> — runs zf check after
         \\const std = @import("std");
         \\const zfinal = @import("zfinal");
@@ -644,11 +592,11 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
     defer update_fields.deinit(allocator);
 
     return std.fmt.allocPrint(allocator,
-        \\// @generated — DO NOT EDIT. AI: edit ext/<name>.zig instead.
+        \\// @generated — DO NOT EDIT. AI: edit directly.
         \\// Regenerate: zf crud:sql <schema.sql> — runs zf check after
         \\const std = @import("std");
         \\const zfinal = @import("zfinal");
-        \\const service = @import("service.gen.zig");
+        \\const service = @import("service.zig");
         \\const pool_ref = &@import("{s}deps.zig").pool;
         \\const token_ref = &@import("{s}deps.zig").tokenMgr;
         \\const limit_ref = &@import("{s}deps.zig").rateLimiter;
@@ -750,7 +698,7 @@ pub fn generateRoutes(allocator: std.mem.Allocator, table: *const Table) ![]cons
     const pl = try pluralize(allocator, name_low);
     defer allocator.free(pl);
     return std.fmt.allocPrint(allocator,
-        \\const handler = @import("handler.gen.zig");
+        \\const handler = @import("handler.zig");
         \\
         \\pub fn register(app: anytype) !void {{
         \\    try app.get("/{s}", handler.list);
@@ -784,7 +732,7 @@ pub fn generateTest(allocator: std.mem.Allocator, table: *const Table) ![]const 
 
 pub fn generateMigrationPackage(allocator: std.mem.Allocator, tables: []Table) ![]const u8 {
     var buf = std.ArrayList(u8).empty;
-    try buf.appendSlice(allocator, "// @generated — DO NOT EDIT. AI: this is a migration reference, edit ext/*.zig instead.\n// Copy individual .gen.zig files to your project, then customize in ext/\n\n");
+    try buf.appendSlice(allocator, "// @generated — AI-maintained. Regenerate with: zf crud:sql <file>\n\n");
     defer buf.deinit(allocator);
 
     for (tables) |*table| {

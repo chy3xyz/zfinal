@@ -5,6 +5,7 @@ const std = @import("std");
 
 test {
     std.testing.refAllDecls(@This());
+    _ = @import("aichat/aichat_test.zig");
 }
 
 // Export core modules
@@ -87,6 +88,9 @@ pub const OAuth2Client = @import("plugin/compat/stubs.zig").OAuth2Client;
 pub const ObjectMapper = @import("plugin/compat/stubs.zig").ObjectMapper;
 pub const MetricsExporter = @import("plugin/compat/stubs.zig").MetricsExporter;
 
+// AI Chat component
+pub const aichat = @import("aichat/aichat.zig");
+
 // Export config and i18n modules
 pub const I18n = @import("i18n/i18n.zig").I18n;
 pub const LocaleInfo = @import("i18n/i18n.zig").LocaleInfo;
@@ -147,6 +151,7 @@ pub const HttpKit = @import("kit/http_kit.zig").HttpKit;
 pub const ValidateKit = @import("kit/validate_kit.zig").ValidateKit;
 pub const DateKit = @import("kit/date_kit.zig").DateKit;
 pub const FormatKit = @import("kit/format_kit.zig").FormatKit;
+pub const CsvKit = @import("kit/csv_kit.zig").CsvKit;
 pub const SysKit = @import("kit/sys_kit.zig").SysKit;
 pub const CacheKit = @import("kit/cache_kit.zig").CacheKit;
 

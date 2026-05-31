@@ -1,7 +1,5 @@
 const std = @import("std");
-const c = @cImport({
-    @cInclude("libpq-fe.h");
-});
+const c = @import("c_pg");
 
 const Column = @import("codegen.zig").Column;
 const Table = @import("codegen.zig").Table;

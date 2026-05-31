@@ -21,6 +21,8 @@ pub const RenderExt = struct {
 
     /// 渲染分页响应
     pub fn page(ctx: *zfinal.Context, list: anytype, total: i64, page_num: i64, page_size: i64) !void {
+        std.debug.assert(page_size > 0);
+        std.debug.assert(page_num >= 1);
         try ctx.renderJson(.{
             .success = true,
             .data = .{

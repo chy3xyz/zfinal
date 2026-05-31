@@ -41,6 +41,7 @@ pub const TokenManager = struct {
             entry.value_ptr.deinit();
         }
         self.tokens.deinit();
+        self.* = undefined;
     }
 
     /// 生成新 Token

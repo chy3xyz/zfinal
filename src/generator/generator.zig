@@ -68,7 +68,9 @@ pub const Generator = struct {
         // SQLite: 查询所有表
         const sql = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'";
         var sql_buf: [512]u8 = undefined;
-        const sql_z = try std.fmt.bufPrintZ(&sql_buf, "{s}", .{sql});
+        const sql_slice = try std.fmt.bufPrint(&sql_buf, "{s}", .{sql});
+        sql_buf[sql_slice.len] = 0;
+        const sql_z: [:0]const u8 = sql_buf[0..sql_slice.len :0];
 
         var result = try self.db.query(sql_z);
         defer result.deinit();
@@ -96,7 +98,9 @@ pub const Generator = struct {
 
         // SQLite: PRAGMA table_info
         var sql_buf: [512]u8 = undefined;
-        const sql = try std.fmt.bufPrintZ(&sql_buf, "PRAGMA table_info({s})", .{table_name});
+        const sql_slice2 = try std.fmt.bufPrint(&sql_buf, "PRAGMA table_info({s})", .{table_name});
+        sql_buf[sql_slice2.len] = 0;
+        const sql: [:0]const u8 = sql_buf[0..sql_slice2.len :0];
 
         var result = try self.db.query(sql);
         defer result.deinit();

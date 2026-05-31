@@ -13,6 +13,7 @@ pub fn Model(comptime T: type, comptime table_name: []const u8) type {
 }
 
 pub fn ModelWithPK(comptime T: type, comptime table_name: []const u8, comptime pk_name: []const u8) type {
+    @setEvalBranchQuota(20000);
     return struct {
         const Self = @This();
         const fields = @typeInfo(T).@"struct".fields;
@@ -35,6 +36,7 @@ pub fn ModelWithPK(comptime T: type, comptime table_name: []const u8, comptime p
             }
 
             fn insert(self: *Instance, db: *DB) !void {
+                @setEvalBranchQuota(20000);
                 const param_count = comptime blk: { var n: usize = 0; for (fields) |f| { if (!std.mem.eql(u8, f.name, pk_name)) n += 1; } break :blk n; };
                 var params: [param_count]SqlParam = undefined;
                 comptime var pi: usize = 0;
@@ -61,6 +63,7 @@ pub fn ModelWithPK(comptime T: type, comptime table_name: []const u8, comptime p
             }
 
             fn update(self: *Instance, db: *DB, id: i64) !void {
+                @setEvalBranchQuota(20000);
                 const param_count = comptime blk: { var n: usize = 0; for (fields) |f| { if (!std.mem.eql(u8, f.name, pk_name)) n += 1; } break :blk n + 1; };
                 var params: [param_count]SqlParam = undefined;
                 comptime var pj: usize = 0;
@@ -108,7 +111,7 @@ pub fn ModelWithPK(comptime T: type, comptime table_name: []const u8, comptime p
             var result = try db.query(sql);
             defer result.deinit();
             var list = std.ArrayList(Instance).empty;
-            errdefer { for (list.items) |*item| item.deinit(allocator); allocator.free(list.toOwnedSlice(allocator) catch &.{}); }
+            errdefer { for (list.items) |*item| item.deinit(allocator); list.deinit(allocator); }
             while (result.next()) {
                 if (result.getCurrentRowMap()) |row| try list.append(allocator, try mapFromRow(allocator, row));
             }
@@ -134,15 +137,17 @@ pub fn ModelWithPK(comptime T: type, comptime table_name: []const u8, comptime p
             try db.execParams(sql, &.{SqlParam{ .int = id }});
         }
 
-        /// Paginated query with LIMIT and OFFSET.
+        /// Paginated query with LIMIT and OFFSET. page must be >= 1.
         pub fn paginate(db: *DB, page: usize, page_size: usize, allocator: std.mem.Allocator) ![]Instance {
+            std.debug.assert(page >= 1);
+            std.debug.assert(page_size > 0);
             const offset = (page - 1) * page_size;
             const sql = try std.fmt.allocPrintSentinel(allocator, "SELECT * FROM {s} LIMIT $1 OFFSET $2", .{table_name}, 0);
             defer allocator.free(sql);
             var result = try db.queryParams(sql, &.{ SqlParam{ .int = @intCast(page_size) }, SqlParam{ .int = @intCast(offset) } });
             defer result.deinit();
             var list = std.ArrayList(Instance).empty;
-            errdefer { for (list.items) |*item| item.deinit(allocator); allocator.free(list.toOwnedSlice(allocator) catch &.{}); }
+            errdefer { for (list.items) |*item| item.deinit(allocator); list.deinit(allocator); }
             while (result.next()) {
                 if (result.getCurrentRowMap()) |row| try list.append(allocator, try mapFromRow(allocator, row));
             }
@@ -152,7 +157,7 @@ pub fn ModelWithPK(comptime T: type, comptime table_name: []const u8, comptime p
         /// Batch insert — wraps multiple saves in a single transaction for 10-50x throughput.
         pub fn insertBatch(db: *DB, instances: []Instance) !void {
             try db.exec("BEGIN");
-            errdefer db.exec("ROLLBACK") catch {};
+            errdefer db.exec("ROLLBACK") catch |e| @panic(@errorName(e));
             for (instances) |*inst| try inst.insert(db);
             try db.exec("COMMIT");
         }

@@ -1,27 +1,26 @@
 const std = @import("std");
 const Context = @import("../core/context.zig").Context;
 
-/// HTMX 辅助函数
+/// HTMX 辅助函数 — caller owns returned memory (must free with given allocator)
 pub const HtmxHelper = struct {
-    /// 生成 HTMX 属性
-    pub fn hxGet(url: []const u8) []const u8 {
-        return std.fmt.allocPrint(std.heap.page_allocator, "hx-get=\"{s}\"", .{url}) catch "";
+    pub fn hxGet(allocator: std.mem.Allocator, url: []const u8) ![]const u8 {
+        return std.fmt.allocPrint(allocator, "hx-get=\"{s}\"", .{url});
     }
 
-    pub fn hxPost(url: []const u8) []const u8 {
-        return std.fmt.allocPrint(std.heap.page_allocator, "hx-post=\"{s}\"", .{url}) catch "";
+    pub fn hxPost(allocator: std.mem.Allocator, url: []const u8) ![]const u8 {
+        return std.fmt.allocPrint(allocator, "hx-post=\"{s}\"", .{url});
     }
 
-    pub fn hxTarget(target: []const u8) []const u8 {
-        return std.fmt.allocPrint(std.heap.page_allocator, "hx-target=\"{s}\"", .{target}) catch "";
+    pub fn hxTarget(allocator: std.mem.Allocator, target: []const u8) ![]const u8 {
+        return std.fmt.allocPrint(allocator, "hx-target=\"{s}\"", .{target});
     }
 
-    pub fn hxSwap(swap: []const u8) []const u8 {
-        return std.fmt.allocPrint(std.heap.page_allocator, "hx-swap=\"{s}\"", .{swap}) catch "";
+    pub fn hxSwap(allocator: std.mem.Allocator, swap: []const u8) ![]const u8 {
+        return std.fmt.allocPrint(allocator, "hx-swap=\"{s}\"", .{swap});
     }
 
-    pub fn hxTrigger(trigger: []const u8) []const u8 {
-        return std.fmt.allocPrint(std.heap.page_allocator, "hx-trigger=\"{s}\"", .{trigger}) catch "";
+    pub fn hxTrigger(allocator: std.mem.Allocator, trigger: []const u8) ![]const u8 {
+        return std.fmt.allocPrint(allocator, "hx-trigger=\"{s}\"", .{trigger});
     }
 };
 

@@ -18,8 +18,12 @@ pub const SysKit = struct {
         var key_buf: [256]u8 = undefined;
         var value_buf: [1024]u8 = undefined;
 
-        const key_z = try std.fmt.bufPrintZ(&key_buf, "{s}", .{key});
-        const value_z = try std.fmt.bufPrintZ(&value_buf, "{s}", .{value});
+        const key_slice = try std.fmt.bufPrint(&key_buf, "{s}", .{key});
+        key_buf[key_slice.len] = 0;
+        const key_z: [:0]const u8 = key_buf[0..key_slice.len :0];
+        const val_slice = try std.fmt.bufPrint(&value_buf, "{s}", .{value});
+        value_buf[val_slice.len] = 0;
+        const value_z: [:0]const u8 = value_buf[0..val_slice.len :0];
 
         try std.process.putEnv(key_z, value_z);
     }

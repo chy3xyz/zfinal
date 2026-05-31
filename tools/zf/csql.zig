@@ -1,7 +1,5 @@
 const std = @import("std");
-const c = @cImport({
-    @cInclude("sqlite3.h");
-});
+const c = @import("c_sqlite3");
 
 const Column = @import("codegen.zig").Column;
 const Table = @import("codegen.zig").Table;
@@ -25,7 +23,8 @@ pub fn extractFromSql(allocator: std.mem.Allocator, sql: []const u8) !std.ArrayL
     defer allocator.free(ddl);
     std.debug.print("   SQL: {d} bytes total → {d} bytes DDL (CREATE TABLE only)\n", .{ sql.len, ddl.len });
 
-    const sql_z = try allocator.dupeZ(u8, ddl);
+    const sql_z = try allocator.allocSentinel(u8, ddl.len, 0);
+    @memcpy(sql_z, ddl);
     defer allocator.free(sql_z);
     if (c.sqlite3_exec(db, sql_z.ptr, null, null, &err_msg) != c.SQLITE_OK) {
         std.debug.print("sqlite3_exec schema: {s}\n", .{err_msg});
@@ -54,7 +53,8 @@ pub fn extractFromSql(allocator: std.mem.Allocator, sql: []const u8) !std.ArrayL
         // PRAGMA table_info for column details
         const info_sql = try std.fmt.allocPrint(allocator, "PRAGMA table_info(\"{s}\")", .{table_name});
         defer allocator.free(info_sql);
-        const info_z = try allocator.dupeZ(u8, info_sql);
+        const info_z = try allocator.allocSentinel(u8, info_sql.len, 0);
+        @memcpy(info_z, info_sql);
         defer allocator.free(info_z);
 
         var info_stmt: ?*c.sqlite3_stmt = undefined;
@@ -76,7 +76,7 @@ pub fn extractFromSql(allocator: std.mem.Allocator, sql: []const u8) !std.ArrayL
             const default_val: ?[]const u8 = if (default_raw != null) try allocator.dupe(u8, std.mem.span(default_raw)) else null;
 
             // AUTOINCREMENT detection: if pk > 0 AND type contains INTEGER
-            const is_autoinc = pk > 0 and std.ascii.indexOfIgnoreCase(col_type, "INTEGER") != null;
+            const is_autoinc = pk > 0 and std.ascii.startsWithIgnoreCase(col_type, "INTEGER");
 
             try columns.append(allocator, .{
                 .name = col_name,

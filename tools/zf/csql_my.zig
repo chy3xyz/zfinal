@@ -1,7 +1,5 @@
 const std = @import("std");
-const c = @cImport({
-    @cInclude("mysql.h");
-});
+const c = @import("c_mysql");
 
 const Column = @import("codegen.zig").Column;
 const Table = @import("codegen.zig").Table;
@@ -69,13 +67,18 @@ pub fn extractFromDb(allocator: std.mem.Allocator, dsn: Dsn) !std.ArrayList(Tabl
     }
     defer c.mysql_close(&conn);
 
-    const user_z = if (dsn.user.len > 0) try allocator.dupeZ(u8, dsn.user) else try allocator.dupeZ(u8, "root");
+    const user_raw = if (dsn.user.len > 0) dsn.user else "root";
+    const user_z = try allocator.allocSentinel(u8, user_raw.len, 0);
+    @memcpy(user_z, user_raw);
     defer allocator.free(user_z);
-    const pass_z = try allocator.dupeZ(u8, dsn.password);
+    const pass_z = try allocator.allocSentinel(u8, dsn.password.len, 0);
+    @memcpy(pass_z, dsn.password);
     defer allocator.free(pass_z);
-    const host_z = try allocator.dupeZ(u8, dsn.host);
+    const host_z = try allocator.allocSentinel(u8, dsn.host.len, 0);
+    @memcpy(host_z, dsn.host);
     defer allocator.free(host_z);
-    const db_z = try allocator.dupeZ(u8, dsn.dbname);
+    const db_z = try allocator.allocSentinel(u8, dsn.dbname.len, 0);
+    @memcpy(db_z, dsn.dbname);
     defer allocator.free(db_z);
 
     _ = c.mysql_real_connect(&conn, host_z.ptr, user_z.ptr, pass_z.ptr, db_z.ptr, dsn.port, null, 0);
@@ -106,7 +109,8 @@ pub fn extractFromDb(allocator: std.mem.Allocator, dsn: Dsn) !std.ArrayList(Tabl
         // DESCRIBE table
         const desc_sql = try std.fmt.allocPrint(allocator, "DESCRIBE `{s}`", .{table_name});
         defer allocator.free(desc_sql);
-        const desc_z = try allocator.dupeZ(u8, desc_sql);
+        const desc_z = try allocator.allocSentinel(u8, desc_sql.len, 0);
+        @memcpy(desc_z, desc_sql);
         defer allocator.free(desc_z);
 
         if (c.mysql_query(&conn, desc_z.ptr) != 0) continue;

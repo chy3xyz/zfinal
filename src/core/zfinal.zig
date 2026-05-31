@@ -29,6 +29,7 @@ pub const ZFinal = struct {
         self.plugin_manager.stopAll();
         self.plugin_manager.deinit();
         self.router.deinit();
+        self.* = undefined;
     }
 
     pub fn setPort(self: *ZFinal, port: u16) void {

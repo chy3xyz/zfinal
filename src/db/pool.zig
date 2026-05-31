@@ -40,6 +40,7 @@ pub const ConnectionPool = struct {
         }
         self.connections.deinit(self.allocator);
         self.available.deinit(self.allocator);
+        self.* = undefined;
     }
 
     pub fn acquire(self: *ConnectionPool) !*DB {
@@ -123,7 +124,7 @@ pub const ConnectionPool = struct {
         defer self.release(conn) catch {};
 
         try conn.begin();
-        errdefer conn.rollback() catch {};
+        errdefer conn.rollback() catch |e| @panic(@errorName(e));
 
         try @call(.auto, func, .{conn} ++ args);
         try conn.commit();

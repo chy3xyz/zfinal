@@ -309,7 +309,7 @@ const RenderEngine = struct {
 
         if (value) |v| {
             const filtered = if (filter_name) |f| try self.applyFilter(v, f) else try self.allocator.dupe(u8, v);
-            defer if (filter_name != null) self.allocator.free(filtered);
+            defer self.allocator.free(filtered);
             try result.appendSlice(self.allocator, filtered);
         }
     }

@@ -32,6 +32,66 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // --- Driver flags (declared early for translate-c conditional blocks) ---
+    const driver_mysql = b.option(bool, "driver_mysql", "Enable MySQL driver") orelse false;
+    const driver_pg = b.option(bool, "driver_pg", "Enable PostgreSQL driver") orelse false;
+    const enable_pg = b.option(bool, "enable-pg", "Enable PostgreSQL introspection (requires libpq)") orelse false;
+    const enable_mysql = b.option(bool, "enable-mysql", "Enable MySQL introspection (requires libmysqlclient)") orelse false;
+
+    // --- C header translation (Zig 0.17: @cImport removed, use build-system translate-c) ---
+
+    // SQLite — always available (system SDK or Homebrew)
+    const sqlite3_tc = b.addTranslateC(.{
+        .root_source_file = b.path("src/db/drivers/c_sqlite3.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const sqlite3_c_mod = sqlite3_tc.createModule();
+
+    // MySQL for framework (mysql/mysql.h) — conditional on driver flag
+    const mysql_c_mod = if (driver_mysql) blk: {
+        const tc = b.addTranslateC(.{
+            .root_source_file = b.path("src/db/drivers/c_mysql.h"),
+            .target = target,
+            .optimize = optimize,
+        });
+        tc.addSystemIncludePath(b.path("/opt/homebrew/include"));
+        break :blk tc.createModule();
+    } else null;
+
+    // PostgreSQL for framework (libpq-fe.h) — conditional on driver flag
+    const pg_c_mod = if (driver_pg) blk: {
+        const tc = b.addTranslateC(.{
+            .root_source_file = b.path("src/db/drivers/c_postgres.h"),
+            .target = target,
+            .optimize = optimize,
+        });
+        tc.addSystemIncludePath(b.path("/opt/homebrew/opt/libpq/include"));
+        break :blk tc.createModule();
+    } else null;
+
+    // MySQL for zf CLI (mysql.h) — conditional
+    const mysql_zf_c_mod = if (enable_mysql) blk: {
+        const tc = b.addTranslateC(.{
+            .root_source_file = b.path("tools/zf/c_mysql.h"),
+            .target = target,
+            .optimize = optimize,
+        });
+        tc.addSystemIncludePath(b.path("/opt/homebrew/include/mysql"));
+        break :blk tc.createModule();
+    } else null;
+
+    // PostgreSQL for zf CLI (libpq-fe.h) — conditional
+    const pg_zf_c_mod = if (enable_pg) blk: {
+        const tc = b.addTranslateC(.{
+            .root_source_file = b.path("tools/zf/c_pg.h"),
+            .target = target,
+            .optimize = optimize,
+        });
+        tc.addSystemIncludePath(b.path("/opt/homebrew/opt/libpq/include"));
+        break :blk tc.createModule();
+    } else null;
+
     // --- Log level build option ---
     const log_level = b.option(
         []const u8,
@@ -47,12 +107,15 @@ pub fn build(b: *std.Build) void {
     });
     zfinal_mod.link_libc = true;
     zfinal_mod.linkSystemLibrary("sqlite3", .{});
+    zfinal_mod.addImport("c_sqlite3", sqlite3_c_mod);
+    if (mysql_c_mod) |m| zfinal_mod.addImport("c_mysql", m);
+    if (pg_c_mod) |p| zfinal_mod.addImport("c_pg", p);
 
     // Inject compile-time log level via a generated options module
     const log_opts = b.addOptions();
     log_opts.addOption([]const u8, "log_level", log_level);
-    log_opts.addOption(bool, "enable_mysql", b.option(bool, "driver_mysql", "Enable MySQL driver") orelse false);
-    log_opts.addOption(bool, "enable_pg", b.option(bool, "driver_pg", "Enable PostgreSQL driver") orelse false);
+    log_opts.addOption(bool, "enable_mysql", driver_mysql);
+    log_opts.addOption(bool, "enable_pg", driver_pg);
     zfinal_mod.addImport("build_options", log_opts.createModule());
 
     // Tests (unit)
@@ -128,13 +191,10 @@ pub fn build(b: *std.Build) void {
     run_pb_step.dependOn(&run_pb.step);
 
     // CLI tool (zf)
-    const enable_pg = b.option(bool, "enable-pg", "Enable PostgreSQL introspection (requires libpq)") orelse false;
-    const enable_mysql = b.option(bool, "enable-mysql", "Enable MySQL introspection (requires libmysqlclient)") orelse false;
-
     const zf_opts = b.addOptions();
     zf_opts.addOption(bool, "enable_pg", enable_pg);
     zf_opts.addOption(bool, "enable_my", enable_mysql);
-    zf_opts.addOption([]const u8, "version", "v0.7.2"); // current framework version
+    zf_opts.addOption([]const u8, "version", "v0.7.3"); // current framework version
 
     const zf_mod = b.createModule(.{
         .root_source_file = b.path("tools/zf/main.zig"),
@@ -148,6 +208,9 @@ pub fn build(b: *std.Build) void {
     zf_mod.linkSystemLibrary("sqlite3", .{});
     if (enable_pg) zf_mod.linkSystemLibrary("pq", .{});
     if (enable_mysql) zf_mod.linkSystemLibrary("mysqlclient", .{});
+    zf_mod.addImport("c_sqlite3", sqlite3_c_mod);
+    if (mysql_zf_c_mod) |m| zf_mod.addImport("c_mysql", m);
+    if (pg_zf_c_mod) |p| zf_mod.addImport("c_pg", p);
 
     const zf_exe = b.addExecutable(.{
         .name = "zf",

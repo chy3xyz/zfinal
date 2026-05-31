@@ -39,11 +39,12 @@ pub const SessionStore = struct {
             session.deinit(self.allocator);
         }
         self.sessions.deinit();
+        self.* = undefined;
     }
 
     /// Create a new session with a cryptographically secure unique ID
     pub fn createSession(self: *SessionStore) ![]const u8 {
-        self.mutex.lock(io_instance.io) catch {};
+        try self.mutex.lock(io_instance.io);
         defer self.mutex.unlock(io_instance.io);
 
         // Generate secure random session ID (32 bytes hex = 64 chars)
@@ -70,7 +71,7 @@ pub const SessionStore = struct {
 
     /// Get session by ID
     pub fn getSession(self: *SessionStore, session_id: []const u8) ?*Session {
-        self.mutex.lock(io_instance.io) catch {};
+        self.mutex.lock(io_instance.io) catch @panic("session: mutex lock failed");
         defer self.mutex.unlock(io_instance.io);
 
         if (self.sessions.getPtr(session_id)) |session| {
@@ -82,7 +83,7 @@ pub const SessionStore = struct {
 
     /// Set attribute in session (thread-safe)
     pub fn setAttr(self: *SessionStore, session_id: []const u8, key: []const u8, value: []const u8) !void {
-        self.mutex.lock(io_instance.io) catch {};
+        try self.mutex.lock(io_instance.io);
         defer self.mutex.unlock(io_instance.io);
 
         if (self.sessions.getPtr(session_id)) |session| {
@@ -105,7 +106,7 @@ pub const SessionStore = struct {
     /// Get attribute from session (thread-safe).
     /// Returns an owned copy — caller must free with store.allocator.
     pub fn getAttr(self: *SessionStore, session_id: []const u8, key: []const u8) !?[]const u8 {
-        self.mutex.lock(io_instance.io) catch {};
+        try self.mutex.lock(io_instance.io);
         defer self.mutex.unlock(io_instance.io);
 
         if (self.sessions.getPtr(session_id)) |session| {
@@ -119,7 +120,7 @@ pub const SessionStore = struct {
 
     /// Remove attribute from session (thread-safe)
     pub fn removeAttr(self: *SessionStore, session_id: []const u8, key: []const u8) void {
-        self.mutex.lock(io_instance.io) catch {};
+        self.mutex.lock(io_instance.io) catch @panic("session: mutex lock failed");
         defer self.mutex.unlock(io_instance.io);
 
         if (self.sessions.getPtr(session_id)) |session| {
@@ -133,7 +134,7 @@ pub const SessionStore = struct {
 
     /// Destroy session
     pub fn destroySession(self: *SessionStore, session_id: []const u8) void {
-        self.mutex.lock(io_instance.io) catch {};
+        self.mutex.lock(io_instance.io) catch @panic("session: mutex lock failed");
         defer self.mutex.unlock(io_instance.io);
 
         if (self.sessions.fetchRemove(session_id)) |entry| {

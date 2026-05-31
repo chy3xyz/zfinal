@@ -13,6 +13,8 @@ pub fn Page(comptime T: type) type {
         allocator: std.mem.Allocator,
 
         pub fn init(allocator: std.mem.Allocator, list: []T, page_number: usize, page_size: usize, total_row: usize) Self {
+            std.debug.assert(page_size > 0);
+            std.debug.assert(page_number >= 1);
             const total_page = if (total_row == 0) 0 else (total_row + page_size - 1) / page_size;
 
             return Self{
@@ -60,6 +62,8 @@ pub fn buildPaginationSql(
     page_number: usize,
     page_size: usize,
 ) ![]const u8 {
+    std.debug.assert(page_size > 0);
+    std.debug.assert(page_number >= 1);
     const offset = (page_number - 1) * page_size;
     return try std.fmt.allocPrint(allocator, "{s} LIMIT {d} OFFSET {d}", .{ base_sql, page_size, offset });
 }
