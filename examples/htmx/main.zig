@@ -10,8 +10,33 @@ const Todo = struct {
     completed: bool,
 };
 
-var todos = std.ArrayList(Todo).empty;
-var next_id: i64 = 1;
+/// Thread-safe Todo store — fiber-safe via mutex.
+const TodoStore = struct {
+    items: std.ArrayList(Todo),
+    next_id: i64,
+    mutex: std.c.pthread_mutex_t = std.c.PTHREAD_MUTEX_INITIALIZER,
+    allocator: std.mem.Allocator,
+
+    fn init(allocator: std.mem.Allocator) TodoStore {
+        return .{
+            .items = std.ArrayList(Todo).empty,
+            .next_id = 1,
+            .allocator = allocator,
+        };
+    }
+
+    fn deinit(self: *TodoStore) void {
+        for (self.items.items) |todo| {
+            self.allocator.free(todo.title);
+        }
+        self.items.deinit(self.allocator);
+    }
+
+    fn lock(self: *TodoStore) void { _ = std.c.pthread_mutex_lock(&self.mutex); }
+    fn unlock(self: *TodoStore) void { _ = std.c.pthread_mutex_unlock(&self.mutex); }
+};
+
+var store: TodoStore = undefined;
 
 /// 首页
 fn indexHandler(ctx: *zfinal.Context) !void {
@@ -105,10 +130,12 @@ fn indexHandler(ctx: *zfinal.Context) !void {
 
 /// 获取所有 todos
 fn getTodosHandler(ctx: *zfinal.Context) !void {
+    store.lock();
+    defer store.unlock();
     var html = std.ArrayList(u8).empty;
     defer html.deinit(ctx.allocator);
 
-    for (todos.items) |todo| {
+    for (store.items.items) |todo| {
         const completed_class = if (todo.completed) " completed" else "";
         const checked = if (todo.completed) "checked" else "";
 
@@ -143,14 +170,17 @@ fn createTodoHandler(ctx: *zfinal.Context) !void {
         return;
     };
 
+    store.lock();
+    defer store.unlock();
+
     const todo = Todo{
-        .id = next_id,
-        .title = try ctx.allocator.dupe(u8, title),
+        .id = store.next_id,
+        .title = try store.allocator.dupe(u8, title),
         .completed = false,
     };
-    next_id += 1;
+    store.next_id += 1;
 
-    try todos.append(std.heap.page_allocator, todo);
+    try store.items.append(store.allocator, todo);
 
     var html = std.ArrayList(u8).empty;
     defer html.deinit(ctx.allocator);
@@ -187,7 +217,10 @@ fn toggleTodoHandler(ctx: *zfinal.Context) !void {
 
     const id = try std.fmt.parseInt(i64, id_str, 10);
 
-    for (todos.items) |*todo| {
+    store.lock();
+    defer store.unlock();
+
+    for (store.items.items) |*todo| {
         if (todo.id == id) {
             todo.completed = !todo.completed;
 
@@ -235,10 +268,14 @@ fn deleteTodoHandler(ctx: *zfinal.Context) !void {
 
     const id = try std.fmt.parseInt(i64, id_str, 10);
 
+    store.lock();
+    defer store.unlock();
+
     var i: usize = 0;
-    while (i < todos.items.len) {
-        if (todos.items[i].id == id) {
-            _ = todos.orderedRemove(i);
+    while (i < store.items.items.len) {
+        if (store.items.items[i].id == id) {
+            const removed = store.items.orderedRemove(i);
+            store.allocator.free(removed.title);
             try ctx.renderHtml("");
             return;
         }
@@ -250,9 +287,10 @@ fn deleteTodoHandler(ctx: *zfinal.Context) !void {
 }
 
 pub fn main() !void {
-    
-    
     const allocator = std.heap.smp_allocator;
+
+    store = TodoStore.init(allocator);
+    defer store.deinit();
 
     var app = zfinal.ZFinal.init(allocator);
     defer app.deinit();
