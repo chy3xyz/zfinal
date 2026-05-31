@@ -20,8 +20,9 @@ pub const Template = struct {
         };
     }
 
-    /// Load template from file
+    /// Load template from file. Path must be relative and must not contain "..".
     pub fn loadFromFile(allocator: std.mem.Allocator, path: []const u8) !Template {
+        if (std.mem.indexOf(u8, path, "..") != null or path.len == 0 or path[0] == '/') return error.PathTraversal;
         const file = try std.Io.Dir.cwd().openFile(io_instance.io, path, .{});
         defer file.close(io_instance.io);
 

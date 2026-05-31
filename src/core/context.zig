@@ -505,6 +505,8 @@ pub const Context = struct {
     // === File Download ===
 
     pub fn renderFile(self: *Context, path: []const u8, download_name: ?[]const u8) !void {
+        // Prevent path traversal: reject ".." segments and absolute paths
+        if (std.mem.indexOf(u8, path, "..") != null or path.len == 0 or path[0] == '/') return error.PathTraversal;
         const io_instance = @import("../io_instance.zig");
         const file = try std.Io.Dir.cwd().openFile(io_instance.io, path, .{});
         defer file.close(io_instance.io);

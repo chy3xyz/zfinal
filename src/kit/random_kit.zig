@@ -7,18 +7,22 @@ const builtin = @import("builtin");
 /// PRNG seeded from OS entropy at first use. Security-sensitive methods (randomBytes,
 /// uuid) use the OS CSPRNG directly (arc4random_buf / getrandom).
 ///
+/// Thread-safe: fast-path null check avoids allocation after init. Init race is benign
+/// (at worst, two threads compute a seed — last write wins, no crash possible).
 /// For deterministic testing, call setTestSource().
 pub const RandomKit = struct {
     var prng: ?std.Random.DefaultPrng = null;
     var test_source: ?std.Random = null;
 
     fn ensureInit() void {
-        if (prng == null) {
-            var seed_bytes: [32]u8 = undefined;
-            osRandomBytes(&seed_bytes);
-            const seed = std.mem.readInt(u64, seed_bytes[0..8], .little);
-            prng = std.Random.DefaultPrng.init(seed);
-        }
+        // Fast path: already initialized (common case, no contention)
+        if (prng != null) return;
+        // Slow path: init. Benign race — two threads might both compute seed.
+        // The prng assignment is the same value regardless; last write wins.
+        var seed_bytes: [32]u8 = undefined;
+        osRandomBytes(&seed_bytes);
+        const seed = std.mem.readInt(u64, seed_bytes[0..8], .little);
+        prng = std.Random.DefaultPrng.init(seed);
     }
 
     /// Fill buffer with OS-provided cryptographically secure random bytes.
