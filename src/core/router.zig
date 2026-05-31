@@ -109,12 +109,16 @@ pub const Route = struct {
 /// 路由器
 pub const Router = struct {
     routes: std.ArrayList(Route),
+    /// HashMap fast path for static routes: "{method}:{path}" → route index.
+    /// Parameterized routes fall back to linear scan.
+    static_routes: std.StringHashMap(usize),
     global_interceptors: InterceptorChain,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) Router {
         return Router{
             .routes = std.ArrayList(Route).empty,
+            .static_routes = std.StringHashMap(usize).init(allocator),
             .global_interceptors = InterceptorChain.init(allocator),
             .allocator = allocator,
         };
@@ -128,6 +132,10 @@ pub const Router = struct {
             self.allocator.free(route.param_names);
         }
         self.routes.deinit(self.allocator);
+        // Free owned hashmap keys
+        var key_it = self.static_routes.keyIterator();
+        while (key_it.next()) |key| self.allocator.free(key.*);
+        self.static_routes.deinit();
         self.global_interceptors.deinit();
         self.* = undefined;
     }
@@ -183,10 +191,38 @@ pub const Router = struct {
         };
 
         try self.routes.append(self.allocator, route);
+
+        // O(1) fast path: index static routes (no params) by "{method}:{path}"
+        if (parsed.param_names.len == 0) {
+            var key_buf: [128]u8 = undefined;
+            const key = staticRouteKey(method, owned_path, &key_buf);
+            const key_owned = try self.allocator.dupe(u8, key);
+            errdefer self.allocator.free(key_owned);
+            try self.static_routes.put(key_owned, self.routes.items.len - 1);
+        }
+    }
+
+    /// Build the hashmap lookup key for a method + path combination.
+    /// Writes into buf, returns the populated slice. If too long for the buffer,
+    /// returns only the path portion (hashmap lookup will miss, falling back to linear scan).
+    fn staticRouteKey(method: HttpMethod, path: []const u8, buf: *[128]u8) []const u8 {
+        return std.fmt.bufPrint(buf, "{s}:{s}", .{ @tagName(method), path }) catch path;
     }
 
     /// 查找匹配的路由
     pub fn match(self: *Router, path: []const u8, method: HttpMethod) ?*Route {
+        // O(1) fast path for exact-match static routes
+        var key_buf: [128]u8 = undefined;
+        const method_key = staticRouteKey(method, path, &key_buf);
+        if (self.static_routes.get(method_key)) |idx| {
+            return &self.routes.items[idx];
+        }
+        // Also try ANY-method static routes
+        const any_key = staticRouteKey(.ANY, path, &key_buf);
+        if (self.static_routes.get(any_key)) |idx| {
+            return &self.routes.items[idx];
+        }
+        // Fall back to O(n) linear scan for parameterized routes
         for (self.routes.items) |*route| {
             if (route.matches(path, method)) {
                 return route;
@@ -208,14 +244,18 @@ pub const Router = struct {
                 var combined = InterceptorChain.init(self.allocator);
                 defer combined.deinit();
 
+                // Pre-allocate to avoid reallocation during appends
+                const total_count = self.global_interceptors.interceptors.items.len + route.interceptors.interceptors.items.len;
+                try combined.interceptors.ensureTotalCapacity(self.allocator, total_count);
+
                 // 添加全局拦截器
                 for (self.global_interceptors.interceptors.items) |interceptor| {
-                    try combined.add(interceptor);
+                    combined.interceptors.appendAssumeCapacity(interceptor);
                 }
 
                 // 添加路由特定拦截器
                 for (route.interceptors.interceptors.items) |interceptor| {
-                    try combined.add(interceptor);
+                    combined.interceptors.appendAssumeCapacity(interceptor);
                 }
 
                 try combined.execute(ctx, route.handler);

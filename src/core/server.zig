@@ -51,7 +51,9 @@ pub const Server = struct {
 
         getLog().infoFmt("Server starting on http://{s}:{d} (threads={d})", .{ self.config.host, self.config.port, tc });
 
-        var threaded = std.Io.Threaded.init(self.allocator, .{});
+        var threaded = std.Io.Threaded.init(self.allocator, .{
+            .async_limit = if (self.config.thread_count == 0) null else std.Io.Limit.limited(self.config.thread_count),
+        });
         defer threaded.deinit();
         const io = threaded.io();
 
