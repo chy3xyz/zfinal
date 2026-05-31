@@ -42,8 +42,11 @@ pub const RandomKit = struct {
                 }
             },
             .windows => {
-                // TODO: Use BCryptGenRandom or RtlGenRandom when available in std.
-                // For now, windows uses a best-effort entropy mix.
+                // NOTE: Zig 0.17 stdlib does not expose BCryptGenRandom.
+                // Use the ProcessPrng API (bcryptprimitives) via syscall when available.
+                // For now: mix high-res timestamp with a permuted congruential generator
+                // and per-byte perturbation. NOT cryptographically secure — prefer
+                // randomBytes() for security-sensitive use (uses this same path on Windows).
                 var counter: u64 = @bitCast(std.time.nanoTimestamp());
                 for (buf, 0..) |*b, i| {
                     counter = counter *% 6364136223846793005 +% 1442695040888963407;

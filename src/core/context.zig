@@ -511,7 +511,8 @@ pub const Context = struct {
         const file = try std.Io.Dir.cwd().openFile(io_instance.io, path, .{});
         defer file.close(io_instance.io);
 
-        _ = try file.stat(io_instance.io);
+        const stat = try file.stat(io_instance.io);
+        if (stat.size > 50 * 1024 * 1024) return error.FileTooLarge;
         var content = std.ArrayList(u8).empty;
         defer content.deinit(self.allocator);
         var read_buf: [4096]u8 = undefined;

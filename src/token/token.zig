@@ -3,14 +3,12 @@ const TimeKit = @import("../kit/time_kit.zig").TimeKit;
 const RandomKit = @import("../kit/random_kit.zig").RandomKit;
 const io_instance = @import("../io_instance.zig");
 
-/// Token 信息
+/// Token 信息. Value is the HashMap key — no duplication needed.
 pub const Token = struct {
-    value: []const u8,
     created_at: i64,
-    allocator: std.mem.Allocator,
 
     pub fn deinit(self: *Token) void {
-        self.allocator.free(self.value);
+        _ = self; // no owned allocations
     }
 
     /// 检查是否过期
@@ -58,22 +56,15 @@ pub const TokenManager = struct {
         var token_buf: [64]u8 = undefined;
         const token_value = encoder.encode(&token_buf, &random_bytes);
 
-        // 复制 Token 用于返回
+        // Single allocation: returned to caller
         const token_ret = try self.allocator.dupe(u8, token_value);
         errdefer self.allocator.free(token_ret);
 
-        // 复制 Token 用于 Map Key
+        // Single allocation: HashMap key (Token.value == key, no 3rd alloc)
         const token_key = try self.allocator.dupe(u8, token_value);
         errdefer self.allocator.free(token_key);
 
-        // 存储 Token
-        const token = Token{
-            .value = try self.allocator.dupe(u8, token_value),
-            .created_at = TimeKit.now(),
-            .allocator = self.allocator,
-        };
-
-        try self.tokens.put(token_key, token);
+        try self.tokens.put(token_key, Token{ .created_at = TimeKit.now() });
 
         return token_ret;
     }
