@@ -581,9 +581,9 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\const std = @import("std");
         \\const zfinal = @import("zfinal");
         \\const service = @import("service.zig");
-        \\const pool_ref = &@import("{s}deps.zig").pool;
-        \\const token_ref = &@import("{s}deps.zig").tokenMgr;
-        \\const limit_ref = &@import("{s}deps.zig").rateLimiter;
+        \\const pool = @import("{s}deps.zig").getPool();
+        \\const tokenMgr = @import("{s}deps.zig").getTokenMgr();
+        \\const rateLimiter = @import("{s}deps.zig").getRateLimiter();
         \\
         \\fn err(ctx: *zfinal.Context, status: std.http.Status, comptime msg: []const u8, code: i32) !void {{
         \\    ctx.res_status = status;
@@ -593,14 +593,14 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\/// CSRF guard: validates csrf_token using TokenManager.
         \\fn csrfGuard(ctx: *zfinal.Context) !void {{
         \\    const token = try ctx.getPara("csrf_token") orelse return err(ctx, .forbidden, "Missing CSRF token", 40301);
-        \\    if (!try token_ref.validate(token)) return err(ctx, .forbidden, "Invalid CSRF token", 40302);
+        \\    if (!try tokenMgr.validate(token)) return err(ctx, .forbidden, "Invalid CSRF token", 40302);
         \\}}
         \\
         \\/// List {s} records with pagination + rate limiting.
         \\pub fn list(ctx: *zfinal.Context) !void {{
-        \\    limit_ref.handle(ctx) catch |e| return err(ctx, .too_many_requests, @errorName(e), 42901);
-        \\    const db = try pool_ref.acquire();
-        \\    defer pool_ref.release(db) catch {{}};
+        \\    rateLimiter.handle(ctx) catch |e| return err(ctx, .too_many_requests, @errorName(e), 42901);
+        \\    const db = try pool.acquire();
+        \\    defer pool.release(db) catch {{}};
         \\    const page = try ctx.getParaToIntDefault("page", 1);
         \\    const size = try ctx.getParaToIntDefault("size", 20);
         \\    const items = try service.paginate(db, @intCast(page), @intCast(size), ctx.allocator);
@@ -612,8 +612,8 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\/// Show {s} by ID.
         \\pub fn show(ctx: *zfinal.Context) !void {{
         \\    const id = parseId(ctx) catch |e| return err(ctx, .bad_request, "Invalid ID", 40001);
-        \\    const db = try pool_ref.acquire();
-        \\    defer pool_ref.release(db) catch {{}};
+        \\    const db = try pool.acquire();
+        \\    defer pool.release(db) catch {{}};
         \\    const item = try service.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
         \\    defer item.deinit(ctx.allocator);
         \\    try ctx.renderJson(.{{ .data = item }});
@@ -622,8 +622,8 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\/// Create {s} record (CSRF-protected).
         \\pub fn create(ctx: *zfinal.Context) !void {{
         \\    try csrfGuard(ctx);
-        \\    const db = try pool_ref.acquire();
-        \\    defer pool_ref.release(db) catch {{}};
+        \\    const db = try pool.acquire();
+        \\    defer pool.release(db) catch {{}};
         \\    const data: service.Data = .{{
         \\{s}    }};
         \\    const instance = service.create(db, data) catch |e| {{
@@ -637,8 +637,8 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\pub fn update(ctx: *zfinal.Context) !void {{
         \\    try csrfGuard(ctx);
         \\    const id = parseId(ctx) catch |e| return err(ctx, .bad_request, "Invalid ID", 40001);
-        \\    const db = try pool_ref.acquire();
-        \\    defer pool_ref.release(db) catch {{}};
+        \\    const db = try pool.acquire();
+        \\    defer pool.release(db) catch {{}};
         \\    const data: service.Data = .{{
         \\{s}    }};
         \\    _ = try service.update(db, id, data);
@@ -649,8 +649,8 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\pub fn delete(ctx: *zfinal.Context) !void {{
         \\    try csrfGuard(ctx);
         \\    const id = parseId(ctx) catch |e| return err(ctx, .bad_request, "Invalid ID", 40001);
-        \\    const db = try pool_ref.acquire();
-        \\    defer pool_ref.release(db) catch {{}};
+        \\    const db = try pool.acquire();
+        \\    defer pool.release(db) catch {{}};
         \\    var item = try service.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
         \\    try item.delete(db);
         \\    try ctx.renderJson(.{{ .ok = true }});
@@ -660,8 +660,8 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\pub fn patch(ctx: *zfinal.Context) !void {{
         \\    try csrfGuard(ctx);
         \\    const id = parseId(ctx) catch |e| return err(ctx, .bad_request, "Invalid ID", 40001);
-        \\    const db = try pool_ref.acquire();
-        \\    defer pool_ref.release(db) catch {{}};
+        \\    const db = try pool.acquire();
+        \\    defer pool.release(db) catch {{}};
         \\    var item = try service.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
         \\{s}    try item.save(db);
         \\    try ctx.renderJson(.{{ .ok = true }});

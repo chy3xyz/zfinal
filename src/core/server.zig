@@ -58,7 +58,6 @@ pub const Server = struct {
         const io = threaded.io();
 
         var group = std.Io.Group.init;
-        defer { _ = group.await(io) catch {}; }
 
         const addr = try std.Io.net.IpAddress.parseIp4(self.config.host, self.config.port);
 
@@ -66,7 +65,8 @@ pub const Server = struct {
         // Real errors are caught and stored in self.err_handle.
         group.async(io, acceptLoop, .{ io, self, addr, &group });
 
-        // Block until all fibers complete (server shutdown or fatal error)
+        // Block until all fibers complete (server shutdown or fatal error).
+        // threaded.deinit() at defer above handles I/O cleanup.
         _ = group.await(io) catch {};
 
         // Check for fatal errors captured by the wrapper
