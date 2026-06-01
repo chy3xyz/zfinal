@@ -17,6 +17,7 @@ pub const Table = struct {
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: *Table) void {
+        self.allocator.free(self.name);
         self.allocator.free(self.pascal_name);
         for (self.columns.items) |c| {
             self.allocator.free(c.name);
