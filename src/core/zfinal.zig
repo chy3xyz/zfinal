@@ -10,12 +10,16 @@ const InterceptorChain = @import("../interceptor/interceptor.zig").InterceptorCh
 const Plugin = @import("../plugin/plugin.zig").Plugin;
 const PluginManager = @import("../plugin/plugin.zig").PluginManager;
 
+/// ZFinal application — main entry point for building web servers.
+/// Usage: `var app = zfinal.ZFinal.init(allocator); defer app.deinit();`
 pub const ZFinal = struct {
     allocator: std.mem.Allocator,
     router: Router,
     plugin_manager: PluginManager,
     config: ServerConfig,
 
+    /// Initialize a new ZFinal application. Routes, plugins, and config
+    /// are added before calling `start()`.
     pub fn init(allocator: std.mem.Allocator) ZFinal {
         return ZFinal{
             .allocator = allocator,
@@ -25,6 +29,8 @@ pub const ZFinal = struct {
         };
     }
 
+    /// Stop all plugins, deinitialize the router, and free all resources.
+    /// Must be called exactly once after the server stops.
     pub fn deinit(self: *ZFinal) void {
         self.plugin_manager.stopAll();
         self.plugin_manager.deinit();
@@ -32,101 +38,114 @@ pub const ZFinal = struct {
         self.* = undefined;
     }
 
+    /// Set the HTTP listen port (default 8080).
     pub fn setPort(self: *ZFinal, port: u16) void {
         self.config.port = port;
     }
 
+    /// Replace the entire server configuration.
     pub fn setConfig(self: *ZFinal, config: ServerConfig) void {
         self.config = config;
     }
 
+    /// Register a plugin. Plugins are started in registration order when
+    /// `start()` is called and stopped in reverse order on `deinit()`.
     pub fn addPlugin(self: *ZFinal, plugin: Plugin) !void {
         try self.plugin_manager.add(plugin);
     }
 
+    /// Add a route matching all HTTP methods.
     pub fn addRoute(self: *ZFinal, path: []const u8, handler: Handler) !void {
         try self.router.add(path, handler);
     }
 
-    /// Add route with specific interceptors
+    /// Add a route with method-specific interceptors.
     pub fn addRouteWithInterceptors(self: *ZFinal, path: []const u8, handler: Handler, interceptors: InterceptorChain) !void {
         try self.router.addWithInterceptors(path, handler, interceptors);
     }
 
-    /// Add global interceptor (applies to all routes)
+    /// Add a global interceptor that runs before every route.
     pub fn addGlobalInterceptor(self: *ZFinal, interceptor: Interceptor) !void {
         try self.router.global_interceptors.add(interceptor);
     }
 
-    // === RESTful Methods ===
+    // === RESTful route registration ===
 
-    /// Add GET route
+    /// Register a GET route.
     pub fn get(self: *ZFinal, path: []const u8, handler: Handler) !void {
         std.debug.print("REGISTER GET: {s}\n", .{path});
         try self.router.addWithMethod(path, .GET, handler);
     }
+    /// Register a GET route with specific interceptors.
     pub fn getWithInterceptors(self: *ZFinal, path: []const u8, handler: Handler, interceptors: []const Interceptor) !void {
         var chain = InterceptorChain.init(self.allocator);
         for (interceptors) |i| try chain.add(i);
         try self.router.addWithMethodAndInterceptors(path, .GET, handler, chain);
     }
 
-    /// Add POST route
+    /// Register a POST route.
     pub fn post(self: *ZFinal, path: []const u8, handler: Handler) !void {
         std.debug.print("REGISTER POST: {s}\n", .{path});
         try self.router.addWithMethod(path, .POST, handler);
     }
+    /// Register a POST route with specific interceptors.
     pub fn postWithInterceptors(self: *ZFinal, path: []const u8, handler: Handler, interceptors: []const Interceptor) !void {
         var chain = InterceptorChain.init(self.allocator);
         for (interceptors) |i| try chain.add(i);
         try self.router.addWithMethodAndInterceptors(path, .POST, handler, chain);
     }
 
-    /// Add PUT route
+    /// Register a PUT route.
     pub fn put(self: *ZFinal, path: []const u8, handler: Handler) !void {
         try self.router.addWithMethod(path, .PUT, handler);
     }
+    /// Register a PUT route with specific interceptors.
     pub fn putWithInterceptors(self: *ZFinal, path: []const u8, handler: Handler, interceptors: []const Interceptor) !void {
         var chain = InterceptorChain.init(self.allocator);
         for (interceptors) |i| try chain.add(i);
         try self.router.addWithMethodAndInterceptors(path, .PUT, handler, chain);
     }
 
-    /// Add DELETE route
+    /// Register a DELETE route.
     pub fn delete(self: *ZFinal, path: []const u8, handler: Handler) !void {
         try self.router.addWithMethod(path, .DELETE, handler);
     }
+    /// Register a DELETE route with specific interceptors.
     pub fn deleteWithInterceptors(self: *ZFinal, path: []const u8, handler: Handler, interceptors: []const Interceptor) !void {
         var chain = InterceptorChain.init(self.allocator);
         for (interceptors) |i| try chain.add(i);
         try self.router.addWithMethodAndInterceptors(path, .DELETE, handler, chain);
     }
 
-    /// Add PATCH route
+    /// Register a PATCH route.
     pub fn patch(self: *ZFinal, path: []const u8, handler: Handler) !void {
         try self.router.addWithMethod(path, .PATCH, handler);
     }
+    /// Register a PATCH route with specific interceptors.
     pub fn patchWithInterceptors(self: *ZFinal, path: []const u8, handler: Handler, interceptors: []const Interceptor) !void {
         var chain = InterceptorChain.init(self.allocator);
         for (interceptors) |i| try chain.add(i);
         try self.router.addWithMethodAndInterceptors(path, .PATCH, handler, chain);
     }
 
+    /// Start the HTTP server. Blocks until shutdown or fatal error.
+    /// Automatically starts all registered plugins before accepting connections.
     pub fn start(self: *ZFinal) !void {
-        // Start all plugins
         try self.plugin_manager.startAll();
-
         var server = try Server.init(self.allocator, &self.router, self.config);
         try server.start();
     }
 };
 
-/// Route group for organizing routes with common prefix
+/// Route group for organizing routes with common prefix and shared interceptors.
+/// Usage: `var api = zfinal.RouteGroup.init(&app, "/api");`
 pub const RouteGroup = struct {
     app: *ZFinal,
     prefix: []const u8,
     interceptors: InterceptorChain,
 
+    /// Create a route group. Routes registered on this group are prefixed
+    /// with `prefix` (e.g., `"/api"` → `"/api/users"`).
     pub fn init(app: *ZFinal, prefix: []const u8) RouteGroup {
         return RouteGroup{
             .app = app,
@@ -135,11 +154,12 @@ pub const RouteGroup = struct {
         };
     }
 
+    /// Free interceptor chain resources.
     pub fn deinit(self: *RouteGroup) void {
         self.interceptors.deinit();
     }
 
-    /// Add interceptor to this group
+    /// Add an interceptor to this group (applies to all routes in the group).
     pub fn addInterceptor(self: *RouteGroup, interceptor: Interceptor) !void {
         try self.interceptors.add(interceptor);
     }
@@ -148,24 +168,28 @@ pub const RouteGroup = struct {
         return try std.fmt.allocPrint(allocator, "{s}{s}", .{ self.prefix, path });
     }
 
+    /// Register a GET route with the group prefix.
     pub fn get(self: *RouteGroup, path: []const u8, handler: Handler) !void {
         const full_path = try self.buildPath(path, self.app.allocator);
         defer self.app.allocator.free(full_path);
         try self.app.get(full_path, handler);
     }
 
+    /// Register a POST route with the group prefix.
     pub fn post(self: *RouteGroup, path: []const u8, handler: Handler) !void {
         const full_path = try self.buildPath(path, self.app.allocator);
         defer self.app.allocator.free(full_path);
         try self.app.post(full_path, handler);
     }
 
+    /// Register a PUT route with the group prefix.
     pub fn put(self: *RouteGroup, path: []const u8, handler: Handler) !void {
         const full_path = try self.buildPath(path, self.app.allocator);
         defer self.app.allocator.free(full_path);
         try self.app.put(full_path, handler);
     }
 
+    /// Register a DELETE route with the group prefix.
     pub fn delete(self: *RouteGroup, path: []const u8, handler: Handler) !void {
         const full_path = try self.buildPath(path, self.app.allocator);
         defer self.app.allocator.free(full_path);
