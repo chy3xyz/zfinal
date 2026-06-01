@@ -4,7 +4,9 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.3.x   | :white_check_mark: |
+| 0.8.x   | :white_check_mark: (current) |
+| 0.7.x   | :white_check_mark: |
+| 0.3.x   | :x:                |
 | 0.2.x   | :x:                |
 | 0.1.x   | :x:                |
 
@@ -18,11 +20,12 @@ Please report vulnerabilities privately via [GitHub Security Advisories](https:/
 
 ## Built-in Security Features
 
-ZFinal 0.3+ includes defense-in-depth security across multiple layers:
+ZFinal 0.8+ includes defense-in-depth security across multiple layers:
 
 ### Cryptography
 - **CSPRNG**: All random operations (tokens, captcha, UUIDs, session IDs) use the OS CSPRNG (`arc4random_buf` on macOS/BSD, `getrandom` on Linux). No deterministic PRNG seeding.
-- **Timing-safe comparison**: Captcha validation uses length-check-first + `std.mem.eql` for short values. For long secrets, use `std.crypto.timing_safe.eql` for array comparisons.
+- **Password zeroing**: Database connection buffers zeroed with `@memset` after use.
+- **Timing-safe comparison**: Captcha validation uses length-check-first + `std.mem.eql` for short values.
 
 ### CSRF Protection
 - `TokenManager` generates 32-byte random tokens (Base64-encoded, ~43 chars).
@@ -48,7 +51,21 @@ ZFinal 0.3+ includes defense-in-depth security across multiple layers:
 
 ### Path Traversal Protection
 - `FileKit.validatePath()` resolves and validates paths stay within a base directory.
+- `renderFile()` rejects `..` segments and absolute paths.
 - Template engine `loadTemplateFile` rejects `../` escapes outside `template_dir`.
+
+### File Download Protection
+- `renderFile()` enforces 50MB file size limit (configurable).
+- Rejects directory traversal attempts at the framework level.
+
+### Deps Initialization Safety
+- `deps.zig` uses `?T = null` with panic-guarded accessors (`getPool()`, `getTokenMgr()`, `getRateLimiter()`).
+- Clear panic messages if accessed before `initDeps()` called.
+
+### Thread Safety
+- All mutex locks propagate errors (`try`) or panic with clear messages.
+- DB transaction rollback failures trigger `@panic` (no silent data corruption).
+- 16 `catch{}` sites replaced with explicit error handling.
 
 ### Connection Security
 - Connection pool health checks: `DB.ping()` before returning connections.
@@ -60,6 +77,7 @@ ZFinal 0.3+ includes defense-in-depth security across multiple layers:
 - **SQL**: Use `Model` ORM or `execParams`/`queryParams`. Never concatenate user input into SQL strings.
 - **CSRF**: Apply `createTokenInterceptor` to all state-changing routes.
 - **Rate limiting**: Enable `RateLimitHandler` on public endpoints.
+- **Allocators**: Use `smp_allocator` (ReleaseFast) or `init.gpa` (Debug). Do not use `page_allocator` in request handlers.
 - **Logging**: Use `-Dlog-level=warn` in production to suppress debug output.
 - **Shutdown**: Call `shutdown.registerHandlers()` at startup and check `shutdown.isShuttingDown()` in your main loop.
 - **Dependencies**: Keep Zig and ZFinal up to date. Check `PRODUCTION_AUDIT.md` for known issue status.

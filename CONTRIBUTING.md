@@ -67,11 +67,15 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 ```
 zfinal/
 ├── src/           # Core framework code
-├── demo/          # Example applications
-├── tools/         # CLI tools (zf)
-├── doc/           # Documentation
+│   ├── core/      # Server, router, context, logger, metrics
+│   ├── db/        # ORM, connection pool, drivers (SQLite/PG/MySQL)
+│   ├── kit/       # 18 utility kits
+│   ├── plugin/    # Cache, cron, redis, MQTT, agent
+│   └── template/  # Template engine with HTMX helpers
+├── examples/      # Example applications (blog, htmx, production, etc.)
+├── tools/zf/      # CLI code generator (zf)
 ├── benchmark/     # Performance benchmarks
-└── test/          # Test files
+└── test/          # Integration test files
 ```
 
 ## Testing

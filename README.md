@@ -6,10 +6,10 @@
 
 *Inspired by JFinal — minimal API, maximal performance*
 
-[![Zig](https://img.shields.io/badge/Zig-0.16.0-orange.svg)](https://ziglang.org/)
+[![Zig](https://img.shields.io/badge/Zig-0.17.0-orange.svg)](https://ziglang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-107%20passing-brightgreen.svg)]()
-[![Production](https://img.shields.io/badge/production--readiness-88%25-yellow.svg)](PRODUCTION_AUDIT.md)
+[![Tests](https://img.shields.io/badge/tests-142%20passing%2C%200%20leaks-brightgreen.svg)]()
+[![Production](https://img.shields.io/badge/production--readiness-92%25-green.svg)](PRODUCTION_AUDIT.md)
 
 **English** | [中文文档](README_CN.md)
 
@@ -19,7 +19,7 @@
 
 ## What is ZFinal?
 
-ZFinal is a **lightweight, high-performance web framework** for Zig 0.16. It provides routing, ORM, plugins, templating, and a rich utility toolkit — all in idiomatic Zig with minimal ceremony.
+ZFinal is a **lightweight, high-performance web framework** for Zig 0.17. It provides routing, ORM, plugins, templating, and a rich utility toolkit — all in idiomatic Zig with minimal ceremony. Fiber-based async I/O with zero heap allocation per connection.
 
 ```zig
 const zfinal = @import("zfinal");

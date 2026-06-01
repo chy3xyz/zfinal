@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-06-01
+
+### Added
+- **Zig 0.17 migration**: Full compatibility with Zig 0.17.0-dev.387.
+  - `@cImport` → `b.addTranslateC` build-system translate-c (6 files).
+  - `std.fmt.bufPrintZ` → `bufPrint` + manual null termination.
+  - `allocator.dupeZ` → `allocSentinel` + `@memcpy`.
+  - `std.ascii.indexOfIgnoreCase` → `startsWithIgnoreCase`.
+- **Safe deps accessors**: `getPool()`, `getTokenMgr()`, `getRateLimiter()` with panic-guarded init checks.
+- **Model validate()**: Auto-generated NOT NULL field validation for generated models.
+- **Model safeFields**: API response field whitelist for generated models.
+- **Handler PATCH**: Partial update endpoint in generated handlers.
+- **Service update()**: Comptime `inline for` field merging for non-null/non-zero fields.
+- **csv_kit.zig**: RFC 4180 CSV parser and formatter with BOM detection.
+
+### Changed
+- **Router**: O(1) HashMap fast path for static routes (90%+ of routes). Parameterized routes fall back to linear scan.
+- **Server**: `thread_count` config now actually passed to `Threaded.init` (was logged but ignored).
+- **Interceptor**: Pre-allocated chain capacity with `ensureTotalCapacity` + `appendAssumeCapacity`.
+- **CSRF Token**: Removed dead `Token.value` field. `generate()` 3 allocs → 2 allocs.
+- **Deps**: `pub var = undefined` → `?T = null` with safe accessors.
+- **Generator**: `parseInt`/`parseFloat` failures return 400 Bad Request with field name.
+- **Generator**: `handler.update()` calls `service.update()` (comptime field merge + validate).
+- **Generator**: Deps injected via `getPool()`/`getTokenMgr()`/`getRateLimiter()` instead of raw pointer refs.
+- **Generator**: `service.deleteOne()` added to generated modules.
+- **AGENTS.md**: Updated for Zig 0.17 and new generator patterns.
+
+### Fixed
+- **Memory leaks (5)**: `context.zig` compressBody (buf+compressor), `template.zig` filter dupe,
+  `csv_kit.zig` toOwnedSlice × 3, `codegen.zig` Table.name, htmx.zig page_allocator.
+- **Thread safety (16)**: 13 `catch{}` → `try`/`@panic` on mutex locks, 2 DB rollback panics,
+  1 RandomKit benign-race fast path.
+- **Path traversal (3)**: `renderFile()`, `loadFromFile()`, `renderFile` size limit.
+- **Security (2)**: Password buffer zeroing (mysql, postgres), DoS file size guard.
+- **Bugs (6)**: `paginate()` page=0 underflow, page_size=0 div-by-zero (×3),
+  errdefer double-toOwnedSlice, server double await, deps init safety.
+- **Examples (2)**: htmx data race (TodoStore mutex), ruoyi-gen connection leak.
+- **Mutex consistency**: `token.zig`, `session.zig`, `thread_pool.zig`, `ws/manager.zig`,
+  `plugin/cache.zig`, `captcha.zig` → `std.Io.Mutex`.
+- **Deinit poisoning**: 9 struct deinit functions with `self.* = undefined`.
+- **Rate limiting**: `catch{}` → `return err(429)` with error name.
+
+### Quality
+- Tests: 142 pass, 2 skip, **0 leaks** (was 3 leaks).
+- 80+ anti-pattern fixes across 6 rounds of systematic hardening.
+- ZBP quality rating: B+ → A-.
+
 ## [0.3.0] - 2026-05-12
 
 ### Added

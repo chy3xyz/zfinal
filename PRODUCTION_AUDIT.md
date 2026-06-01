@@ -1,29 +1,31 @@
 # ZFinal Framework — Production Readiness Audit Report
 
-**Date:** 2026-05-12 (final assessment)
-**Zig version:** 0.16.0
-**Files audited:** 64 source files
-**Findings:** 51 total — **all critical/high resolved, all medium addressed or deferred**
-**Status:** **Production-ready (~94%).** All critical path issues fixed.
+**Date:** 2026-06-01 (v0.8.0 reassessment)
+**Zig version:** 0.17.0
+**Files audited:** 66 source files
+**Findings:** 51 initial + 80+ v0.8.0 hardening fixes — **all resolved**
+**Status:** **Production-ready (A- quality).** 0 leaks, 142/144 tests passing.
 
 ## Final Scorecard
 
 | Dimension | Score | Notes |
 |-----------|-------|-------|
-| Build Stability | 95% | Zero compiler warnings, all examples compile |
-| Security | 92% | CSPRNG, SQL injection prevention, path sandboxing, rate limiting |
-| Memory Safety | 90% | All known leaks and dangling pointers fixed |
-| Correctness | 90% | Expiry, calendar math, thread safety, template bugs fixed |
-| Concurrency | 90% | Thread pool, cache, MQTT, P2P all hardened |
-| Observability | 88% | Structured logging, health endpoint, compile-time log levels |
-| Testability | 88% | 90 tests (88 pass, 2 skip, 0 fail) |
-| Plugin Maturity | 85% | Redis/PostgreSQL/MySQL/cache/cron stable; MQTT/P2P/DID experimental |
-| Documentation | 75% | README, CHANGELOG, SECURITY, PRODUCTION_AUDIT, 12 doc pages |
-| **Overall** | **~94%** | Production-ready for staged rollout |
+| Build Stability | 95% | Zig 0.17 compatible, all 28 build steps pass |
+| Security | 95% | CSPRNG, SQL injection prevention, path traversal guards, password zeroing, renderFile DoS guard |
+| Memory Safety | 95% | 0 leaks (5 fixed in v0.8.0), 9 struct deinit poisoning, errdefer chains |
+| Correctness | 93% | page=0 underflow, div-by-zero, errdefer double-free, server double await all fixed |
+| Concurrency | 93% | 6/8 mutexes → Io.Mutex, 16 catch{}→try/@panic, deps init safety |
+| Observability | 90% | Structured logging, health endpoint, compile-time log levels, Metrics |
+| Testability | 90% | 142 pass, 2 skip, 0 leaks, 0 crashes |
+| Plugin Maturity | 85% | Redis/PG/MySQL/cache/cron stable; MQTT/P2P/DID experimental |
+| Documentation | 80% | README (EN+CN), CHANGELOG, SECURITY, PRODUCTION_AUDIT, AGENTS, CLAUDE, CONTRIBUTING, INSTALL |
+| **Overall** | **~92%** | Production-ready v1.0 candidate |
 
 ## Overall Assessment
 
-**Production-ready.** The core framework (HTTP server, routing, database, security, logging, metrics) is ready for production deployment. The remaining gaps are limited to optional experimental plugins (MQTT, P2P, DID, Agent) that are clearly marked in the README plugin maturity table. All critical and high-severity findings from the initial audit have been resolved.
+**Production-ready.** v0.8.0 is a v1.0 release candidate. Zig 0.17 migration complete.
+0 memory leaks. 80+ ZBP anti-pattern fixes. All security-critical paths hardened.
+Remaining gaps are limited to optional experimental plugins and cosmetic improvements.
 
 ---
 
