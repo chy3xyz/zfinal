@@ -154,6 +154,7 @@ pub const FormatKit = @import("kit/format_kit.zig").FormatKit;
 pub const CsvKit = @import("kit/csv_kit.zig").CsvKit;
 pub const SysKit = @import("kit/sys_kit.zig").SysKit;
 pub const CacheKit = @import("kit/cache_kit.zig").CacheKit;
+pub const TlsKit = @import("kit/tls_kit.zig").TlsKit;
 
 test "basic test" {
     try std.testing.expectEqual(10, 3 + 7);

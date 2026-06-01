@@ -6,9 +6,13 @@ const params = @import("params.zig");
 /// headers, attributes, file uploads, and response rendering.
 ///
 /// Created per-request by Server. Call `deinit()` after use.
+///
+/// All per-request allocations go through an ArenaAllocator — zero
+/// per-allocation cleanup needed. `deinit()` frees everything at once.
 pub const Context = struct {
     req: *std.http.Server.Request,
     allocator: std.mem.Allocator,
+    arena: std.heap.ArenaAllocator,
     res_status: std.http.Status = .ok,
     /// Enable response compression (gzip/deflate) when client supports it.
     /// Automatically set based on Accept-Encoding header in render* methods.
@@ -33,41 +37,24 @@ pub const Context = struct {
         http_only: bool = false,
     };
 
-    pub fn init(req: *std.http.Server.Request, allocator: std.mem.Allocator) Context {
+    /// Create per-request Context. All request-scoped allocations go through
+    /// an internal ArenaAllocator — freed at once by `deinit()`.
+    pub fn init(req: *std.http.Server.Request, parent_allocator: std.mem.Allocator) Context {
+        var arena = std.heap.ArenaAllocator.init(parent_allocator);
+        const a = arena.allocator();
         return Context{
             .req = req,
-            .allocator = allocator,
-            .attributes = std.StringHashMap([]const u8).init(allocator),
+            .allocator = a,
+            .arena = arena,
+            .attributes = std.StringHashMap([]const u8).init(a),
             .response_cookies = std.ArrayList(Cookie).empty,
-            .response_headers = std.StringHashMap([]const u8).init(allocator),
+            .response_headers = std.StringHashMap([]const u8).init(a),
         };
     }
 
+    /// Free all per-request allocations at once.
     pub fn deinit(self: *Context) void {
-        if (self.query_params) |*qp| {
-            var it = qp.iterator();
-            while (it.next()) |entry| {
-                self.allocator.free(entry.key_ptr.*);
-                self.allocator.free(entry.value_ptr.*);
-            }
-            qp.deinit();
-        }
-        if (self.path_params) |*pp| {
-            // Path params borrow from route/target; only free the map itself.
-            pp.deinit();
-        }
-        var attr_it = self.attributes.iterator();
-        while (attr_it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            self.allocator.free(entry.value_ptr.*);
-        }
-        self.attributes.deinit();
-        if (self.cookies) |*c| {
-            // Cookie values borrow from request headers; only free the map.
-            c.deinit();
-        }
-        self.response_cookies.deinit(self.allocator);
-        self.response_headers.deinit();
+        self.arena.deinit();
     }
 
     pub fn getHeader(self: *Context, name: []const u8) ?[]const u8 {
