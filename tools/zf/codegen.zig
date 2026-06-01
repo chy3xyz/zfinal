@@ -559,9 +559,9 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         if (col.is_auto_increment) continue;
         const zt = zigType(col);
         const line = if (std.mem.startsWith(u8, zt, "i64") or std.mem.startsWith(u8, zt, "?i64"))
-            try std.fmt.allocPrint(allocator, "            .{s} = std.fmt.parseInt(i64, (try ctx.getPara(\"{s}\")) orelse \"0\", 10) catch 0,\n", .{ col.name, col.name })
+            try std.fmt.allocPrint(allocator, "            .{s} = if ((try ctx.getPara(\"{s}\"))) |v| (std.fmt.parseInt(i64, v, 10) catch return err(ctx, .bad_request, \"Invalid {s}\", 40001)) else 0,\n", .{ col.name, col.name, col.name })
         else if (std.mem.startsWith(u8, zt, "f64") or std.mem.startsWith(u8, zt, "?f64"))
-            try std.fmt.allocPrint(allocator, "            .{s} = std.fmt.parseFloat(f64, (try ctx.getPara(\"{s}\")) orelse \"0\") catch 0,\n", .{ col.name, col.name })
+            try std.fmt.allocPrint(allocator, "            .{s} = if ((try ctx.getPara(\"{s}\"))) |v| (std.fmt.parseFloat(f64, v) catch return err(ctx, .bad_request, \"Invalid {s}\", 40001)) else 0.0,\n", .{ col.name, col.name, col.name })
         else if (std.mem.eql(u8, zt, "bool"))
             try std.fmt.allocPrint(allocator, "            .{s} = if ((try ctx.getPara(\"{s}\"))) |v| (std.mem.eql(u8, v, \"true\") or std.mem.eql(u8, v, \"1\") or std.mem.eql(u8, v, \"t\")) else false,\n", .{ col.name, col.name })
         else if (std.mem.eql(u8, zt, "?bool"))
@@ -573,23 +573,6 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
     }
     defer create_fields.deinit(allocator);
 
-    // Build update-field assignments
-    var update_fields = std.ArrayList(u8).empty;
-    for (table.columns.items) |col| {
-        if (col.is_primary_key or col.is_auto_increment) continue;
-        const zt = zigType(col);
-        const line = if (std.mem.startsWith(u8, zt, "i64") or std.mem.startsWith(u8, zt, "?i64"))
-            try std.fmt.allocPrint(allocator, "    if (try ctx.getPara(\"{s}\")) |v| item.data.{s} = std.fmt.parseInt(i64, v, 10) catch item.data.{s};\n", .{ col.name, col.name, col.name })
-        else if (std.mem.startsWith(u8, zt, "f64") or std.mem.startsWith(u8, zt, "?f64"))
-            try std.fmt.allocPrint(allocator, "    if (try ctx.getPara(\"{s}\")) |v| item.data.{s} = std.fmt.parseFloat(f64, v) catch item.data.{s};\n", .{ col.name, col.name, col.name })
-        else if (std.mem.eql(u8, zt, "bool") or std.mem.eql(u8, zt, "?bool"))
-            try std.fmt.allocPrint(allocator, "    if (try ctx.getPara(\"{s}\")) |v| item.data.{s} = std.mem.eql(u8, v, \"true\") or std.mem.eql(u8, v, \"1\");\n", .{ col.name, col.name })
-        else
-            try std.fmt.allocPrint(allocator, "    if (try ctx.getPara(\"{s}\")) |v| item.data.{s} = v;\n", .{ col.name, col.name });
-        defer allocator.free(line);
-        try update_fields.appendSlice(allocator, line);
-    }
-    defer update_fields.deinit(allocator);
 
     return std.fmt.allocPrint(allocator,
         \\// @generated — DO NOT EDIT. AI: edit directly.
@@ -655,9 +638,9 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\    const id = parseId(ctx) catch |e| return err(ctx, .bad_request, "Invalid ID", 40001);
         \\    const db = try pool_ref.acquire();
         \\    defer pool_ref.release(db) catch {{}};
-        \\    var item = try service.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
-        \\{s}    // Validation handled by service layer
-        \\    try item.save(db);
+        \\    const data: service.Data = .{{
+        \\{s}    }};
+        \\    _ = try service.update(db, id, data);
         \\    try ctx.renderJson(.{{ .ok = true }});
         \\}}
         \\
@@ -688,7 +671,7 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\    const id_str = ctx.getPathParam("id") orelse return error.InvalidId;
         \\    return std.fmt.parseInt(i64, id_str, 10) catch return error.InvalidId;
         \\}}
-    , .{ deps_prefix, deps_prefix, deps_prefix, name, name, name, create_fields.items, name, update_fields.items, name, name, update_fields.items });
+    , .{ deps_prefix, deps_prefix, deps_prefix, name, name, name, create_fields.items, name, create_fields.items, name, name, create_fields.items });
 }
 
 pub fn generateRoutes(allocator: std.mem.Allocator, table: *const Table) ![]const u8 {
