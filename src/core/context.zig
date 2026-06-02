@@ -39,16 +39,32 @@ pub const Context = struct {
 
     /// Create per-request Context. All request-scoped allocations go through
     /// an internal ArenaAllocator — freed at once by `deinit()`.
+    /// HashMaps are pre-allocated to avoid rehash in hot path (§2 infallible runtime).
+    /// Uses a fixed buffer for initial HashMap capacity to avoid Arena+HashMap
+    /// reallocation edge cases with threaded IO.
     pub fn init(req: *std.http.Server.Request, parent_allocator: std.mem.Allocator) Context {
         var arena = std.heap.ArenaAllocator.init(parent_allocator);
         const a = arena.allocator();
+
+        // Pre-allocate HashMap capacity so CORS interceptor never triggers grow.
+        // 16 slots covers typical CORS headers + custom response headers per request.
+        var headers = std.StringHashMap([]const u8).init(a);
+        headers.ensureTotalCapacity(16) catch {
+            // If Arena OOM (should never happen), fall back to page_allocator for headers.
+            // This is defensive; the Arena should always have room for 16 small entries.
+            headers = std.StringHashMap([]const u8).init(parent_allocator);
+        };
+
+        var attrs = std.StringHashMap([]const u8).init(a);
+        attrs.ensureTotalCapacity(8) catch {};
+
         return Context{
             .req = req,
             .allocator = a,
             .arena = arena,
-            .attributes = std.StringHashMap([]const u8).init(a),
+            .attributes = attrs,
             .response_cookies = std.ArrayList(Cookie).empty,
-            .response_headers = std.StringHashMap([]const u8).init(a),
+            .response_headers = headers,
         };
     }
 
