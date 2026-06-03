@@ -148,9 +148,10 @@ fn dispatch(request: *http.Server.Request, server: *Server) !void {
         ctx.renderText("Internal Server Error") catch {};
     };
 
-    // Force Connection: close to work around Zig 0.17 http.Server reader state
-    // bug where keep-alive causes readerExpectNone assertion failure
-    // (state != .received_head) on subsequent requests.
+    // TODO(zig-0.17): Force Connection: close to work around http.Server
+    // reader state bug. Keep-alive on same connection triggers
+    // readerExpectNone assertion (state != .received_head).
+    // Remove this once upstream fix lands (see ziglang/zig#XXXXX).
     request.head.keep_alive = false;
 }
 

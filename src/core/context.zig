@@ -57,14 +57,44 @@ pub const Context = struct {
         };
     }
 
-    /// Free per-request resources. Individual entries are NOT freed —
-    /// they may be static literals (e.g. CORS headers) or managed by handlers.
+    /// Free all per-request resources including HashMap key/value strings.
+    /// Uses the same parent_allocator that created them — Arena was removed
+    /// due to Zig 0.17 threaded IO reallocation segfaults.
     pub fn deinit(self: *Context) void {
-        self.response_headers.deinit();
+        // Attributes: keys and values are owned (dup'd in setAttr)
+        var attr_it = self.attributes.iterator();
+        while (attr_it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            self.allocator.free(entry.value_ptr.*);
+        }
         self.attributes.deinit();
+
+        // Response headers: keys and values may be string literals (CORS)
+        // or owned copies (dup'd in setHeader). Free safely — no double-free
+        // because each key/value is either static or owned, never both.
+        var hdr_it = self.response_headers.iterator();
+        while (hdr_it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.response_headers.deinit();
+
         self.response_cookies.deinit(self.allocator);
-        if (self.query_params) |*qp| qp.deinit();
+
+        // Query params: keys and values are owned (dup'd in parseQueryIntoAllocator)
+        if (self.query_params) |*qp| {
+            var it = qp.iterator();
+            while (it.next()) |entry| {
+                self.allocator.free(entry.key_ptr.*);
+                self.allocator.free(entry.value_ptr.*);
+            }
+            qp.deinit();
+        }
+
+        // Path params: values borrow from URL target — only free the map.
         if (self.path_params) |*pp| pp.deinit();
+
+        // Cookies: values borrow from request headers — only free the map.
         if (self.cookies) |*ck| ck.deinit();
     }
 
@@ -78,8 +108,12 @@ pub const Context = struct {
         return null;
     }
 
+    /// Set a response header. Copies both name and value — caller retains ownership.
     pub fn setHeader(self: *Context, name: []const u8, value: []const u8) !void {
-        try self.response_headers.put(name, value);
+        const name_copy = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(name_copy);
+        const value_copy = try self.allocator.dupe(u8, value);
+        try self.response_headers.put(name_copy, value_copy);
     }
 
     // === Query Parameters ===
@@ -184,6 +218,7 @@ pub const Context = struct {
 
     pub fn setAttr(self: *Context, key: []const u8, value: []const u8) !void {
         const key_copy = try self.allocator.dupe(u8, key);
+        errdefer self.allocator.free(key_copy);
         const value_copy = try self.allocator.dupe(u8, value);
         try self.attributes.put(key_copy, value_copy);
     }
