@@ -134,7 +134,8 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
 
 fn dispatch(request: *http.Server.Request, server: *Server) !void {
     const target = request.head.target;
-    const path = if (std.mem.indexOfScalar(u8, target, '?')) |q| target[0..q] else target;
+    const safe_target = if (target.len > 4096) target[0..4096] else target;
+    const path = if (std.mem.indexOfScalar(u8, safe_target, '?')) |q| safe_target[0..q] else safe_target;
     const method = HttpMethod.fromString(@tagName(request.head.method)) orelse .GET;
 
     var ctx = Context.init(request, server.allocator);
@@ -146,6 +147,11 @@ fn dispatch(request: *http.Server.Request, server: *Server) !void {
         ctx.res_status = .internal_server_error;
         ctx.renderText("Internal Server Error") catch {};
     };
+
+    // Force Connection: close to work around Zig 0.17 http.Server reader state
+    // bug where keep-alive causes readerExpectNone assertion failure
+    // (state != .received_head) on subsequent requests.
+    request.head.keep_alive = false;
 }
 
 // ============================================================

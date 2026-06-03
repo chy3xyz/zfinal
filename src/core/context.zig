@@ -12,7 +12,7 @@ const params = @import("params.zig");
 pub const Context = struct {
     req: *std.http.Server.Request,
     allocator: std.mem.Allocator,
-    arena: std.heap.ArenaAllocator,
+    arena: ?std.heap.ArenaAllocator = null,
     res_status: std.http.Status = .ok,
     /// Enable response compression (gzip/deflate) when client supports it.
     /// Automatically set based on Accept-Encoding header in render* methods.
@@ -37,40 +37,35 @@ pub const Context = struct {
         http_only: bool = false,
     };
 
-    /// Create per-request Context. All request-scoped allocations go through
-    /// an internal ArenaAllocator — freed at once by `deinit()`.
-    /// HashMaps are pre-allocated to avoid rehash in hot path (§2 infallible runtime).
-    /// Uses a fixed buffer for initial HashMap capacity to avoid Arena+HashMap
-    /// reallocation edge cases with threaded IO.
+    /// Create per-request Context. Uses parent allocator directly (no Arena)
+    /// to avoid Arena+container reallocation segfaults in Zig 0.17 threaded IO.
+    /// Handlers MUST individually free all allocated memory via ctx.allocator.
     pub fn init(req: *std.http.Server.Request, parent_allocator: std.mem.Allocator) Context {
-        var arena = std.heap.ArenaAllocator.init(parent_allocator);
-        const a = arena.allocator();
+        var headers = std.StringHashMap([]const u8).init(parent_allocator);
+        headers.ensureTotalCapacity(16) catch {};
 
-        // Pre-allocate HashMap capacity so CORS interceptor never triggers grow.
-        // 16 slots covers typical CORS headers + custom response headers per request.
-        var headers = std.StringHashMap([]const u8).init(a);
-        headers.ensureTotalCapacity(16) catch {
-            // If Arena OOM (should never happen), fall back to page_allocator for headers.
-            // This is defensive; the Arena should always have room for 16 small entries.
-            headers = std.StringHashMap([]const u8).init(parent_allocator);
-        };
-
-        var attrs = std.StringHashMap([]const u8).init(a);
+        var attrs = std.StringHashMap([]const u8).init(parent_allocator);
         attrs.ensureTotalCapacity(8) catch {};
 
         return Context{
             .req = req,
-            .allocator = a,
-            .arena = arena,
+            .allocator = parent_allocator,
+            .arena = null,
             .attributes = attrs,
             .response_cookies = std.ArrayList(Cookie).empty,
             .response_headers = headers,
         };
     }
 
-    /// Free all per-request allocations at once.
+    /// Free per-request resources. Individual entries are NOT freed —
+    /// they may be static literals (e.g. CORS headers) or managed by handlers.
     pub fn deinit(self: *Context) void {
-        self.arena.deinit();
+        self.response_headers.deinit();
+        self.attributes.deinit();
+        self.response_cookies.deinit(self.allocator);
+        if (self.query_params) |*qp| qp.deinit();
+        if (self.path_params) |*pp| pp.deinit();
+        if (self.cookies) |*ck| ck.deinit();
     }
 
     pub fn getHeader(self: *Context, name: []const u8) ?[]const u8 {
@@ -111,6 +106,7 @@ pub const Context = struct {
                 var read_buf: [4096]u8 = undefined;
                 var reader = self.req.readerExpectNone(&read_buf);
                 try reader.appendRemaining(self.allocator, &body_buffer, .limited(self.max_body_size));
+                _ = reader.discardRemaining() catch {};
                 if (body_buffer.items.len > 0) {
                     try params.parseQueryIntoAllocator(self.allocator, body_buffer.items, &map);
                 }
@@ -309,6 +305,17 @@ pub const Context = struct {
         }
     }
 
+    /// Drain unconsumed request body — must be called before any respond().
+    /// Handlers that don't call getBodyText leave the POST body unread,
+    /// which causes std.http.Server.discardBody assertion failure in Zig 0.17.
+    fn drainUnconsumedBody(self: *Context) void {
+        if (self.req.head.method.requestHasBody() and self.req.server.reader.state == .received_head) {
+            var drain_buf: [4096]u8 = undefined;
+            var drain_reader = self.req.readerExpectNone(&drain_buf);
+            _ = drain_reader.discardRemaining() catch {};
+        }
+    }
+
     fn freeSetCookieDupes(self: *Context, headers: std.ArrayList(std.http.Header)) void {
         for (headers.items) |h| {
             if (std.mem.eql(u8, h.name, "Set-Cookie")) {
@@ -359,6 +366,8 @@ pub const Context = struct {
 
         // Add Set-Cookie headers (heap-allocated, freed in defer above)
         try self.appendSetCookieHeaders(&headers);
+
+        self.drainUnconsumedBody();
 
         try self.req.respond(json, .{
             .status = self.res_status,
