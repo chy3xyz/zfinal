@@ -57,45 +57,33 @@ pub const Context = struct {
         };
     }
 
-    /// Free all per-request resources including HashMap key/value strings.
-    /// Uses the same parent_allocator that created them — Arena was removed
-    /// due to Zig 0.17 threaded IO reallocation segfaults.
     pub fn deinit(self: *Context) void {
-        // Attributes: keys and values are owned (dup'd in setAttr)
-        var attr_it = self.attributes.iterator();
-        while (attr_it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            self.allocator.free(entry.value_ptr.*);
-        }
-        self.attributes.deinit();
-
-        // Response headers: keys and values may be string literals (CORS)
-        // or owned copies (dup'd in setHeader). Free safely — no double-free
-        // because each key/value is either static or owned, never both.
+        // Owned key+value: free strings before deinit map
         var hdr_it = self.response_headers.iterator();
-        while (hdr_it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            self.allocator.free(entry.value_ptr.*);
-        }
+        while (hdr_it.next()) |e| { self.allocator.free(e.key_ptr.*); self.allocator.free(e.value_ptr.*); }
         self.response_headers.deinit();
 
-        self.response_cookies.deinit(self.allocator);
+        var attr_it = self.attributes.iterator();
+        while (attr_it.next()) |e| { self.allocator.free(e.key_ptr.*); self.allocator.free(e.value_ptr.*); }
+        self.attributes.deinit();
 
-        // Query params: keys and values are owned (dup'd in parseQueryIntoAllocator)
         if (self.query_params) |*qp| {
             var it = qp.iterator();
-            while (it.next()) |entry| {
-                self.allocator.free(entry.key_ptr.*);
-                self.allocator.free(entry.value_ptr.*);
-            }
+            while (it.next()) |e| { self.allocator.free(e.key_ptr.*); self.allocator.free(e.value_ptr.*); }
             qp.deinit();
         }
 
-        // Path params: values borrow from URL target — only free the map.
+        // Borrowed values (path params from URL, cookies from request headers)
         if (self.path_params) |*pp| pp.deinit();
-
-        // Cookies: values borrow from request headers — only free the map.
         if (self.cookies) |*ck| ck.deinit();
+
+        // response_cookies: name/value/path owned (dup'd in setCookieFull)
+        for (self.response_cookies.items) |ck| {
+            self.allocator.free(ck.name);
+            self.allocator.free(ck.value);
+            self.allocator.free(ck.path);
+        }
+        self.response_cookies.deinit(self.allocator);
     }
 
     pub fn getHeader(self: *Context, name: []const u8) ?[]const u8 {
@@ -272,11 +260,16 @@ pub const Context = struct {
     }
 
     pub fn setCookieFull(self: *Context, name: []const u8, value: []const u8, max_age: ?i32, path: []const u8, http_only: bool) !void {
+        const name_copy = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(name_copy);
+        const value_copy = try self.allocator.dupe(u8, value);
+        errdefer self.allocator.free(value_copy);
+        const path_copy = try self.allocator.dupe(u8, path);
         try self.response_cookies.append(self.allocator, .{
-            .name = name,
-            .value = value,
+            .name = name_copy,
+            .value = value_copy,
             .max_age = max_age,
-            .path = path,
+            .path = path_copy,
             .http_only = http_only,
         });
     }
