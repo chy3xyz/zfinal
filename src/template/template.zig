@@ -539,9 +539,9 @@ const RenderEngine = struct {
             return null;
         }
 
-        inline for (type_info.@"struct".fields) |field| {
-            if (std.mem.eql(u8, field.name, field_name)) {
-                const value = @field(data, field.name);
+        inline for (type_info.@"struct".field_names, 0..) |name, idx| {
+            if (std.mem.eql(u8, name, field_name)) {
+                const value = @field(data, name);
                 return try self.formatValue(value);
             }
         }
@@ -625,9 +625,9 @@ const RenderEngine = struct {
 
         if (type_info != .@"struct") return;
 
-        inline for (type_info.@"struct".fields) |field| {
-            if (std.mem.eql(u8, field.name, collection_name)) {
-                const collection = @field(data, field.name);
+        inline for (type_info.@"struct".field_names) |name| {
+            if (std.mem.eql(u8, name, collection_name)) {
+                const collection = @field(data, name);
                 const CollectionT = @TypeOf(collection);
                 const collection_info = @typeInfo(CollectionT);
 

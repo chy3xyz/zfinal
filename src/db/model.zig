@@ -16,7 +16,15 @@ pub fn ModelWithPK(comptime T: type, comptime table_name: []const u8, comptime p
     @setEvalBranchQuota(20000);
     return struct {
         const Self = @This();
-        const fields = @typeInfo(T).@"struct".fields;
+        const fields = blk: {
+            const info = @typeInfo(T).@"struct";
+            const CompatField = struct { name: []const u8, type: type };
+            var arr: [info.field_names.len]CompatField = undefined;
+            for (info.field_names, info.field_types, 0..) |name, ty, i| {
+                arr[i] = .{ .name = name, .type = ty };
+            }
+            break :blk arr;
+        };
 
         pub const Instance = struct {
             id: ?i64 = null,

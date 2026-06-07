@@ -426,9 +426,9 @@ pub const I18n = struct {
             return null;
         }
 
-        inline for (type_info.@"struct".fields) |field| {
-            if (std.mem.eql(u8, field.name, field_name)) {
-                const value = @field(context, field.name);
+        inline for (type_info.@"struct".field_names) |fname| {
+            if (std.mem.eql(u8, fname, field_name)) {
+                const value = @field(context, fname);
                 return try formatValue(allocator, value);
             }
         }

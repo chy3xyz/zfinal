@@ -20,9 +20,6 @@ fn addExample(b: *std.Build, zfinal_mod: *std.Build.Module, name: []const u8, ro
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
 
     const run_step = b.step(b.fmt("run-{s}", .{name}), desc);
     run_step.dependOn(&run_cmd.step);
@@ -236,29 +233,10 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(bench_exe);
     const run_bench_cmd = b.addRunArtifact(bench_exe);
     run_bench_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_bench_cmd.addArgs(args);
-    }
     const run_bench_step = b.step("run-bench", "Run benchmark tool");
     run_bench_step.dependOn(&run_bench_cmd.step);
 
-    // NATS integration test
-    const nats_dep = b.dependency("nats", .{ .target = target, .optimize = optimize });
-    const nats_test_mod = b.createModule(.{
-        .root_source_file = b.path("test_nats.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "nats", .module = nats_dep.module("nats") },
-        },
-    });
-    nats_test_mod.link_libc = true;
-    const nats_test_exe = b.addExecutable(.{
-        .name = "test-nats",
-        .root_module = nats_test_mod,
-    });
-    const run_nats_test = b.addRunArtifact(nats_test_exe);
-    run_nats_test.step.dependOn(b.getInstallStep());
-    const nats_test_step = b.step("test-nats", "Run NATS integration test (requires nats-server)");
-    nats_test_step.dependOn(&run_nats_test.step);
+    // NATS integration test — disabled (NATS v0.1.0 incompatible with Zig 0.17-dev.704)
+    // TODO: re-enable when NATS releases a 0.17-compatible version
+    //const nats_test_step = b.step("test-nats", "Run NATS integration test (requires nats-server)");
 }

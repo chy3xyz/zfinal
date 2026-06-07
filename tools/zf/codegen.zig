@@ -412,14 +412,14 @@ pub fn generateService(allocator: std.mem.Allocator, table: *const Table) ![]con
         \\pub fn update(db: *zfinal.DB, id: i64, data: Data) !Instance {{
         \\    var item = try {s}Model.findById(db, id, db.allocator) orelse return error.NotFound;
         \\    // Merge non-null / non-zero fields from data into item.data
-        \\    inline for (@typeInfo(Data).@"struct".fields) |f| {{
-        \\        const new_val = @field(data, f.name);
+        \\    inline for (@typeInfo(Data).@"struct".field_names, @typeInfo(Data).@"struct".field_types) |fname, FT| {{
+        \\        const new_val = @field(data, fname);
         \\        const T = @TypeOf(new_val);
-        \\        if (comptime T == ?i64 and new_val != null and new_val.? != 0) @field(item.data, f.name) = new_val;
-        \\        if (comptime T == ?f64 and new_val != null and new_val.? != 0.0) @field(item.data, f.name) = new_val;
-        \\        if (comptime T == ?bool and new_val != null) @field(item.data, f.name) = new_val;
-        \\        if (comptime T == []const u8 and new_val.len > 0) @field(item.data, f.name) = new_val;
-        \\        if (comptime T == ?[]const u8 and new_val != null and new_val.?.len > 0) @field(item.data, f.name) = new_val;
+        \\        if (comptime T == ?i64 and new_val != null and new_val.? != 0) @field(item.data, fname) = new_val;
+        \\        if (comptime T == ?f64 and new_val != null and new_val.? != 0.0) @field(item.data, fname) = new_val;
+        \\        if (comptime T == ?bool and new_val != null) @field(item.data, fname) = new_val;
+        \\        if (comptime T == []const u8 and new_val.len > 0) @field(item.data, fname) = new_val;
+        \\        if (comptime T == ?[]const u8 and new_val != null and new_val.?.len > 0) @field(item.data, fname) = new_val;
         \\    }}
         \\    validate(item.data) catch return error.ValidationError;
         \\    try item.save(db);

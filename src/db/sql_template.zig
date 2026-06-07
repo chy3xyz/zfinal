@@ -65,9 +65,9 @@ pub const SqlTemplate = struct {
             return error.InvalidParamsType;
         }
 
-        inline for (type_info.@"struct".fields) |field| {
-            if (std.mem.eql(u8, field.name, name)) {
-                const value = @field(params, field.name);
+        inline for (type_info.@"struct".field_names) |fname| {
+            if (std.mem.eql(u8, fname, name)) {
+                const value = @field(params, fname);
                 return sqlParamFromValue(value);
             }
         }
