@@ -539,7 +539,7 @@ const RenderEngine = struct {
             return null;
         }
 
-        inline for (type_info.@"struct".field_names, 0..) |name, idx| {
+        inline for (type_info.@"struct".field_names) |name| {
             if (std.mem.eql(u8, name, field_name)) {
                 const value = @field(data, name);
                 return try self.formatValue(value);
