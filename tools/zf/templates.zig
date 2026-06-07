@@ -60,7 +60,7 @@ pub const build_zig_zon =
     \\    .name = .{s},
     \\    .version = "0.1.0",
     \\    .fingerprint = 0xd3da709fcd7fc3,
-    \\    .minimum_zig_version = "0.16.0",
+    \\    .minimum_zig_version = "0.17.0",
     \\    .dependencies = .{{}},
     \\    .paths = .{{
     \\        "build.zig",

@@ -236,7 +236,8 @@ fn createProject(allocator: std.mem.Allocator, project_name: []const u8, clean: 
     defer allocator.free(build_zig_content);
     try writeFile(project_dir, "build.zig", build_zig_content);
 
-    const build_zon_content = try std.fmt.allocPrint(allocator, templates.build_zig_zon, .{project_name});
+    const app_name = std.fs.path.basename(project_name);
+    const build_zon_content = try std.fmt.allocPrint(allocator, templates.build_zig_zon, .{app_name});
     defer allocator.free(build_zon_content);
     try writeFile(project_dir, "build.zig.zon", build_zon_content);
 
