@@ -222,15 +222,26 @@ pub const MySQLDB = struct {
             .is_nulls = std.ArrayList(bool).empty,
         };
 
+        // Pre-allocate all ArrayLists to prevent reallocation during the loop.
+        // MYSQL_BIND stores pointers into the other ArrayLists — reallocation
+        // would invalidate those pointers, causing segfault in mysql_stmt_bind_param.
+        const n = params.len;
+        try data.bind.ensureTotalCapacity(allocator, n);
+        try data.ints.ensureTotalCapacity(allocator, n);
+        try data.reals.ensureTotalCapacity(allocator, n);
+        try data.strings.ensureTotalCapacity(allocator, n);
+        try data.lengths.ensureTotalCapacity(allocator, n);
+        try data.is_nulls.ensureTotalCapacity(allocator, n);
+
         for (params) |p| {
             switch (p) {
                 .null => {
-                    try data.is_nulls.append(allocator, true);
-                    try data.ints.append(allocator, 0);
-                    try data.reals.append(allocator, 0);
-                    try data.strings.append(allocator, "");
-                    try data.lengths.append(allocator, 0);
-                    try data.bind.append(allocator, .{
+                    data.is_nulls.appendAssumeCapacity(true);
+                    data.ints.appendAssumeCapacity(0);
+                    data.reals.appendAssumeCapacity(0);
+                    data.strings.appendAssumeCapacity("");
+                    data.lengths.appendAssumeCapacity(0);
+                    data.bind.appendAssumeCapacity(.{
                         .buffer_type = c.MYSQL_TYPE_NULL,
                         .buffer = @constCast(@ptrCast(&data.ints.items[data.ints.items.len - 1])),
                         .buffer_length = 8,
@@ -239,12 +250,12 @@ pub const MySQLDB = struct {
                     });
                 },
                 .int => |v| {
-                    try data.is_nulls.append(allocator, false);
-                    try data.ints.append(allocator, v);
-                    try data.reals.append(allocator, 0);
-                    try data.strings.append(allocator, "");
-                    try data.lengths.append(allocator, 0);
-                    try data.bind.append(allocator, .{
+                    data.is_nulls.appendAssumeCapacity(false);
+                    data.ints.appendAssumeCapacity(v);
+                    data.reals.appendAssumeCapacity(0);
+                    data.strings.appendAssumeCapacity("");
+                    data.lengths.appendAssumeCapacity(0);
+                    data.bind.appendAssumeCapacity(.{
                         .buffer_type = c.MYSQL_TYPE_LONGLONG,
                         .buffer = @constCast(@ptrCast(&data.ints.items[data.ints.items.len - 1])),
                         .buffer_length = 8,
@@ -253,12 +264,12 @@ pub const MySQLDB = struct {
                     });
                 },
                 .real => |v| {
-                    try data.is_nulls.append(allocator, false);
-                    try data.ints.append(allocator, 0);
-                    try data.reals.append(allocator, v);
-                    try data.strings.append(allocator, "");
-                    try data.lengths.append(allocator, 0);
-                    try data.bind.append(allocator, .{
+                    data.is_nulls.appendAssumeCapacity(false);
+                    data.ints.appendAssumeCapacity(0);
+                    data.reals.appendAssumeCapacity(v);
+                    data.strings.appendAssumeCapacity("");
+                    data.lengths.appendAssumeCapacity(0);
+                    data.bind.appendAssumeCapacity(.{
                         .buffer_type = c.MYSQL_TYPE_DOUBLE,
                         .buffer = @constCast(@ptrCast(&data.reals.items[data.reals.items.len - 1])),
                         .buffer_length = 8,
@@ -267,12 +278,12 @@ pub const MySQLDB = struct {
                     });
                 },
                 .text, .blob => |v| {
-                    try data.is_nulls.append(allocator, false);
-                    try data.ints.append(allocator, 0);
-                    try data.reals.append(allocator, 0);
-                    try data.strings.append(allocator, v);
-                    try data.lengths.append(allocator, @intCast(v.len));
-                    try data.bind.append(allocator, .{
+                    data.is_nulls.appendAssumeCapacity(false);
+                    data.ints.appendAssumeCapacity(0);
+                    data.reals.appendAssumeCapacity(0);
+                    data.strings.appendAssumeCapacity(v);
+                    data.lengths.appendAssumeCapacity(@intCast(v.len));
+                    data.bind.appendAssumeCapacity(.{
                         .buffer_type = c.MYSQL_TYPE_STRING,
                         .buffer = @constCast(@ptrCast(v.ptr)),
                         .buffer_length = @intCast(v.len),
