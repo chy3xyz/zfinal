@@ -31,6 +31,7 @@ desktop.ini
 # Editor specific
 .vscode/
 .idea/
+.codegraph/
 *.swp
 *.swo
 *~

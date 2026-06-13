@@ -84,9 +84,20 @@ zig build test --summary all 2>&1 | grep -E 'leak|pass'
 
 ```
 zig build                  # 28/28 steps
-zig build test             # 142 pass, 2 skip, 0 leaks
+zig build test             # 146 total, 144 pass, 2 skip, 0 failed, 0 leaks
 zig build test --summary all  # 完整输出
 ```
+
+### Zig 0.17-dev 测试 runner 规避
+
+当前 pinned 版本 `0.17.0-dev.813+2153f8143` 的 server-mode test runner 会通过 `--listen=-` 与 build server 通信，在本机触发 `EndOfStream` panic。`build.zig` 已改为直接运行编译好的测试二进制：
+
+```zig
+const run_lib_unit_tests = b.addRunFile(lib_unit_tests.getEmittedBin());
+run_lib_unit_tests.expectExitCode(0);
+```
+
+如果输出末尾出现 `failed command:` 但前面已打印 `144 passed; 2 skipped; 0 failed.`，以 exit code 为准（应为 0），该行只是 build system 的 cosmetic 输出。
 
 ## 8. 项目状态
 
@@ -95,17 +106,21 @@ zig build test --summary all  # 完整输出
 | 质量 | A- | 80+ ZBP 修复, 0 leaks |
 | 安全 | B+→A- | 路径穿越/密码/SQLi/CSRF 已加固 |
 | 性能 | A- | Fiber I/O, O(1) 路由, 预分配 |
-| 测试 | 142/144 | 2 skip (跨平台/需要外部服务) |
+| 测试 | 144/146 | 2 skip (跨平台/需要外部服务) |
 | Zig 版本 | 0.17.0 | 已完全迁移 |
 
 ## 9. 已知问题
 
-- `SQLite step failed: 19` — SQLite 集成测试预存断言失败, 不影响功能
+- `SQLite step failed: 19` — `db: constraint violation on SQLite` 测试故意触发唯一约束冲突，错误已被捕获，测试通过；该日志为预期噪声
 - PG/MySQL 驱动需 `-Ddriver_pg=true` / `-Ddriver_mysql=true` + 系统库
 - `pool.zig` 保留 `pthread_mutex_t` (与 `pthread_cond_timedwait` 深度耦合)
 - Windows CSPRNG 弱回退 (Zig 0.17 stdlib 未暴露 BCryptGenRandom)
 
-## 10. 相关文件
+## 10. 健康检查
+
+质量仪表盘见 `CLAUDE.md` ## Health Stack，或加载 skill `zfinal-health`。
+
+## 11. 相关文件
 
 - `CLAUDE.md` — 框架架构 + 构建命令
 - `AGENTS.md` — AI 代码生成规则
