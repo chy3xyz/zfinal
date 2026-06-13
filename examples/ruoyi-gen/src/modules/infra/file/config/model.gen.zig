@@ -22,17 +22,17 @@ pub const InfraFileConfigModel = zfinal.Model(InfraFileConfig, "infra_file_confi
 pub const jsonNaming: zfinal.JsonNaming = .snake_case;
 
 pub const fieldMap = [_]struct { db: []const u8, json: []const u8 }{
-        .{ .db = "id", .json = "id" },
-        .{ .db = "name", .json = "name" },
-        .{ .db = "storage", .json = "storage" },
-        .{ .db = "remark", .json = "remark" },
-        .{ .db = "master", .json = "master" },
-        .{ .db = "config", .json = "config" },
-        .{ .db = "creator", .json = "creator" },
-        .{ .db = "create_time", .json = "create_time" },
-        .{ .db = "updater", .json = "updater" },
-        .{ .db = "update_time", .json = "update_time" },
-        .{ .db = "deleted", .json = "deleted" },
+    .{ .db = "id", .json = "id" },
+    .{ .db = "name", .json = "name" },
+    .{ .db = "storage", .json = "storage" },
+    .{ .db = "remark", .json = "remark" },
+    .{ .db = "master", .json = "master" },
+    .{ .db = "config", .json = "config" },
+    .{ .db = "creator", .json = "creator" },
+    .{ .db = "create_time", .json = "create_time" },
+    .{ .db = "updater", .json = "updater" },
+    .{ .db = "update_time", .json = "update_time" },
+    .{ .db = "deleted", .json = "deleted" },
 };
 
 pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
@@ -42,17 +42,17 @@ pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
 
 /// Fields safe to expose in API responses (sensitive columns excluded).
 pub const safeFields = [_][]const u8{
-        "id",
-        "name",
-        "storage",
-        "remark",
-        "master",
-        "config",
-        "creator",
-        "create_time",
-        "updater",
-        "update_time",
-        "deleted",
+    "id",
+    "name",
+    "storage",
+    "remark",
+    "master",
+    "config",
+    "creator",
+    "create_time",
+    "updater",
+    "update_time",
+    "deleted",
 };
 
 /// Validate InfraFileConfig data before insert/update.

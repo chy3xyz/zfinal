@@ -26,21 +26,21 @@ pub const SystemTenantModel = zfinal.Model(SystemTenant, "system_tenant");
 pub const jsonNaming: zfinal.JsonNaming = .snake_case;
 
 pub const fieldMap = [_]struct { db: []const u8, json: []const u8 }{
-        .{ .db = "id", .json = "id" },
-        .{ .db = "name", .json = "name" },
-        .{ .db = "contact_user_id", .json = "contact_user_id" },
-        .{ .db = "contact_name", .json = "contact_name" },
-        .{ .db = "contact_mobile", .json = "contact_mobile" },
-        .{ .db = "status", .json = "status" },
-        .{ .db = "websites", .json = "websites" },
-        .{ .db = "package_id", .json = "package_id" },
-        .{ .db = "expire_time", .json = "expire_time" },
-        .{ .db = "account_count", .json = "account_count" },
-        .{ .db = "creator", .json = "creator" },
-        .{ .db = "create_time", .json = "create_time" },
-        .{ .db = "updater", .json = "updater" },
-        .{ .db = "update_time", .json = "update_time" },
-        .{ .db = "deleted", .json = "deleted" },
+    .{ .db = "id", .json = "id" },
+    .{ .db = "name", .json = "name" },
+    .{ .db = "contact_user_id", .json = "contact_user_id" },
+    .{ .db = "contact_name", .json = "contact_name" },
+    .{ .db = "contact_mobile", .json = "contact_mobile" },
+    .{ .db = "status", .json = "status" },
+    .{ .db = "websites", .json = "websites" },
+    .{ .db = "package_id", .json = "package_id" },
+    .{ .db = "expire_time", .json = "expire_time" },
+    .{ .db = "account_count", .json = "account_count" },
+    .{ .db = "creator", .json = "creator" },
+    .{ .db = "create_time", .json = "create_time" },
+    .{ .db = "updater", .json = "updater" },
+    .{ .db = "update_time", .json = "update_time" },
+    .{ .db = "deleted", .json = "deleted" },
 };
 
 pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
@@ -50,21 +50,21 @@ pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
 
 /// Fields safe to expose in API responses (sensitive columns excluded).
 pub const safeFields = [_][]const u8{
-        "id",
-        "name",
-        "contact_user_id",
-        "contact_name",
-        "contact_mobile",
-        "status",
-        "websites",
-        "package_id",
-        "expire_time",
-        "account_count",
-        "creator",
-        "create_time",
-        "updater",
-        "update_time",
-        "deleted",
+    "id",
+    "name",
+    "contact_user_id",
+    "contact_name",
+    "contact_mobile",
+    "status",
+    "websites",
+    "package_id",
+    "expire_time",
+    "account_count",
+    "creator",
+    "create_time",
+    "updater",
+    "update_time",
+    "deleted",
 };
 
 /// Validate SystemTenant data before insert/update.

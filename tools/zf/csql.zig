@@ -122,7 +122,10 @@ fn filterDdl(allocator: std.mem.Allocator, sql: []const u8) ![]const u8 {
         if (i + 1 < sql.len and sql[i] == '/' and sql[i + 1] == '*') {
             i += 2;
             while (i + 1 < sql.len) {
-                if (sql[i] == '*' and sql[i + 1] == '/') { i += 2; break; }
+                if (sql[i] == '*' and sql[i + 1] == '/') {
+                    i += 2;
+                    break;
+                }
                 i += 1;
             }
             continue;

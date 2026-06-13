@@ -112,8 +112,8 @@ test "aichat: countTokensEst sums per-token char/4" {
     const tokens = &.{ "Hello", "world", "this is a test message" };
     const est = aichat.countTokensEst(tokens);
     const expected: i64 = @divTrunc(@as(i64, @intCast(tokens[0].len)), 4) +
-                          @divTrunc(@as(i64, @intCast(tokens[1].len)), 4) +
-                          @divTrunc(@as(i64, @intCast(tokens[2].len)), 4);
+        @divTrunc(@as(i64, @intCast(tokens[1].len)), 4) +
+        @divTrunc(@as(i64, @intCast(tokens[2].len)), 4);
     try testing.expectEqual(expected, est);
     try testing.expectEqual(@as(i64, 7), est);
 }

@@ -26,11 +26,8 @@ pub const Collection = struct {
 
     /// Check if collection exists
     pub fn exists(name: []const u8, db: *zfinal.DB, allocator: std.mem.Allocator) !bool {
-        const sql = try std.fmt.allocPrintSentinel(
-            allocator,
-            "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name = '{s}'",
-            .{name}, 0);
-        
+        const sql = try std.fmt.allocPrintSentinel(allocator, "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name = '{s}'", .{name}, 0);
+
         defer allocator.free(sql);
 
         var rs = try db.query(sql);

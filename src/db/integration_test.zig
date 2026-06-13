@@ -263,7 +263,7 @@ test "db: large data on SQLite" {
     const back = result.currentRow().?.getText(0).?;
     try std.testing.expectEqual(big.len, back.len);
     try std.testing.expectEqualStrings(big[0..100], back[0..100]);
-    try std.testing.expectEqualStrings(big[big.len-100..], back[back.len-100..]);
+    try std.testing.expectEqualStrings(big[big.len - 100 ..], back[back.len - 100 ..]);
 }
 
 // ============================================================

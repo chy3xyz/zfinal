@@ -24,19 +24,19 @@ pub const SystemOauth2RefreshTokenModel = zfinal.Model(SystemOauth2RefreshToken,
 pub const jsonNaming: zfinal.JsonNaming = .snake_case;
 
 pub const fieldMap = [_]struct { db: []const u8, json: []const u8 }{
-        .{ .db = "id", .json = "id" },
-        .{ .db = "user_id", .json = "user_id" },
-        .{ .db = "refresh_token", .json = "refresh_token" },
-        .{ .db = "user_type", .json = "user_type" },
-        .{ .db = "client_id", .json = "client_id" },
-        .{ .db = "scopes", .json = "scopes" },
-        .{ .db = "expires_time", .json = "expires_time" },
-        .{ .db = "creator", .json = "creator" },
-        .{ .db = "create_time", .json = "create_time" },
-        .{ .db = "updater", .json = "updater" },
-        .{ .db = "update_time", .json = "update_time" },
-        .{ .db = "deleted", .json = "deleted" },
-        .{ .db = "tenant_id", .json = "tenant_id" },
+    .{ .db = "id", .json = "id" },
+    .{ .db = "user_id", .json = "user_id" },
+    .{ .db = "refresh_token", .json = "refresh_token" },
+    .{ .db = "user_type", .json = "user_type" },
+    .{ .db = "client_id", .json = "client_id" },
+    .{ .db = "scopes", .json = "scopes" },
+    .{ .db = "expires_time", .json = "expires_time" },
+    .{ .db = "creator", .json = "creator" },
+    .{ .db = "create_time", .json = "create_time" },
+    .{ .db = "updater", .json = "updater" },
+    .{ .db = "update_time", .json = "update_time" },
+    .{ .db = "deleted", .json = "deleted" },
+    .{ .db = "tenant_id", .json = "tenant_id" },
 };
 
 pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
@@ -46,19 +46,19 @@ pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
 
 /// Fields safe to expose in API responses (sensitive columns excluded).
 pub const safeFields = [_][]const u8{
-        "id",
-        "user_id",
-        "refresh_token",
-        "user_type",
-        "client_id",
-        "scopes",
-        "expires_time",
-        "creator",
-        "create_time",
-        "updater",
-        "update_time",
-        "deleted",
-        "tenant_id",
+    "id",
+    "user_id",
+    "refresh_token",
+    "user_type",
+    "client_id",
+    "scopes",
+    "expires_time",
+    "creator",
+    "create_time",
+    "updater",
+    "update_time",
+    "deleted",
+    "tenant_id",
 };
 
 /// Validate SystemOauth2RefreshToken data before insert/update.

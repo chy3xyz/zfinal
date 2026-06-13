@@ -25,20 +25,20 @@ pub const InfraJobModel = zfinal.Model(InfraJob, "infra_job");
 pub const jsonNaming: zfinal.JsonNaming = .snake_case;
 
 pub const fieldMap = [_]struct { db: []const u8, json: []const u8 }{
-        .{ .db = "id", .json = "id" },
-        .{ .db = "name", .json = "name" },
-        .{ .db = "status", .json = "status" },
-        .{ .db = "handler_name", .json = "handler_name" },
-        .{ .db = "handler_param", .json = "handler_param" },
-        .{ .db = "cron_expression", .json = "cron_expression" },
-        .{ .db = "retry_count", .json = "retry_count" },
-        .{ .db = "retry_interval", .json = "retry_interval" },
-        .{ .db = "monitor_timeout", .json = "monitor_timeout" },
-        .{ .db = "creator", .json = "creator" },
-        .{ .db = "create_time", .json = "create_time" },
-        .{ .db = "updater", .json = "updater" },
-        .{ .db = "update_time", .json = "update_time" },
-        .{ .db = "deleted", .json = "deleted" },
+    .{ .db = "id", .json = "id" },
+    .{ .db = "name", .json = "name" },
+    .{ .db = "status", .json = "status" },
+    .{ .db = "handler_name", .json = "handler_name" },
+    .{ .db = "handler_param", .json = "handler_param" },
+    .{ .db = "cron_expression", .json = "cron_expression" },
+    .{ .db = "retry_count", .json = "retry_count" },
+    .{ .db = "retry_interval", .json = "retry_interval" },
+    .{ .db = "monitor_timeout", .json = "monitor_timeout" },
+    .{ .db = "creator", .json = "creator" },
+    .{ .db = "create_time", .json = "create_time" },
+    .{ .db = "updater", .json = "updater" },
+    .{ .db = "update_time", .json = "update_time" },
+    .{ .db = "deleted", .json = "deleted" },
 };
 
 pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
@@ -48,20 +48,20 @@ pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
 
 /// Fields safe to expose in API responses (sensitive columns excluded).
 pub const safeFields = [_][]const u8{
-        "id",
-        "name",
-        "status",
-        "handler_name",
-        "handler_param",
-        "cron_expression",
-        "retry_count",
-        "retry_interval",
-        "monitor_timeout",
-        "creator",
-        "create_time",
-        "updater",
-        "update_time",
-        "deleted",
+    "id",
+    "name",
+    "status",
+    "handler_name",
+    "handler_param",
+    "cron_expression",
+    "retry_count",
+    "retry_interval",
+    "monitor_timeout",
+    "creator",
+    "create_time",
+    "updater",
+    "update_time",
+    "deleted",
 };
 
 /// Validate InfraJob data before insert/update.

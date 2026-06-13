@@ -60,16 +60,25 @@ pub const Context = struct {
     pub fn deinit(self: *Context) void {
         // Owned key+value: free strings before deinit map
         var hdr_it = self.response_headers.iterator();
-        while (hdr_it.next()) |e| { self.allocator.free(e.key_ptr.*); self.allocator.free(e.value_ptr.*); }
+        while (hdr_it.next()) |e| {
+            self.allocator.free(e.key_ptr.*);
+            self.allocator.free(e.value_ptr.*);
+        }
         self.response_headers.deinit();
 
         var attr_it = self.attributes.iterator();
-        while (attr_it.next()) |e| { self.allocator.free(e.key_ptr.*); self.allocator.free(e.value_ptr.*); }
+        while (attr_it.next()) |e| {
+            self.allocator.free(e.key_ptr.*);
+            self.allocator.free(e.value_ptr.*);
+        }
         self.attributes.deinit();
 
         if (self.query_params) |*qp| {
             var it = qp.iterator();
-            while (it.next()) |e| { self.allocator.free(e.key_ptr.*); self.allocator.free(e.value_ptr.*); }
+            while (it.next()) |e| {
+                self.allocator.free(e.key_ptr.*);
+                self.allocator.free(e.value_ptr.*);
+            }
             qp.deinit();
         }
 

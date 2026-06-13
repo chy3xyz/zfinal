@@ -147,11 +147,14 @@ pub const CurlAiClient = struct {
 
         const sh_cmd = try std.mem.concat(allocator, u8, &.{
             \\ printf '%s' '
-            , body,
+            ,
+            body,
             \\ ' > /tmp/aichat_req.json && curl -s --compressed -XPOST 
-            , full_url,
+            ,
+            full_url,
             \\ -H 'Content-Type: application/json' -H '
-            , auth_hdr,
+            ,
+            auth_hdr,
             \\ ' -d @/tmp/aichat_req.json -m 120 -k
         });
         defer allocator.free(sh_cmd);
@@ -222,11 +225,14 @@ fn postJsonCurl(
 
     const sh_cmd = try std.mem.concat(allocator, u8, &.{
         \\ curl -s -XPOST 
-        , url,
+        ,
+        url,
         \\ -H 'Content-Type: application/json' -H '
-        , auth_hdr,
+        ,
+        auth_hdr,
         \\ ' -d '
-        , body,
+        ,
+        body,
         \\ ' --max-time 15 -k
     });
     defer allocator.free(sh_cmd);

@@ -26,21 +26,21 @@ pub const InfraJobLogModel = zfinal.Model(InfraJobLog, "infra_job_log");
 pub const jsonNaming: zfinal.JsonNaming = .snake_case;
 
 pub const fieldMap = [_]struct { db: []const u8, json: []const u8 }{
-        .{ .db = "id", .json = "id" },
-        .{ .db = "job_id", .json = "job_id" },
-        .{ .db = "handler_name", .json = "handler_name" },
-        .{ .db = "handler_param", .json = "handler_param" },
-        .{ .db = "execute_index", .json = "execute_index" },
-        .{ .db = "begin_time", .json = "begin_time" },
-        .{ .db = "end_time", .json = "end_time" },
-        .{ .db = "duration", .json = "duration" },
-        .{ .db = "status", .json = "status" },
-        .{ .db = "result", .json = "result" },
-        .{ .db = "creator", .json = "creator" },
-        .{ .db = "create_time", .json = "create_time" },
-        .{ .db = "updater", .json = "updater" },
-        .{ .db = "update_time", .json = "update_time" },
-        .{ .db = "deleted", .json = "deleted" },
+    .{ .db = "id", .json = "id" },
+    .{ .db = "job_id", .json = "job_id" },
+    .{ .db = "handler_name", .json = "handler_name" },
+    .{ .db = "handler_param", .json = "handler_param" },
+    .{ .db = "execute_index", .json = "execute_index" },
+    .{ .db = "begin_time", .json = "begin_time" },
+    .{ .db = "end_time", .json = "end_time" },
+    .{ .db = "duration", .json = "duration" },
+    .{ .db = "status", .json = "status" },
+    .{ .db = "result", .json = "result" },
+    .{ .db = "creator", .json = "creator" },
+    .{ .db = "create_time", .json = "create_time" },
+    .{ .db = "updater", .json = "updater" },
+    .{ .db = "update_time", .json = "update_time" },
+    .{ .db = "deleted", .json = "deleted" },
 };
 
 pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
@@ -50,21 +50,21 @@ pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
 
 /// Fields safe to expose in API responses (sensitive columns excluded).
 pub const safeFields = [_][]const u8{
-        "id",
-        "job_id",
-        "handler_name",
-        "handler_param",
-        "execute_index",
-        "begin_time",
-        "end_time",
-        "duration",
-        "status",
-        "result",
-        "creator",
-        "create_time",
-        "updater",
-        "update_time",
-        "deleted",
+    "id",
+    "job_id",
+    "handler_name",
+    "handler_param",
+    "execute_index",
+    "begin_time",
+    "end_time",
+    "duration",
+    "status",
+    "result",
+    "creator",
+    "create_time",
+    "updater",
+    "update_time",
+    "deleted",
 };
 
 /// Validate InfraJobLog data before insert/update.

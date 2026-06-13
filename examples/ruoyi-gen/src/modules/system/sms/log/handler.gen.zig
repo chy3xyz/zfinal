@@ -26,7 +26,10 @@ pub fn list(ctx: *zfinal.Context) !void {
     const page = try ctx.getParaToIntDefault("page", 1);
     const size = try ctx.getParaToIntDefault("size", 20);
     const items = try service.paginate(db, @intCast(page), @intCast(size), ctx.allocator);
-    defer { for (items) |*it| it.deinit(ctx.allocator); ctx.allocator.free(items); }
+    defer {
+        for (items) |*it| it.deinit(ctx.allocator);
+        ctx.allocator.free(items);
+    }
     const total = try service.count(db);
     try ctx.renderJson(.{ .data = items, .total = total, .page = page, .size = size });
 }
@@ -47,32 +50,32 @@ pub fn create(ctx: *zfinal.Context) !void {
     const db = try pool_ref.acquire();
     defer pool_ref.release(db) catch {};
     const data: service.Data = .{
-            .channel_id = std.fmt.parseInt(i64, (try ctx.getPara("channel_id")) orelse "0", 10) catch 0,
-            .channel_code = (try ctx.getPara("channel_code")) orelse "",
-            .template_id = std.fmt.parseInt(i64, (try ctx.getPara("template_id")) orelse "0", 10) catch 0,
-            .template_code = (try ctx.getPara("template_code")) orelse "",
-            .template_type = std.fmt.parseInt(i64, (try ctx.getPara("template_type")) orelse "0", 10) catch 0,
-            .template_content = (try ctx.getPara("template_content")) orelse "",
-            .template_params = (try ctx.getPara("template_params")) orelse "",
-            .api_template_id = (try ctx.getPara("api_template_id")) orelse "",
-            .mobile = (try ctx.getPara("mobile")) orelse "",
-            .user_id = std.fmt.parseInt(i64, (try ctx.getPara("user_id")) orelse "0", 10) catch 0,
-            .user_type = std.fmt.parseInt(i64, (try ctx.getPara("user_type")) orelse "0", 10) catch 0,
-            .send_status = std.fmt.parseInt(i64, (try ctx.getPara("send_status")) orelse "0", 10) catch 0,
-            .send_time = (try ctx.getPara("send_time")) orelse null,
-            .api_send_code = (try ctx.getPara("api_send_code")) orelse null,
-            .api_send_msg = (try ctx.getPara("api_send_msg")) orelse null,
-            .api_request_id = (try ctx.getPara("api_request_id")) orelse null,
-            .api_serial_no = (try ctx.getPara("api_serial_no")) orelse null,
-            .receive_status = std.fmt.parseInt(i64, (try ctx.getPara("receive_status")) orelse "0", 10) catch 0,
-            .receive_time = (try ctx.getPara("receive_time")) orelse null,
-            .api_receive_code = (try ctx.getPara("api_receive_code")) orelse null,
-            .api_receive_msg = (try ctx.getPara("api_receive_msg")) orelse null,
-            .creator = (try ctx.getPara("creator")) orelse null,
-            .create_time = (try ctx.getPara("create_time")) orelse "",
-            .updater = (try ctx.getPara("updater")) orelse null,
-            .update_time = (try ctx.getPara("update_time")) orelse "",
-            .deleted = if ((try ctx.getPara("deleted"))) |v| (std.mem.eql(u8, v, "true") or std.mem.eql(u8, v, "1") or std.mem.eql(u8, v, "t")) else false,
+        .channel_id = std.fmt.parseInt(i64, (try ctx.getPara("channel_id")) orelse "0", 10) catch 0,
+        .channel_code = (try ctx.getPara("channel_code")) orelse "",
+        .template_id = std.fmt.parseInt(i64, (try ctx.getPara("template_id")) orelse "0", 10) catch 0,
+        .template_code = (try ctx.getPara("template_code")) orelse "",
+        .template_type = std.fmt.parseInt(i64, (try ctx.getPara("template_type")) orelse "0", 10) catch 0,
+        .template_content = (try ctx.getPara("template_content")) orelse "",
+        .template_params = (try ctx.getPara("template_params")) orelse "",
+        .api_template_id = (try ctx.getPara("api_template_id")) orelse "",
+        .mobile = (try ctx.getPara("mobile")) orelse "",
+        .user_id = std.fmt.parseInt(i64, (try ctx.getPara("user_id")) orelse "0", 10) catch 0,
+        .user_type = std.fmt.parseInt(i64, (try ctx.getPara("user_type")) orelse "0", 10) catch 0,
+        .send_status = std.fmt.parseInt(i64, (try ctx.getPara("send_status")) orelse "0", 10) catch 0,
+        .send_time = (try ctx.getPara("send_time")) orelse null,
+        .api_send_code = (try ctx.getPara("api_send_code")) orelse null,
+        .api_send_msg = (try ctx.getPara("api_send_msg")) orelse null,
+        .api_request_id = (try ctx.getPara("api_request_id")) orelse null,
+        .api_serial_no = (try ctx.getPara("api_serial_no")) orelse null,
+        .receive_status = std.fmt.parseInt(i64, (try ctx.getPara("receive_status")) orelse "0", 10) catch 0,
+        .receive_time = (try ctx.getPara("receive_time")) orelse null,
+        .api_receive_code = (try ctx.getPara("api_receive_code")) orelse null,
+        .api_receive_msg = (try ctx.getPara("api_receive_msg")) orelse null,
+        .creator = (try ctx.getPara("creator")) orelse null,
+        .create_time = (try ctx.getPara("create_time")) orelse "",
+        .updater = (try ctx.getPara("updater")) orelse null,
+        .update_time = (try ctx.getPara("update_time")) orelse "",
+        .deleted = if ((try ctx.getPara("deleted"))) |v| (std.mem.eql(u8, v, "true") or std.mem.eql(u8, v, "1") or std.mem.eql(u8, v, "t")) else false,
     };
     const instance = service.create(db, data) catch |e| {
         if (e == error.ValidationError) return err(ctx, .unprocessable_entity, "Validation failed", 42201);

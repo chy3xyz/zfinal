@@ -227,13 +227,19 @@ pub const RequestLogger = struct {
         const duration = std.Io.Timestamp.now(io_instance.io, .real).toMilliseconds() - self.start_time;
         var fields: [6]Field = undefined;
         var n: usize = 0;
-        fields[n] = Field{ .key = "method", .value = .{ .string = self.method } }; n += 1;
-        fields[n] = Field{ .key = "path", .value = .{ .string = self.path } }; n += 1;
-        fields[n] = Field{ .key = "status", .value = .{ .int = status } }; n += 1;
-        fields[n] = Field{ .key = "duration_ms", .value = .{ .int = duration } }; n += 1;
-        fields[n] = Field{ .key = "bytes", .value = .{ .int = @intCast(response_bytes) } }; n += 1;
+        fields[n] = Field{ .key = "method", .value = .{ .string = self.method } };
+        n += 1;
+        fields[n] = Field{ .key = "path", .value = .{ .string = self.path } };
+        n += 1;
+        fields[n] = Field{ .key = "status", .value = .{ .int = status } };
+        n += 1;
+        fields[n] = Field{ .key = "duration_ms", .value = .{ .int = duration } };
+        n += 1;
+        fields[n] = Field{ .key = "bytes", .value = .{ .int = @intCast(response_bytes) } };
+        n += 1;
         if (self.remote_addr) |addr| {
-            fields[n] = Field{ .key = "ip", .value = .{ .string = addr } }; n += 1;
+            fields[n] = Field{ .key = "ip", .value = .{ .string = addr } };
+            n += 1;
         }
         self.logger.logSlice(.info, "request", fields[0..n]);
     }

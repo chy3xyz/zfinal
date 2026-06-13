@@ -335,7 +335,9 @@ test "route static matching" {
     defer router.deinit();
 
     // Dummy handler
-    const h = struct { fn f(_: *Context) !void {} }.f;
+    const h = struct {
+        fn f(_: *Context) !void {}
+    }.f;
     try router.addWithMethod("/api/health", .GET, h);
     try router.addWithMethod("/api/users", .POST, h);
 
@@ -356,7 +358,9 @@ test "route parameter matching" {
     var router = Router.init(allocator);
     defer router.deinit();
 
-    const h = struct { fn f(_: *Context) !void {} }.f;
+    const h = struct {
+        fn f(_: *Context) !void {}
+    }.f;
     try router.addWithMethod("/users/:id", .GET, h);
     try router.addWithMethod("/users/:id/posts/:post_id", .GET, h);
 
@@ -378,7 +382,9 @@ test "route param extraction" {
     var router = Router.init(allocator);
     defer router.deinit();
 
-    const h = struct { fn f(_: *Context) !void {} }.f;
+    const h = struct {
+        fn f(_: *Context) !void {}
+    }.f;
     try router.addWithMethod("/users/:id/posts/:post_id", .GET, h);
 
     const route = router.match("/users/42/posts/7", .GET).?;
@@ -394,7 +400,9 @@ test "route any method matching" {
     var router = Router.init(allocator);
     defer router.deinit();
 
-    const h = struct { fn f(_: *Context) !void {} }.f;
+    const h = struct {
+        fn f(_: *Context) !void {}
+    }.f;
     try router.add("/api/any", h); // .ANY method
 
     try std.testing.expect(router.match("/api/any", .GET) != null);
@@ -407,8 +415,12 @@ test "route registration order priority" {
     var router = Router.init(allocator);
     defer router.deinit();
 
-    const h1 = struct { fn f(_: *Context) !void {} }.f;
-    const h2 = struct { fn f(_: *Context) !void {} }.f;
+    const h1 = struct {
+        fn f(_: *Context) !void {}
+    }.f;
+    const h2 = struct {
+        fn f(_: *Context) !void {}
+    }.f;
     try router.addWithMethod("/api/data", .GET, h1);
     try router.addWithMethod("/api/data", .GET, h2); // duplicate, both stored
 

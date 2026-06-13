@@ -26,7 +26,10 @@ pub fn list(ctx: *zfinal.Context) !void {
     const page = try ctx.getParaToIntDefault("page", 1);
     const size = try ctx.getParaToIntDefault("size", 20);
     const items = try service.paginate(db, @intCast(page), @intCast(size), ctx.allocator);
-    defer { for (items) |*it| it.deinit(ctx.allocator); ctx.allocator.free(items); }
+    defer {
+        for (items) |*it| it.deinit(ctx.allocator);
+        ctx.allocator.free(items);
+    }
     const total = try service.count(db);
     try ctx.renderJson(.{ .data = items, .total = total, .page = page, .size = size });
 }
@@ -46,8 +49,7 @@ pub fn create(ctx: *zfinal.Context) !void {
     try csrfGuard(ctx);
     const db = try pool_ref.acquire();
     defer pool_ref.release(db) catch {};
-    const data: service.Data = .{
-    };
+    const data: service.Data = .{};
     const instance = service.create(db, data) catch |e| {
         if (e == error.ValidationError) return err(ctx, .unprocessable_entity, "Validation failed", 42201);
         return e;

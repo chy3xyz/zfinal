@@ -207,7 +207,10 @@ pub const WebSocket = struct {
             const n = reader.interface.readSliceShort(&buf) catch |err| switch (err) {
                 error.ReadFailed => return reader.err.?,
             };
-            if (n == 0) { self.closed = true; return error.ConnectionClosed; }
+            if (n == 0) {
+                self.closed = true;
+                return error.ConnectionClosed;
+            }
 
             var frame = try Frame.parse(buf[0..n], self.allocator);
 

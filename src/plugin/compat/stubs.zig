@@ -24,16 +24,27 @@ pub const CircuitBreaker = struct {
 
     pub const State = enum { closed, open, half_open };
 
-    pub fn init() CircuitBreaker { return .{}; }
+    pub fn init() CircuitBreaker {
+        return .{};
+    }
 
     pub fn call(self: *CircuitBreaker, comptime T: type, ctx: anytype, fn_name: anytype, args: anytype) !T {
-        _ = self; _ = ctx; _ = fn_name; _ = args;
+        _ = self;
+        _ = ctx;
+        _ = fn_name;
+        _ = args;
         return error.NotImplemented; // AI fills: track failures, open/close state machine
     }
 
-    pub fn recordFailure(self: *CircuitBreaker) void { self.failures += 1; }
-    pub fn recordSuccess(self: *CircuitBreaker) void { self.failures = 0; }
-    pub fn isOpen(self: *const CircuitBreaker) bool { return self.failures >= self.failure_threshold; }
+    pub fn recordFailure(self: *CircuitBreaker) void {
+        self.failures += 1;
+    }
+    pub fn recordSuccess(self: *CircuitBreaker) void {
+        self.failures = 0;
+    }
+    pub fn isOpen(self: *const CircuitBreaker) bool {
+        return self.failures >= self.failure_threshold;
+    }
 };
 
 /// Status: Partial. Java: Spring Cloud Config / Consul KV.
@@ -47,7 +58,9 @@ pub const ConfigClient = struct {
     pub const ConfigSource = enum { file, env, remote };
     const CachePlugin = @import("../cache.zig").CachePlugin;
 
-    pub fn init(allocator: std.mem.Allocator) ConfigClient { return .{ .allocator = allocator }; }
+    pub fn init(allocator: std.mem.Allocator) ConfigClient {
+        return .{ .allocator = allocator };
+    }
 
     pub fn get(self: *ConfigClient, key: []const u8) !?[]const u8 {
         return switch (self.source) {
@@ -58,7 +71,9 @@ pub const ConfigClient = struct {
     }
 
     fn getFromFile(self: *ConfigClient, key: []const u8) !?[]const u8 {
-        _ = self; _ = key; return error.NotImplemented;
+        _ = self;
+        _ = key;
+        return error.NotImplemented;
     }
     fn getFromEnv(_: *ConfigClient, key: []const u8) !?[]const u8 {
         return std.posix.getenv(key);
@@ -76,16 +91,27 @@ pub const HttpClient = struct {
         return .{ .allocator = allocator, .base_url = base_url };
     }
 
-    pub fn get(self: *HttpClient, path: []const u8) !Response { return self.request(.GET, path, null); }
-    pub fn post(self: *HttpClient, path: []const u8, body: ?[]const u8) !Response { return self.request(.POST, path, body); }
-    pub fn put(self: *HttpClient, path: []const u8, body: ?[]const u8) !Response { return self.request(.PUT, path, body); }
-    pub fn delete(self: *HttpClient, path: []const u8) !Response { return self.request(.DELETE, path, null); }
+    pub fn get(self: *HttpClient, path: []const u8) !Response {
+        return self.request(.GET, path, null);
+    }
+    pub fn post(self: *HttpClient, path: []const u8, body: ?[]const u8) !Response {
+        return self.request(.POST, path, body);
+    }
+    pub fn put(self: *HttpClient, path: []const u8, body: ?[]const u8) !Response {
+        return self.request(.PUT, path, body);
+    }
+    pub fn delete(self: *HttpClient, path: []const u8) !Response {
+        return self.request(.DELETE, path, null);
+    }
 
     pub const Method = enum { GET, POST, PUT, DELETE };
     pub const Response = struct { status: u16, body: []const u8, headers: std.StringHashMap([]const u8) };
 
     fn request(self: *HttpClient, method: Method, path: []const u8, body: ?[]const u8) !Response {
-        _ = self; _ = method; _ = path; _ = body;
+        _ = self;
+        _ = method;
+        _ = path;
+        _ = body;
         return error.NotImplemented; // AI fills: TCP connect, send HTTP/1.1 request, parse response
     }
 };
@@ -102,14 +128,20 @@ pub const BeanValidator = struct {
     pub fn init(allocator: std.mem.Allocator) BeanValidator {
         return .{ .allocator = allocator, .errors = std.ArrayList(FieldError).empty };
     }
-    pub fn deinit(self: *BeanValidator) void { self.errors.deinit(self.allocator); }
+    pub fn deinit(self: *BeanValidator) void {
+        self.errors.deinit(self.allocator);
+    }
 
     pub fn validate(_: *BeanValidator, _: anytype) !bool {
         return error.NotImplemented; // AI fills: reflect fields, apply rules, collect errors
     }
 
-    pub fn hasErrors(self: *const BeanValidator) bool { return self.errors.items.len > 0; }
-    pub fn getErrors(self: *const BeanValidator) []const FieldError { return self.errors.items; }
+    pub fn hasErrors(self: *const BeanValidator) bool {
+        return self.errors.items.len > 0;
+    }
+    pub fn getErrors(self: *const BeanValidator) []const FieldError {
+        return self.errors.items;
+    }
 };
 
 /// Status: Stub. Java: Spring @Scheduled / Quartz.
@@ -123,10 +155,15 @@ pub const TaskScheduler = struct {
     pub fn init(allocator: std.mem.Allocator) TaskScheduler {
         return .{ .allocator = allocator, .tasks = std.ArrayList(ScheduledTask).empty };
     }
-    pub fn deinit(self: *TaskScheduler) void { self.tasks.deinit(self.allocator); }
+    pub fn deinit(self: *TaskScheduler) void {
+        self.tasks.deinit(self.allocator);
+    }
 
     pub fn scheduleCron(self: *TaskScheduler, name: []const u8, cron: []const u8, handler: *const fn () void) !void {
-        _ = self; _ = name; _ = cron; _ = handler;
+        _ = self;
+        _ = name;
+        _ = cron;
+        _ = handler;
         return error.NotImplemented; // AI fills: delegate to CronPlugin
     }
 
@@ -146,36 +183,62 @@ pub const ApiGateway = struct {
         _ = allocator;
         return .{ .routes = std.ArrayList(GatewayRoute).empty };
     }
-    pub fn deinit(self: *ApiGateway) void { self.routes.deinit(); }
+    pub fn deinit(self: *ApiGateway) void {
+        self.routes.deinit();
+    }
 
-    pub fn addRoute(_: *ApiGateway, _: GatewayRoute) !void { return error.NotImplemented; }
-    pub fn handle(_: *ApiGateway, _: anytype) !void { return error.NotImplemented; }
+    pub fn addRoute(_: *ApiGateway, _: GatewayRoute) !void {
+        return error.NotImplemented;
+    }
+    pub fn handle(_: *ApiGateway, _: anytype) !void {
+        return error.NotImplemented;
+    }
 };
 
 /// Status: Stub. Java: Spring Cloud Stream / RabbitMQ / Kafka.
 pub const MessageQueue = struct {
-    pub fn connect(_: []const u8) !MessageQueue { return error.NotImplemented; }
-    pub fn publish(_: *MessageQueue, _: []const u8, _: []const u8) !void { return error.NotImplemented; }
-    pub fn subscribe(_: *MessageQueue, _: []const u8, _: *const fn ([]const u8) void) !void { return error.NotImplemented; }
+    pub fn connect(_: []const u8) !MessageQueue {
+        return error.NotImplemented;
+    }
+    pub fn publish(_: *MessageQueue, _: []const u8, _: []const u8) !void {
+        return error.NotImplemented;
+    }
+    pub fn subscribe(_: *MessageQueue, _: []const u8, _: *const fn ([]const u8) void) !void {
+        return error.NotImplemented;
+    }
     pub fn close(_: *MessageQueue) void {}
 };
 
 /// Status: Stub. Java: Spring Session / Redis Session.
 /// ZFinal has in-memory SessionStore. Missing: Redis-backed, JDBC-backed, clustered.
 pub const DistributedSession = struct {
-    pub fn init(_: std.mem.Allocator) DistributedSession { return .{}; }
-    pub fn get(_: *DistributedSession, _: []const u8) !?[]const u8 { return error.NotImplemented; }
-    pub fn set(_: *DistributedSession, _: []const u8, _: []const u8, _: u64) !void { return error.NotImplemented; }
+    pub fn init(_: std.mem.Allocator) DistributedSession {
+        return .{};
+    }
+    pub fn get(_: *DistributedSession, _: []const u8) !?[]const u8 {
+        return error.NotImplemented;
+    }
+    pub fn set(_: *DistributedSession, _: []const u8, _: []const u8, _: u64) !void {
+        return error.NotImplemented;
+    }
     pub fn delete(_: *DistributedSession, _: []const u8) !void {}
 };
 
 /// Status: Partial. Java: Spring Security OAuth2 / JWT.
 /// ZFinal has Interceptor auth. Missing: OAuth2 flows, role-based access, JWT parsing.
 pub const OAuth2Client = struct {
-    pub fn init(_: std.mem.Allocator, _: []const u8, _: []const u8) OAuth2Client { return .{}; }
-    pub fn authorizeUrl(_: *const OAuth2Client, _: []const u8) ![]const u8 { return error.NotImplemented; }
-    pub fn exchangeCode(_: *const OAuth2Client, _: []const u8) !TokenResponse { return error.NotImplemented; }
-    pub fn validateToken(_: *const OAuth2Client, _: []const u8) !bool { return error.NotImplemented; }
+    pub fn init(_: std.mem.Allocator, _: []const u8, _: []const u8) OAuth2Client {
+        return .{};
+    }
+    pub fn authorizeUrl(_: *const OAuth2Client, _: []const u8) ![]const u8 {
+        return error.NotImplemented;
+    }
+    pub fn exchangeCode(_: *const OAuth2Client, _: []const u8) !TokenResponse {
+        return error.NotImplemented;
+    }
+    pub fn validateToken(_: *const OAuth2Client, _: []const u8) !bool {
+        return error.NotImplemented;
+    }
 
     pub const TokenResponse = struct { access_token: []const u8, refresh_token: []const u8, expires_in: u64 };
 };
@@ -185,7 +248,9 @@ pub const OAuth2Client = struct {
 pub const ObjectMapper = struct {
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator) ObjectMapper { return .{ .allocator = allocator }; }
+    pub fn init(allocator: std.mem.Allocator) ObjectMapper {
+        return .{ .allocator = allocator };
+    }
 
     pub fn readValue(self: *ObjectMapper, comptime T: type, json: []const u8) !T {
         const parsed = try std.json.parseFromSlice(T, self.allocator, json, .{});
@@ -197,7 +262,9 @@ pub const ObjectMapper = struct {
         return try std.json.Stringify.valueAlloc(self.allocator, value, .{});
     }
 
-    pub fn readTree(_: *ObjectMapper, _: []const u8) !JsonNode { return error.NotImplemented; }
+    pub fn readTree(_: *ObjectMapper, _: []const u8) !JsonNode {
+        return error.NotImplemented;
+    }
     pub const JsonNode = struct { value: std.json.Value };
 };
 

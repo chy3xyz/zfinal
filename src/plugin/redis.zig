@@ -110,7 +110,10 @@ pub const RedisClient = struct {
     /// PING command.
     pub fn ping(self: *Self) bool {
         const result = self.command(&.{"PING"}) catch return false;
-        if (result) |r| { defer self.allocator.free(r); return std.mem.eql(u8, r, "PONG"); }
+        if (result) |r| {
+            defer self.allocator.free(r);
+            return std.mem.eql(u8, r, "PONG");
+        }
         return false;
     }
 
@@ -142,7 +145,10 @@ pub const RedisClient = struct {
     /// EXISTS key. Returns true if the key exists.
     pub fn exists(self: *Self, key: []const u8) !bool {
         const result = try self.command(&.{ "EXISTS", key });
-        if (result) |r| { defer self.allocator.free(r); return std.mem.eql(u8, r, "1"); }
+        if (result) |r| {
+            defer self.allocator.free(r);
+            return std.mem.eql(u8, r, "1");
+        }
         return false;
     }
 

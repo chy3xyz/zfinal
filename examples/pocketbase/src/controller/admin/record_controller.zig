@@ -36,7 +36,7 @@ pub fn list(ctx: *zfinal.Context) !void {
     var html = std.ArrayList(u8).empty;
     defer html.deinit(ctx.allocator);
 
-    try html.appendSlice(ctx.allocator, 
+    try html.appendSlice(ctx.allocator,
         \\<!DOCTYPE html><html><head><title>Records</title><script src="https://cdn.tailwindcss.com"></script></head>
         \\<body class="bg-gray-50 font-sans text-gray-800 h-screen hidden sm:block">
         \\  <div class="flex h-screen overflow-hidden">
@@ -62,7 +62,7 @@ pub fn list(ctx: *zfinal.Context) !void {
         \\          <h1 class="text-lg font-bold">
     );
     try html.print(ctx.allocator, "{s}", .{table});
-    try html.appendSlice(ctx.allocator, 
+    try html.appendSlice(ctx.allocator,
         \\          </h1>
         \\        </div>
         \\        <div class="flex items-center gap-5">
@@ -78,7 +78,7 @@ pub fn list(ctx: *zfinal.Context) !void {
         \\        <h2 class="text-2xl font-bold text-gray-900 flex items-center gap-2">
     );
     try html.print(ctx.allocator, "{s}", .{table});
-    try html.appendSlice(ctx.allocator, 
+    try html.appendSlice(ctx.allocator,
         \\        </h2>
         \\        <p class="text-sm text-gray-500 mt-1">Browse and manage data records in this collection.</p>
         \\      </div>
@@ -86,7 +86,7 @@ pub fn list(ctx: *zfinal.Context) !void {
         \\        <a href="/admin/collections/
     );
     try html.print(ctx.allocator, "{s}", .{table});
-    try html.appendSlice(ctx.allocator, 
+    try html.appendSlice(ctx.allocator,
         \\/records/new" class="bg-indigo-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition flex items-center justify-center gap-2 shadow-sm w-full sm:w-auto">
         \\          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg> New Record
         \\        </a>
@@ -102,7 +102,7 @@ pub fn list(ctx: *zfinal.Context) !void {
         try html.print(ctx.allocator, "<th class=\"p-4 font-medium first:pl-6\">{s}</th>", .{col});
     }
 
-    try html.appendSlice(ctx.allocator, 
+    try html.appendSlice(ctx.allocator,
         \\            <th class="p-4 font-medium text-right pr-6 w-24">Actions</th>
         \\          </tr>
         \\        </thead>
@@ -125,7 +125,7 @@ pub fn list(ctx: *zfinal.Context) !void {
         }
 
         const id = row.get("id").?;
-        try html.print(ctx.allocator, 
+        try html.print(ctx.allocator,
             \\          <td class="p-4 pr-6 text-right">
             \\            <form method="POST" action="/admin/collections/{s}/records/{s}/delete" class="inline" onsubmit="return confirm('WARNING: Are you sure you want to delete this record?');">
             \\              <button type="submit" class="text-gray-400 hover:text-red-600 text-sm font-medium transition p-2 rounded hover:bg-red-50">
@@ -138,14 +138,14 @@ pub fn list(ctx: *zfinal.Context) !void {
     }
 
     if (count == 0) {
-        try html.print(ctx.allocator, 
+        try html.print(ctx.allocator,
             \\        <tr>
             \\          <td colspan="{d}" class="p-12 text-center text-gray-400 italic">No records found in this collection. click "New Record" to add one.</td>
             \\        </tr>
         , .{rs.columns.len + 1});
     }
 
-    try html.appendSlice(ctx.allocator, 
+    try html.appendSlice(ctx.allocator,
         \\        </tbody>
         \\      </table>
         \\    </div>

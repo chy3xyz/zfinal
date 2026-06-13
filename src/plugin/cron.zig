@@ -155,11 +155,21 @@ pub const CronExpression = struct {
         var has_month = false;
         var has_day_of_week = false;
 
-        for (self.minutes) |v| { if (v) has_minute = true; }
-        for (self.hours) |v| { if (v) has_hour = true; }
-        for (self.days_of_month) |v| { if (v) has_day_of_month = true; }
-        for (self.months) |v| { if (v) has_month = true; }
-        for (self.days_of_week) |v| { if (v) has_day_of_week = true; }
+        for (self.minutes) |v| {
+            if (v) has_minute = true;
+        }
+        for (self.hours) |v| {
+            if (v) has_hour = true;
+        }
+        for (self.days_of_month) |v| {
+            if (v) has_day_of_month = true;
+        }
+        for (self.months) |v| {
+            if (v) has_month = true;
+        }
+        for (self.days_of_week) |v| {
+            if (v) has_day_of_week = true;
+        }
 
         return has_minute and has_hour and has_day_of_month and has_month and has_day_of_week;
     }

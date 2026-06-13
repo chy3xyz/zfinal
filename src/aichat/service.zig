@@ -48,7 +48,9 @@ pub fn buildSystemPrompt(comptime custom: ?[]const u8) []const u8 {
 pub fn buildSystemPromptWithDate(comptime custom: ?[]const u8, date: []const u8) []const u8 {
     if (comptime custom) |t| {
         return std.mem.concat(std.heap.page_allocator, u8, &.{
-            t, "\n\n- 今天是：", date,
+            t,
+            "\n\n- 今天是：",
+            date,
         }) catch return t;
     }
     const buf: [512]u8 = undefined;
@@ -95,7 +97,8 @@ pub fn formatSSE(
     defer combined.deinit(allocator);
 
     for (tokens) |token| {
-        const chunk = try std.fmt.allocPrint(allocator,
+        const chunk = try std.fmt.allocPrint(
+            allocator,
             "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{s}\"}}}}]}}\n\n",
             .{token},
         );
@@ -109,7 +112,8 @@ pub fn formatSSE(
 }
 
 pub fn formatSSERaw(allocator: std.mem.Allocator, content: []const u8) ![]u8 {
-    return try std.fmt.allocPrint(allocator,
+    return try std.fmt.allocPrint(
+        allocator,
         "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{s}\"}}}}]}}\n\ndata: [DONE]\n\n",
         .{content},
     );
@@ -143,11 +147,14 @@ pub fn chatSync(
 
     const sh_cmd = try std.mem.concat(allocator, u8, &.{
         \\ curl -s -XPOST 
-        , full_url,
+        ,
+        full_url,
         \\ -H 'Content-Type: application/json' -H '
-        , auth_hdr,
+        ,
+        auth_hdr,
         \\ ' -d '
-        , body,
+        ,
+        body,
         \\ ' --max-time 15 -k
     });
     defer allocator.free(sh_cmd);

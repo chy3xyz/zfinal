@@ -91,8 +91,14 @@ test "interceptor chain structure" {
     const a = std.testing.allocator;
     var chain = InterceptorChain.init(a);
     defer chain.deinit();
-    const before_fn = struct { fn f(_: *Context) !bool { return true; } }.f;
-    const after_fn = struct { fn f(_: *Context) !void {} }.f;
+    const before_fn = struct {
+        fn f(_: *Context) !bool {
+            return true;
+        }
+    }.f;
+    const after_fn = struct {
+        fn f(_: *Context) !void {}
+    }.f;
     const int1 = Interceptor{ .name = "first", .before = before_fn };
     const int2 = Interceptor{ .name = "second", .after = after_fn };
     try chain.add(int1);

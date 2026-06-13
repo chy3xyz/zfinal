@@ -42,8 +42,12 @@ pub const TimeKit = struct {
     // === Date utilities (merged from DateKit) ===
 
     pub const Date = struct {
-        year: i32, month: u8, day: u8,
-        hour: u8 = 0, minute: u8 = 0, second: u8 = 0,
+        year: i32,
+        month: u8,
+        day: u8,
+        hour: u8 = 0,
+        minute: u8 = 0,
+        second: u8 = 0,
 
         pub fn format(self: Date, allocator: std.mem.Allocator, fmt: []const u8) ![]const u8 {
             var result = std.ArrayList(u8).empty;
@@ -60,7 +64,10 @@ pub const TimeKit = struct {
                         'H' => try std.fmt.bufPrint(&buf, "{d:0>2}", .{self.hour}),
                         'M' => try std.fmt.bufPrint(&buf, "{d:0>2}", .{self.minute}),
                         'S' => try std.fmt.bufPrint(&buf, "{d:0>2}", .{self.second}),
-                        else => blk: { buf[0] = fmt[i + 1]; break :blk buf[0..1]; },
+                        else => blk: {
+                            buf[0] = fmt[i + 1];
+                            break :blk buf[0..1];
+                        },
                     };
                     try result.appendSlice(allocator, slice);
                     i += 2;
@@ -73,7 +80,9 @@ pub const TimeKit = struct {
         }
     };
 
-    pub fn nowDate() Date { return fromTimestamp(now()); }
+    pub fn nowDate() Date {
+        return fromTimestamp(now());
+    }
 
     pub fn fromTimestamp(timestamp: i64) Date {
         const es = std.time.epoch.EpochSeconds{ .secs = @intCast(timestamp) };

@@ -1140,7 +1140,9 @@ fn writeGeneratedFiles(allocator: std.mem.Allocator, table: *codegen.Table, modu
 
     // deps.zig relative path: count '/' in module_path, each level = one "../"
     var depth: usize = 2; // src/modules/ = 2 levels from project root
-    for (module_path) |c| { if (c == '/') depth += 1; }
+    for (module_path) |c| {
+        if (c == '/') depth += 1;
+    }
     var deps_buf: [64]u8 = undefined;
     var deps_len: usize = 0;
     for (0..depth) |_| {
@@ -1415,7 +1417,10 @@ fn checkExtDirs(allocator: std.mem.Allocator, ok: *u32, miss: *u32, fail: *u32) 
         // Check if we've already processed this directory
         var seen = false;
         for (checked[0..checked_count]) |c| {
-            if (std.mem.eql(u8, c, dir_path)) { seen = true; break; }
+            if (std.mem.eql(u8, c, dir_path)) {
+                seen = true;
+                break;
+            }
         }
         if (seen) continue;
         if (checked_count < checked.len) {
@@ -1571,7 +1576,10 @@ fn pascalCaseConvert(allocator: std.mem.Allocator, name: []const u8) ![]const u8
     var result = std.ArrayList(u8).empty;
     var cap = true;
     for (name) |c| {
-        if (c == '_' or c == '-') { cap = true; continue; }
+        if (c == '_' or c == '-') {
+            cap = true;
+            continue;
+        }
         try result.append(allocator, if (cap) std.ascii.toUpper(c) else c);
         cap = false;
     }
@@ -1609,7 +1617,7 @@ fn safeWrite(allocator: std.mem.Allocator, path: []const u8, data: []const u8, f
     if (!exists or force) {
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = data });
         const tag: []const u8 = if (force and exists) "Overwritten" else "Generated";
-        std.debug.print("✅ {s}: {s}\n", .{tag, path});
+        std.debug.print("✅ {s}: {s}\n", .{ tag, path });
         return;
     }
 
@@ -1617,6 +1625,6 @@ fn safeWrite(allocator: std.mem.Allocator, path: []const u8, data: []const u8, f
     const new_path = try std.fmt.allocPrint(allocator, "{s}.gen.new", .{path});
     defer allocator.free(new_path);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = new_path, .data = data });
-    std.debug.print("⚠️  EXISTS: {s} — generated to {s}.gen.new\n", .{path, path});
-    std.debug.print("   Review with: diff {s} {s}.gen.new  then merge, or use --force\n", .{path, path});
+    std.debug.print("⚠️  EXISTS: {s} — generated to {s}.gen.new\n", .{ path, path });
+    std.debug.print("   Review with: diff {s} {s}.gen.new  then merge, or use --force\n", .{ path, path });
 }

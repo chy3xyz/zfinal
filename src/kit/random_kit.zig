@@ -28,8 +28,7 @@ pub const RandomKit = struct {
     /// Fill buffer with OS-provided cryptographically secure random bytes.
     fn osRandomBytes(buf: []u8) void {
         switch (builtin.os.tag) {
-            .macos, .ios, .tvos, .watchos, .visionos, .driverkit, .maccatalyst,
-            .freebsd, .netbsd, .dragonfly, .openbsd => {
+            .macos, .ios, .tvos, .watchos, .visionos, .driverkit, .maccatalyst, .freebsd, .netbsd, .dragonfly, .openbsd => {
                 std.c.arc4random_buf(buf.ptr, buf.len);
             },
             .linux => {

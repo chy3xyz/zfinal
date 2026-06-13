@@ -70,16 +70,13 @@ pub fn extractFromDb(allocator: std.mem.Allocator, dsn: Dsn) !std.ArrayList(Tabl
     defer allocator.free(port_str);
 
     const keywords = [_][*c]const u8{
-        "host",         "port",      "dbname",
-        "user",         "password",
-        "connect_timeout",
+        "host", "port",     "dbname",
+        "user", "password", "connect_timeout",
         null,
     };
     const values = [_][*c]const u8{
-        @ptrCast(dsn.host.ptr),     @ptrCast(port_str.ptr),   @ptrCast(dsn.dbname.ptr),
-        if (dsn.user.len > 0) @ptrCast(dsn.user.ptr) else @ptrCast("postgres"),
-        if (dsn.password.len > 0) @ptrCast(dsn.password.ptr) else @ptrCast(""),
-        "5",
+        @ptrCast(dsn.host.ptr),                                                 @ptrCast(port_str.ptr),                                                 @ptrCast(dsn.dbname.ptr),
+        if (dsn.user.len > 0) @ptrCast(dsn.user.ptr) else @ptrCast("postgres"), if (dsn.password.len > 0) @ptrCast(dsn.password.ptr) else @ptrCast(""), "5",
         null,
     };
 

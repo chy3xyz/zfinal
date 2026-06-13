@@ -26,7 +26,10 @@ pub fn list(ctx: *zfinal.Context) !void {
     const page = try ctx.getParaToIntDefault("page", 1);
     const size = try ctx.getParaToIntDefault("size", 20);
     const items = try service.paginate(db, @intCast(page), @intCast(size), ctx.allocator);
-    defer { for (items) |*it| it.deinit(ctx.allocator); ctx.allocator.free(items); }
+    defer {
+        for (items) |*it| it.deinit(ctx.allocator);
+        ctx.allocator.free(items);
+    }
     const total = try service.count(db);
     try ctx.renderJson(.{ .data = items, .total = total, .page = page, .size = size });
 }
@@ -47,33 +50,33 @@ pub fn create(ctx: *zfinal.Context) !void {
     const db = try pool_ref.acquire();
     defer pool_ref.release(db) catch {};
     const data: service.Data = .{
-            .trace_id = (try ctx.getPara("trace_id")) orelse "",
-            .user_id = std.fmt.parseInt(i64, (try ctx.getPara("user_id")) orelse "0", 10) catch 0,
-            .user_type = std.fmt.parseInt(i64, (try ctx.getPara("user_type")) orelse "0", 10) catch 0,
-            .application_name = (try ctx.getPara("application_name")) orelse "",
-            .request_method = (try ctx.getPara("request_method")) orelse "",
-            .request_url = (try ctx.getPara("request_url")) orelse "",
-            .request_params = (try ctx.getPara("request_params")) orelse "",
-            .user_ip = (try ctx.getPara("user_ip")) orelse "",
-            .user_agent = (try ctx.getPara("user_agent")) orelse "",
-            .exception_time = (try ctx.getPara("exception_time")) orelse "",
-            .exception_name = (try ctx.getPara("exception_name")) orelse "",
-            .exception_message = (try ctx.getPara("exception_message")) orelse "",
-            .exception_root_cause_message = (try ctx.getPara("exception_root_cause_message")) orelse "",
-            .exception_stack_trace = (try ctx.getPara("exception_stack_trace")) orelse "",
-            .exception_class_name = (try ctx.getPara("exception_class_name")) orelse "",
-            .exception_file_name = (try ctx.getPara("exception_file_name")) orelse "",
-            .exception_method_name = (try ctx.getPara("exception_method_name")) orelse "",
-            .exception_line_number = std.fmt.parseInt(i64, (try ctx.getPara("exception_line_number")) orelse "0", 10) catch 0,
-            .process_status = std.fmt.parseInt(i64, (try ctx.getPara("process_status")) orelse "0", 10) catch 0,
-            .process_time = (try ctx.getPara("process_time")) orelse null,
-            .process_user_id = std.fmt.parseInt(i64, (try ctx.getPara("process_user_id")) orelse "0", 10) catch 0,
-            .creator = (try ctx.getPara("creator")) orelse null,
-            .create_time = (try ctx.getPara("create_time")) orelse "",
-            .updater = (try ctx.getPara("updater")) orelse null,
-            .update_time = (try ctx.getPara("update_time")) orelse "",
-            .deleted = if ((try ctx.getPara("deleted"))) |v| (std.mem.eql(u8, v, "true") or std.mem.eql(u8, v, "1") or std.mem.eql(u8, v, "t")) else false,
-            .tenant_id = std.fmt.parseInt(i64, (try ctx.getPara("tenant_id")) orelse "0", 10) catch 0,
+        .trace_id = (try ctx.getPara("trace_id")) orelse "",
+        .user_id = std.fmt.parseInt(i64, (try ctx.getPara("user_id")) orelse "0", 10) catch 0,
+        .user_type = std.fmt.parseInt(i64, (try ctx.getPara("user_type")) orelse "0", 10) catch 0,
+        .application_name = (try ctx.getPara("application_name")) orelse "",
+        .request_method = (try ctx.getPara("request_method")) orelse "",
+        .request_url = (try ctx.getPara("request_url")) orelse "",
+        .request_params = (try ctx.getPara("request_params")) orelse "",
+        .user_ip = (try ctx.getPara("user_ip")) orelse "",
+        .user_agent = (try ctx.getPara("user_agent")) orelse "",
+        .exception_time = (try ctx.getPara("exception_time")) orelse "",
+        .exception_name = (try ctx.getPara("exception_name")) orelse "",
+        .exception_message = (try ctx.getPara("exception_message")) orelse "",
+        .exception_root_cause_message = (try ctx.getPara("exception_root_cause_message")) orelse "",
+        .exception_stack_trace = (try ctx.getPara("exception_stack_trace")) orelse "",
+        .exception_class_name = (try ctx.getPara("exception_class_name")) orelse "",
+        .exception_file_name = (try ctx.getPara("exception_file_name")) orelse "",
+        .exception_method_name = (try ctx.getPara("exception_method_name")) orelse "",
+        .exception_line_number = std.fmt.parseInt(i64, (try ctx.getPara("exception_line_number")) orelse "0", 10) catch 0,
+        .process_status = std.fmt.parseInt(i64, (try ctx.getPara("process_status")) orelse "0", 10) catch 0,
+        .process_time = (try ctx.getPara("process_time")) orelse null,
+        .process_user_id = std.fmt.parseInt(i64, (try ctx.getPara("process_user_id")) orelse "0", 10) catch 0,
+        .creator = (try ctx.getPara("creator")) orelse null,
+        .create_time = (try ctx.getPara("create_time")) orelse "",
+        .updater = (try ctx.getPara("updater")) orelse null,
+        .update_time = (try ctx.getPara("update_time")) orelse "",
+        .deleted = if ((try ctx.getPara("deleted"))) |v| (std.mem.eql(u8, v, "true") or std.mem.eql(u8, v, "1") or std.mem.eql(u8, v, "t")) else false,
+        .tenant_id = std.fmt.parseInt(i64, (try ctx.getPara("tenant_id")) orelse "0", 10) catch 0,
     };
     const instance = service.create(db, data) catch |e| {
         if (e == error.ValidationError) return err(ctx, .unprocessable_entity, "Validation failed", 42201);

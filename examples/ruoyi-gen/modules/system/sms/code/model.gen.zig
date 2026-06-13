@@ -26,21 +26,21 @@ pub const SystemSmsCodeModel = zfinal.Model(SystemSmsCode, "system_sms_code");
 pub const jsonNaming: zfinal.JsonNaming = .snake_case;
 
 pub const fieldMap = [_]struct { db: []const u8, json: []const u8 }{
-        .{ .db = "id", .json = "id" },
-        .{ .db = "mobile", .json = "mobile" },
-        .{ .db = "code", .json = "code" },
-        .{ .db = "create_ip", .json = "create_ip" },
-        .{ .db = "scene", .json = "scene" },
-        .{ .db = "today_index", .json = "today_index" },
-        .{ .db = "used", .json = "used" },
-        .{ .db = "used_time", .json = "used_time" },
-        .{ .db = "used_ip", .json = "used_ip" },
-        .{ .db = "creator", .json = "creator" },
-        .{ .db = "create_time", .json = "create_time" },
-        .{ .db = "updater", .json = "updater" },
-        .{ .db = "update_time", .json = "update_time" },
-        .{ .db = "deleted", .json = "deleted" },
-        .{ .db = "tenant_id", .json = "tenant_id" },
+    .{ .db = "id", .json = "id" },
+    .{ .db = "mobile", .json = "mobile" },
+    .{ .db = "code", .json = "code" },
+    .{ .db = "create_ip", .json = "create_ip" },
+    .{ .db = "scene", .json = "scene" },
+    .{ .db = "today_index", .json = "today_index" },
+    .{ .db = "used", .json = "used" },
+    .{ .db = "used_time", .json = "used_time" },
+    .{ .db = "used_ip", .json = "used_ip" },
+    .{ .db = "creator", .json = "creator" },
+    .{ .db = "create_time", .json = "create_time" },
+    .{ .db = "updater", .json = "updater" },
+    .{ .db = "update_time", .json = "update_time" },
+    .{ .db = "deleted", .json = "deleted" },
+    .{ .db = "tenant_id", .json = "tenant_id" },
 };
 
 pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
@@ -50,21 +50,21 @@ pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
 
 /// Fields safe to expose in API responses (sensitive columns excluded).
 pub const safeFields = [_][]const u8{
-        "id",
-        "mobile",
-        "code",
-        "create_ip",
-        "scene",
-        "today_index",
-        "used",
-        "used_time",
-        "used_ip",
-        "creator",
-        "create_time",
-        "updater",
-        "update_time",
-        "deleted",
-        "tenant_id",
+    "id",
+    "mobile",
+    "code",
+    "create_ip",
+    "scene",
+    "today_index",
+    "used",
+    "used_time",
+    "used_ip",
+    "creator",
+    "create_time",
+    "updater",
+    "update_time",
+    "deleted",
+    "tenant_id",
 };
 
 /// Validate SystemSmsCode data before insert/update.

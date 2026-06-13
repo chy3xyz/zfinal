@@ -26,7 +26,10 @@ pub fn list(ctx: *zfinal.Context) !void {
     const page = try ctx.getParaToIntDefault("page", 1);
     const size = try ctx.getParaToIntDefault("size", 20);
     const items = try service.paginate(db, @intCast(page), @intCast(size), ctx.allocator);
-    defer { for (items) |*it| it.deinit(ctx.allocator); ctx.allocator.free(items); }
+    defer {
+        for (items) |*it| it.deinit(ctx.allocator);
+        ctx.allocator.free(items);
+    }
     const total = try service.count(db);
     try ctx.renderJson(.{ .data = items, .total = total, .page = page, .size = size });
 }
@@ -47,20 +50,20 @@ pub fn create(ctx: *zfinal.Context) !void {
     const db = try pool_ref.acquire();
     defer pool_ref.release(db) catch {};
     const data: service.Data = .{
-            .job_id = std.fmt.parseInt(i64, (try ctx.getPara("job_id")) orelse "0", 10) catch 0,
-            .handler_name = (try ctx.getPara("handler_name")) orelse "",
-            .handler_param = (try ctx.getPara("handler_param")) orelse null,
-            .execute_index = std.fmt.parseInt(i64, (try ctx.getPara("execute_index")) orelse "0", 10) catch 0,
-            .begin_time = (try ctx.getPara("begin_time")) orelse "",
-            .end_time = (try ctx.getPara("end_time")) orelse null,
-            .duration = std.fmt.parseInt(i64, (try ctx.getPara("duration")) orelse "0", 10) catch 0,
-            .status = std.fmt.parseInt(i64, (try ctx.getPara("status")) orelse "0", 10) catch 0,
-            .result = (try ctx.getPara("result")) orelse null,
-            .creator = (try ctx.getPara("creator")) orelse null,
-            .create_time = (try ctx.getPara("create_time")) orelse "",
-            .updater = (try ctx.getPara("updater")) orelse null,
-            .update_time = (try ctx.getPara("update_time")) orelse "",
-            .deleted = if ((try ctx.getPara("deleted"))) |v| (std.mem.eql(u8, v, "true") or std.mem.eql(u8, v, "1") or std.mem.eql(u8, v, "t")) else false,
+        .job_id = std.fmt.parseInt(i64, (try ctx.getPara("job_id")) orelse "0", 10) catch 0,
+        .handler_name = (try ctx.getPara("handler_name")) orelse "",
+        .handler_param = (try ctx.getPara("handler_param")) orelse null,
+        .execute_index = std.fmt.parseInt(i64, (try ctx.getPara("execute_index")) orelse "0", 10) catch 0,
+        .begin_time = (try ctx.getPara("begin_time")) orelse "",
+        .end_time = (try ctx.getPara("end_time")) orelse null,
+        .duration = std.fmt.parseInt(i64, (try ctx.getPara("duration")) orelse "0", 10) catch 0,
+        .status = std.fmt.parseInt(i64, (try ctx.getPara("status")) orelse "0", 10) catch 0,
+        .result = (try ctx.getPara("result")) orelse null,
+        .creator = (try ctx.getPara("creator")) orelse null,
+        .create_time = (try ctx.getPara("create_time")) orelse "",
+        .updater = (try ctx.getPara("updater")) orelse null,
+        .update_time = (try ctx.getPara("update_time")) orelse "",
+        .deleted = if ((try ctx.getPara("deleted"))) |v| (std.mem.eql(u8, v, "true") or std.mem.eql(u8, v, "1") or std.mem.eql(u8, v, "t")) else false,
     };
     const instance = service.create(db, data) catch |e| {
         if (e == error.ValidationError) return err(ctx, .unprocessable_entity, "Validation failed", 42201);

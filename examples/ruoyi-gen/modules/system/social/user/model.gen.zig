@@ -12,7 +12,7 @@ pub const SystemSocialUserModel = zfinal.Model(SystemSocialUser, "system_social_
 pub const jsonNaming: zfinal.JsonNaming = .camelCase;
 
 pub const fieldMap = [_]struct { db: []const u8, json: []const u8 }{
-        .{ .db = "id", .json = "id" },
+    .{ .db = "id", .json = "id" },
 };
 
 pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
@@ -22,7 +22,7 @@ pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
 
 /// Fields safe to expose in API responses (sensitive columns excluded).
 pub const safeFields = [_][]const u8{
-        "id",
+    "id",
 };
 
 /// Validate SystemSocialUser data before insert/update.

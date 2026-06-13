@@ -82,7 +82,10 @@ pub fn defaultZigValue(col: Column) []const u8 {
     }
     if (nullable) return "null";
     return switch (zt[0]) {
-        'i' => "0", 'f' => "0.0", 'b' => "false", '[' => "\"\"",
+        'i' => "0",
+        'f' => "0.0",
+        'b' => "false",
+        '[' => "\"\"",
         else => "null",
     };
 }
@@ -101,10 +104,18 @@ pub fn parseCreateTable(allocator: std.mem.Allocator, sql: []const u8) !Table {
     pos = std.mem.indexOf(u8, sql, "TABLE") orelse return error.InvalidSyntax;
     pos += 5;
     pos = skipWhitespace(sql, pos);
-    if (std.mem.startsWith(u8, sql[pos..], "IF NOT EXISTS")) { pos += 13; pos = skipWhitespace(sql, pos); }
+    if (std.mem.startsWith(u8, sql[pos..], "IF NOT EXISTS")) {
+        pos += 13;
+        pos = skipWhitespace(sql, pos);
+    }
 
     const name_end = blk: {
-        if (sql[pos] == '`' or sql[pos] == '"') { const q = sql[pos]; pos += 1; const e = std.mem.indexOfScalar(u8, sql[pos..], q) orelse return error.InvalidSyntax; break :blk e + pos; }
+        if (sql[pos] == '`' or sql[pos] == '"') {
+            const q = sql[pos];
+            pos += 1;
+            const e = std.mem.indexOfScalar(u8, sql[pos..], q) orelse return error.InvalidSyntax;
+            break :blk e + pos;
+        }
         const e = std.mem.indexOfAny(u8, sql[pos..], " (\t\n\r") orelse return error.InvalidSyntax;
         break :blk pos + e;
     };
@@ -117,7 +128,10 @@ pub fn parseCreateTable(allocator: std.mem.Allocator, sql: []const u8) !Table {
     while (pos < sql.len) {
         pos = skipWhitespace(sql, pos);
         if (pos >= sql.len or sql[pos] == ')') break;
-        if (sql[pos] == ',') { pos += 1; continue; }
+        if (sql[pos] == ',') {
+            pos += 1;
+            continue;
+        }
         if (std.ascii.startsWithIgnoreCase(sql[pos..], "PRIMARY KEY") or std.ascii.startsWithIgnoreCase(sql[pos..], "FOREIGN KEY") or std.ascii.startsWithIgnoreCase(sql[pos..], "UNIQUE") or std.ascii.startsWithIgnoreCase(sql[pos..], "INDEX") or std.ascii.startsWithIgnoreCase(sql[pos..], "KEY") or std.ascii.startsWithIgnoreCase(sql[pos..], "CHECK") or std.ascii.startsWithIgnoreCase(sql[pos..], "CONSTRAINT") or std.ascii.startsWithIgnoreCase(sql[pos..], "FULLTEXT") or std.ascii.startsWithIgnoreCase(sql[pos..], "SPATIAL")) {
             // Skip the entire constraint, handling nested parens.
             var paren_depth: usize = 0;
@@ -136,10 +150,18 @@ pub fn parseCreateTable(allocator: std.mem.Allocator, sql: []const u8) !Table {
         // Dedup: skip if column name already exists (e.g., INDEX lines with column refs)
         var dup = false;
         for (table.columns.items) |existing| {
-            if (std.mem.eql(u8, existing.name, col.name)) { dup = true; break; }
+            if (std.mem.eql(u8, existing.name, col.name)) {
+                dup = true;
+                break;
+            }
         }
-        if (dup) { allocator.free(col.name); allocator.free(col.sql_type); if (col.default_value) |v| allocator.free(v); }
-        else { try table.columns.append(allocator, col); }
+        if (dup) {
+            allocator.free(col.name);
+            allocator.free(col.sql_type);
+            if (col.default_value) |v| allocator.free(v);
+        } else {
+            try table.columns.append(allocator, col);
+        }
     }
     return table;
 }
@@ -152,9 +174,16 @@ fn skipWhitespace(sql: []const u8, pos: usize) usize {
 
 fn parseColumnDef(allocator: std.mem.Allocator, sql: []const u8, pos_ptr: *usize) !Column {
     var pos = pos_ptr.*;
-    const name_start: usize = if (sql[pos] == '`' or sql[pos] == '"') blk: { pos += 1; break :blk pos; } else pos;
+    const name_start: usize = if (sql[pos] == '`' or sql[pos] == '"') blk: {
+        pos += 1;
+        break :blk pos;
+    } else pos;
     const name_end = blk: {
-        if (sql[pos - 1] == '`' or sql[pos - 1] == '"') { const q = sql[name_start - 1]; const e = std.mem.indexOfScalar(u8, sql[name_start..], q) orelse return error.InvalidSyntax; break :blk name_start + e; }
+        if (sql[pos - 1] == '`' or sql[pos - 1] == '"') {
+            const q = sql[name_start - 1];
+            const e = std.mem.indexOfScalar(u8, sql[name_start..], q) orelse return error.InvalidSyntax;
+            break :blk name_start + e;
+        }
         const e = std.mem.indexOfAny(u8, sql[name_start..], " \t\n(") orelse sql.len;
         break :blk name_start + e;
     };
@@ -168,7 +197,9 @@ fn parseColumnDef(allocator: std.mem.Allocator, sql: []const u8, pos_ptr: *usize
         const paren_end = std.mem.indexOfScalar(u8, sql[pos + type_end + 1 ..], ')') orelse return error.InvalidSyntax;
         col_type = sql[pos .. pos + type_end + paren_end + 2];
         pos = pos + type_end + paren_end + 2;
-    } else { pos = pos + type_end; }
+    } else {
+        pos = pos + type_end;
+    }
     pos = skipWhitespace(sql, pos);
 
     var col = Column{ .name = col_name, .sql_type = try allocator.dupe(u8, col_type), .is_nullable = true, .is_primary_key = false, .is_auto_increment = false, .default_value = null, .max_length = null };
@@ -176,18 +207,49 @@ fn parseColumnDef(allocator: std.mem.Allocator, sql: []const u8, pos_ptr: *usize
     while (pos < sql.len and sql[pos] != ',' and sql[pos] != ')' and sql[pos] != '\n') {
         pos = skipWhitespace(sql, pos);
         if (pos >= sql.len) break;
-        if (std.ascii.startsWithIgnoreCase(sql[pos..], "NOT NULL")) { col.is_nullable = false; pos += 8; }
-        else if (std.ascii.startsWithIgnoreCase(sql[pos..], "PRIMARY KEY")) { col.is_primary_key = true; col.is_nullable = false; pos += 11; }
-        else if (std.ascii.startsWithIgnoreCase(sql[pos..], "AUTO_INCREMENT") or std.ascii.startsWithIgnoreCase(sql[pos..], "AUTOINCREMENT")) { col.is_auto_increment = true; col.is_nullable = false; pos += if (std.ascii.startsWithIgnoreCase(sql[pos..], "AUTO_INCREMENT")) @as(usize, 14) else @as(usize, 13); }
-        else if (std.ascii.startsWithIgnoreCase(sql[pos..], "DEFAULT")) {
-            pos += 7; pos = skipWhitespace(sql, pos);
-            if (sql[pos] == '\'' or sql[pos] == '"') { const q = sql[pos]; const e = std.mem.indexOfScalar(u8, sql[pos + 1 ..], q) orelse 0; col.default_value = try allocator.dupe(u8, sql[pos + 1 .. pos + 1 + e]); pos = pos + e + 2; }
-            else { const e = std.mem.indexOfAny(u8, sql[pos..], " ,\n\r)") orelse sql.len; col.default_value = try allocator.dupe(u8, sql[pos .. pos + e]); pos = pos + e; }
+        if (std.ascii.startsWithIgnoreCase(sql[pos..], "NOT NULL")) {
+            col.is_nullable = false;
+            pos += 8;
+        } else if (std.ascii.startsWithIgnoreCase(sql[pos..], "PRIMARY KEY")) {
+            col.is_primary_key = true;
+            col.is_nullable = false;
+            pos += 11;
+        } else if (std.ascii.startsWithIgnoreCase(sql[pos..], "AUTO_INCREMENT") or std.ascii.startsWithIgnoreCase(sql[pos..], "AUTOINCREMENT")) {
+            col.is_auto_increment = true;
+            col.is_nullable = false;
+            pos += if (std.ascii.startsWithIgnoreCase(sql[pos..], "AUTO_INCREMENT")) @as(usize, 14) else @as(usize, 13);
+        } else if (std.ascii.startsWithIgnoreCase(sql[pos..], "DEFAULT")) {
+            pos += 7;
+            pos = skipWhitespace(sql, pos);
+            if (sql[pos] == '\'' or sql[pos] == '"') {
+                const q = sql[pos];
+                const e = std.mem.indexOfScalar(u8, sql[pos + 1 ..], q) orelse 0;
+                col.default_value = try allocator.dupe(u8, sql[pos + 1 .. pos + 1 + e]);
+                pos = pos + e + 2;
+            } else {
+                const e = std.mem.indexOfAny(u8, sql[pos..], " ,\n\r)") orelse sql.len;
+                col.default_value = try allocator.dupe(u8, sql[pos .. pos + e]);
+                pos = pos + e;
+            }
+        } else if (std.ascii.startsWithIgnoreCase(sql[pos..], "NULL")) {
+            col.is_nullable = true;
+            pos += 4;
+        } else if (std.ascii.startsWithIgnoreCase(sql[pos..], "UNIQUE")) {
+            pos += 6;
+        } else if (std.ascii.startsWithIgnoreCase(sql[pos..], "REFERENCES")) {
+            var pd: usize = 0;
+            while (pos < sql.len) {
+                if (sql[pos] == '(') pd += 1;
+                if (sql[pos] == ')') {
+                    if (pd == 0) break;
+                    pd -= 1;
+                }
+                if (sql[pos] == ',' and pd == 0) break;
+                pos += 1;
+            }
+        } else {
+            pos += 1;
         }
-        else if (std.ascii.startsWithIgnoreCase(sql[pos..], "NULL")) { col.is_nullable = true; pos += 4; }
-        else if (std.ascii.startsWithIgnoreCase(sql[pos..], "UNIQUE")) { pos += 6; }
-        else if (std.ascii.startsWithIgnoreCase(sql[pos..], "REFERENCES")) { var pd: usize = 0; while (pos < sql.len) { if (sql[pos] == '(') pd += 1; if (sql[pos] == ')') { if (pd == 0) break; pd -= 1; } if (sql[pos] == ',' and pd == 0) break; pos += 1; } }
-        else { pos += 1; }
         if (pos < sql.len and (sql[pos] == ',' or sql[pos] == ')')) break;
     }
     pos_ptr.* = pos;
@@ -203,7 +265,11 @@ pub fn parseSqlFile(allocator: std.mem.Allocator, sql: []const u8) !std.ArrayLis
         const paren_start = std.mem.indexOfScalar(u8, rest[real_create..], '(') orelse break;
         var depth: usize = 1;
         var end_pos = real_create + paren_start + 1;
-        while (end_pos < rest.len and depth > 0) { if (rest[end_pos] == '(') depth += 1; if (rest[end_pos] == ')') depth -= 1; end_pos += 1; }
+        while (end_pos < rest.len and depth > 0) {
+            if (rest[end_pos] == '(') depth += 1;
+            if (rest[end_pos] == ')') depth -= 1;
+            end_pos += 1;
+        }
         if (depth > 0) break;
         if (end_pos < rest.len and rest[end_pos] == ';') end_pos += 1;
         const table = try parseCreateTable(allocator, rest[real_create..end_pos]);
@@ -217,7 +283,10 @@ fn toPascalCase(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
     var result = std.ArrayList(u8).empty;
     var cap = true;
     for (name) |c| {
-        if (c == '_' or c == '-') { cap = true; continue; }
+        if (c == '_' or c == '-') {
+            cap = true;
+            continue;
+        }
         try result.append(allocator, if (cap) std.ascii.toUpper(c) else c);
         cap = false;
     }
@@ -229,7 +298,11 @@ fn toPascalCase(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
 fn toCamelCase(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
     const pascal = try toPascalCase(allocator, name);
     defer allocator.free(pascal);
-    if (pascal.len > 0) { var r = try allocator.dupe(u8, pascal); r[0] = std.ascii.toLower(r[0]); return r; }
+    if (pascal.len > 0) {
+        var r = try allocator.dupe(u8, pascal);
+        r[0] = std.ascii.toLower(r[0]);
+        return r;
+    }
     return allocator.dupe(u8, "untitled");
 }
 
@@ -253,7 +326,10 @@ fn toCamelCaseSnake(allocator: std.mem.Allocator, snake: []const u8) ![]const u8
     var result = std.ArrayList(u8).empty;
     var cap = false;
     for (snake) |c| {
-        if (c == '_') { cap = true; continue; }
+        if (c == '_') {
+            cap = true;
+            continue;
+        }
         try result.append(allocator, if (cap) std.ascii.toUpper(c) else c);
         cap = false;
     }
@@ -440,7 +516,10 @@ pub fn generateModel(allocator: std.mem.Allocator, table: *const Table, naming: 
     // Find primary key column name
     var pk_name: []const u8 = "id";
     for (table.columns.items) |col| {
-        if (col.is_primary_key) { pk_name = col.name; break; }
+        if (col.is_primary_key) {
+            pk_name = col.name;
+            break;
+        }
     }
 
     var fields = std.ArrayList(u8).empty;
@@ -573,7 +652,6 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         try create_fields.appendSlice(allocator, line);
     }
     defer create_fields.deinit(allocator);
-
 
     return std.fmt.allocPrint(allocator,
         \\// @generated — DO NOT EDIT. AI: edit directly.
@@ -759,7 +837,9 @@ fn pluralize(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
     if (name[name.len - 1] == 'y' and name.len > 1 and !isVowel(name[name.len - 2])) {
         var buf = try allocator.alloc(u8, name.len + 2);
         @memcpy(buf[0 .. name.len - 1], name[0 .. name.len - 1]);
-        buf[name.len - 1] = 'i'; buf[name.len] = 'e'; buf[name.len + 1] = 's';
+        buf[name.len - 1] = 'i';
+        buf[name.len] = 'e';
+        buf[name.len + 1] = 's';
         return buf;
     }
     return std.fmt.allocPrint(allocator, "{s}s", .{name});

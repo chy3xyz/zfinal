@@ -11,9 +11,9 @@ pub fn main(init: std.process.Init) !void {
     var logger = zfinal.Logger.init(allocator);
     logger.setLevel(switch (zfinal.LOG_LEVEL) {
         .debug => .debug,
-        .info  => .info,
-        .warn  => .warn,
-        .err   => .err,
+        .info => .info,
+        .warn => .warn,
+        .err => .err,
     });
     logger.prefix = "app";
     zfinal.initGlobalLogger(logger);

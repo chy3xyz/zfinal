@@ -288,8 +288,6 @@ pub const AuthInterceptor = zfinal.Interceptor{
 // ============ Main Application ============
 
 pub fn main() !void {
-    
-    
     const allocator = std.heap.smp_allocator;
 
     // 初始化数据库

@@ -24,19 +24,19 @@ pub const SystemMailAccountModel = zfinal.Model(SystemMailAccount, "system_mail_
 pub const jsonNaming: zfinal.JsonNaming = .snake_case;
 
 pub const fieldMap = [_]struct { db: []const u8, json: []const u8 }{
-        .{ .db = "id", .json = "id" },
-        .{ .db = "mail", .json = "mail" },
-        .{ .db = "username", .json = "username" },
-        .{ .db = "password", .json = "password" },
-        .{ .db = "host", .json = "host" },
-        .{ .db = "port", .json = "port" },
-        .{ .db = "ssl_enable", .json = "ssl_enable" },
-        .{ .db = "starttls_enable", .json = "starttls_enable" },
-        .{ .db = "creator", .json = "creator" },
-        .{ .db = "create_time", .json = "create_time" },
-        .{ .db = "updater", .json = "updater" },
-        .{ .db = "update_time", .json = "update_time" },
-        .{ .db = "deleted", .json = "deleted" },
+    .{ .db = "id", .json = "id" },
+    .{ .db = "mail", .json = "mail" },
+    .{ .db = "username", .json = "username" },
+    .{ .db = "password", .json = "password" },
+    .{ .db = "host", .json = "host" },
+    .{ .db = "port", .json = "port" },
+    .{ .db = "ssl_enable", .json = "ssl_enable" },
+    .{ .db = "starttls_enable", .json = "starttls_enable" },
+    .{ .db = "creator", .json = "creator" },
+    .{ .db = "create_time", .json = "create_time" },
+    .{ .db = "updater", .json = "updater" },
+    .{ .db = "update_time", .json = "update_time" },
+    .{ .db = "deleted", .json = "deleted" },
 };
 
 pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
@@ -46,18 +46,18 @@ pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
 
 /// Fields safe to expose in API responses (sensitive columns excluded).
 pub const safeFields = [_][]const u8{
-        "id",
-        "mail",
-        "username",
-        "host",
-        "port",
-        "ssl_enable",
-        "starttls_enable",
-        "creator",
-        "create_time",
-        "updater",
-        "update_time",
-        "deleted",
+    "id",
+    "mail",
+    "username",
+    "host",
+    "port",
+    "ssl_enable",
+    "starttls_enable",
+    "creator",
+    "create_time",
+    "updater",
+    "update_time",
+    "deleted",
 };
 
 /// Validate SystemMailAccount data before insert/update.

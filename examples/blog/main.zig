@@ -6,8 +6,6 @@ const DbInit = @import("config/db_init.zig");
 const Interceptors = @import("interceptor/interceptors.zig");
 
 pub fn main() !void {
-    
-    
     const allocator = std.heap.smp_allocator;
 
     // 初始化数据库

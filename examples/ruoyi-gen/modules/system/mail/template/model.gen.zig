@@ -26,21 +26,21 @@ pub const SystemMailTemplateModel = zfinal.Model(SystemMailTemplate, "system_mai
 pub const jsonNaming: zfinal.JsonNaming = .snake_case;
 
 pub const fieldMap = [_]struct { db: []const u8, json: []const u8 }{
-        .{ .db = "id", .json = "id" },
-        .{ .db = "name", .json = "name" },
-        .{ .db = "code", .json = "code" },
-        .{ .db = "account_id", .json = "account_id" },
-        .{ .db = "nickname", .json = "nickname" },
-        .{ .db = "title", .json = "title" },
-        .{ .db = "content", .json = "content" },
-        .{ .db = "params", .json = "params" },
-        .{ .db = "status", .json = "status" },
-        .{ .db = "remark", .json = "remark" },
-        .{ .db = "creator", .json = "creator" },
-        .{ .db = "create_time", .json = "create_time" },
-        .{ .db = "updater", .json = "updater" },
-        .{ .db = "update_time", .json = "update_time" },
-        .{ .db = "deleted", .json = "deleted" },
+    .{ .db = "id", .json = "id" },
+    .{ .db = "name", .json = "name" },
+    .{ .db = "code", .json = "code" },
+    .{ .db = "account_id", .json = "account_id" },
+    .{ .db = "nickname", .json = "nickname" },
+    .{ .db = "title", .json = "title" },
+    .{ .db = "content", .json = "content" },
+    .{ .db = "params", .json = "params" },
+    .{ .db = "status", .json = "status" },
+    .{ .db = "remark", .json = "remark" },
+    .{ .db = "creator", .json = "creator" },
+    .{ .db = "create_time", .json = "create_time" },
+    .{ .db = "updater", .json = "updater" },
+    .{ .db = "update_time", .json = "update_time" },
+    .{ .db = "deleted", .json = "deleted" },
 };
 
 pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
@@ -50,21 +50,21 @@ pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
 
 /// Fields safe to expose in API responses (sensitive columns excluded).
 pub const safeFields = [_][]const u8{
-        "id",
-        "name",
-        "code",
-        "account_id",
-        "nickname",
-        "title",
-        "content",
-        "params",
-        "status",
-        "remark",
-        "creator",
-        "create_time",
-        "updater",
-        "update_time",
-        "deleted",
+    "id",
+    "name",
+    "code",
+    "account_id",
+    "nickname",
+    "title",
+    "content",
+    "params",
+    "status",
+    "remark",
+    "creator",
+    "create_time",
+    "updater",
+    "update_time",
+    "deleted",
 };
 
 /// Validate SystemMailTemplate data before insert/update.

@@ -25,20 +25,20 @@ pub const SystemDictDataModel = zfinal.Model(SystemDictData, "system_dict_data")
 pub const jsonNaming: zfinal.JsonNaming = .snake_case;
 
 pub const fieldMap = [_]struct { db: []const u8, json: []const u8 }{
-        .{ .db = "id", .json = "id" },
-        .{ .db = "sort", .json = "sort" },
-        .{ .db = "label", .json = "label" },
-        .{ .db = "value", .json = "value" },
-        .{ .db = "dict_type", .json = "dict_type" },
-        .{ .db = "status", .json = "status" },
-        .{ .db = "color_type", .json = "color_type" },
-        .{ .db = "css_class", .json = "css_class" },
-        .{ .db = "remark", .json = "remark" },
-        .{ .db = "creator", .json = "creator" },
-        .{ .db = "create_time", .json = "create_time" },
-        .{ .db = "updater", .json = "updater" },
-        .{ .db = "update_time", .json = "update_time" },
-        .{ .db = "deleted", .json = "deleted" },
+    .{ .db = "id", .json = "id" },
+    .{ .db = "sort", .json = "sort" },
+    .{ .db = "label", .json = "label" },
+    .{ .db = "value", .json = "value" },
+    .{ .db = "dict_type", .json = "dict_type" },
+    .{ .db = "status", .json = "status" },
+    .{ .db = "color_type", .json = "color_type" },
+    .{ .db = "css_class", .json = "css_class" },
+    .{ .db = "remark", .json = "remark" },
+    .{ .db = "creator", .json = "creator" },
+    .{ .db = "create_time", .json = "create_time" },
+    .{ .db = "updater", .json = "updater" },
+    .{ .db = "update_time", .json = "update_time" },
+    .{ .db = "deleted", .json = "deleted" },
 };
 
 pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
@@ -48,20 +48,20 @@ pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
 
 /// Fields safe to expose in API responses (sensitive columns excluded).
 pub const safeFields = [_][]const u8{
-        "id",
-        "sort",
-        "label",
-        "value",
-        "dict_type",
-        "status",
-        "color_type",
-        "css_class",
-        "remark",
-        "creator",
-        "create_time",
-        "updater",
-        "update_time",
-        "deleted",
+    "id",
+    "sort",
+    "label",
+    "value",
+    "dict_type",
+    "status",
+    "color_type",
+    "css_class",
+    "remark",
+    "creator",
+    "create_time",
+    "updater",
+    "update_time",
+    "deleted",
 };
 
 /// Validate SystemDictData data before insert/update.

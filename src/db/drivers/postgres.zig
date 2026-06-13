@@ -12,7 +12,8 @@ pub const PostgresDB = struct {
 
     pub fn connect(allocator: std.mem.Allocator, config: DBConfig) !PostgresDB {
         var conn_buf: [1024]u8 = undefined;
-        const conn_slice = try std.fmt.bufPrint(&conn_buf,
+        const conn_slice = try std.fmt.bufPrint(
+            &conn_buf,
             "host={s} port={d} dbname={s} user={s} password={s}",
             .{
                 config.host orelse "localhost",
@@ -68,8 +69,14 @@ pub const PostgresDB = struct {
         defer freeParams(self.allocator, bind);
 
         const res = c.PQexecParams(
-            self.conn, sql.ptr, @intCast(params.len), null,
-            bind.values.ptr, bind.lengths.ptr, bind.formats.ptr, 0,
+            self.conn,
+            sql.ptr,
+            @intCast(params.len),
+            null,
+            bind.values.ptr,
+            bind.lengths.ptr,
+            bind.formats.ptr,
+            0,
         );
         defer c.PQclear(res);
 
@@ -92,8 +99,14 @@ pub const PostgresDB = struct {
         defer freeParams(self.allocator, bind);
 
         const res = c.PQexecParams(
-            self.conn, sql.ptr, @intCast(params.len), null,
-            bind.values.ptr, bind.lengths.ptr, bind.formats.ptr, 0,
+            self.conn,
+            sql.ptr,
+            @intCast(params.len),
+            null,
+            bind.values.ptr,
+            bind.lengths.ptr,
+            bind.formats.ptr,
+            0,
         );
         defer c.PQclear(res);
 
@@ -167,7 +180,10 @@ pub const PostgresDB = struct {
         for (params, 0..) |p, i| {
             formats[i] = 0;
             switch (p) {
-                .null => { values[i] = null; lengths[i] = 0; },
+                .null => {
+                    values[i] = null;
+                    lengths[i] = 0;
+                },
                 .int => |v| {
                     const s = try std.fmt.allocPrint(allocator, "{d}", .{v});
                     defer allocator.free(s);
@@ -200,7 +216,7 @@ pub const PostgresDB = struct {
                     lengths[i] = 0;
                 },
                 .blob => |v| {
-                    values[i] = @constCast(@ptrCast(v.ptr));
+                    values[i] = @ptrCast(@constCast(v.ptr));
                     lengths[i] = @intCast(v.len);
                     formats[i] = 1;
                 },

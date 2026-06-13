@@ -3,8 +3,6 @@ const zfinal = @import("zfinal");
 
 /// 验证码演示 - 展示如何使用验证码功能
 pub fn main() !void {
-    
-    
     const allocator = std.heap.smp_allocator;
 
     // 创建验证码管理器

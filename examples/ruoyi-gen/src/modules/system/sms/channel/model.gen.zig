@@ -24,19 +24,19 @@ pub const SystemSmsChannelModel = zfinal.Model(SystemSmsChannel, "system_sms_cha
 pub const jsonNaming: zfinal.JsonNaming = .snake_case;
 
 pub const fieldMap = [_]struct { db: []const u8, json: []const u8 }{
-        .{ .db = "id", .json = "id" },
-        .{ .db = "signature", .json = "signature" },
-        .{ .db = "code", .json = "code" },
-        .{ .db = "status", .json = "status" },
-        .{ .db = "remark", .json = "remark" },
-        .{ .db = "api_key", .json = "api_key" },
-        .{ .db = "api_secret", .json = "api_secret" },
-        .{ .db = "callback_url", .json = "callback_url" },
-        .{ .db = "creator", .json = "creator" },
-        .{ .db = "create_time", .json = "create_time" },
-        .{ .db = "updater", .json = "updater" },
-        .{ .db = "update_time", .json = "update_time" },
-        .{ .db = "deleted", .json = "deleted" },
+    .{ .db = "id", .json = "id" },
+    .{ .db = "signature", .json = "signature" },
+    .{ .db = "code", .json = "code" },
+    .{ .db = "status", .json = "status" },
+    .{ .db = "remark", .json = "remark" },
+    .{ .db = "api_key", .json = "api_key" },
+    .{ .db = "api_secret", .json = "api_secret" },
+    .{ .db = "callback_url", .json = "callback_url" },
+    .{ .db = "creator", .json = "creator" },
+    .{ .db = "create_time", .json = "create_time" },
+    .{ .db = "updater", .json = "updater" },
+    .{ .db = "update_time", .json = "update_time" },
+    .{ .db = "deleted", .json = "deleted" },
 };
 
 pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
@@ -46,19 +46,19 @@ pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
 
 /// Fields safe to expose in API responses (sensitive columns excluded).
 pub const safeFields = [_][]const u8{
-        "id",
-        "signature",
-        "code",
-        "status",
-        "remark",
-        "api_key",
-        "api_secret",
-        "callback_url",
-        "creator",
-        "create_time",
-        "updater",
-        "update_time",
-        "deleted",
+    "id",
+    "signature",
+    "code",
+    "status",
+    "remark",
+    "api_key",
+    "api_secret",
+    "callback_url",
+    "creator",
+    "create_time",
+    "updater",
+    "update_time",
+    "deleted",
 };
 
 /// Validate SystemSmsChannel data before insert/update.

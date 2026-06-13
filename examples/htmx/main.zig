@@ -32,8 +32,12 @@ const TodoStore = struct {
         self.items.deinit(self.allocator);
     }
 
-    fn lock(self: *TodoStore) void { _ = std.c.pthread_mutex_lock(&self.mutex); }
-    fn unlock(self: *TodoStore) void { _ = std.c.pthread_mutex_unlock(&self.mutex); }
+    fn lock(self: *TodoStore) void {
+        _ = std.c.pthread_mutex_lock(&self.mutex);
+    }
+    fn unlock(self: *TodoStore) void {
+        _ = std.c.pthread_mutex_unlock(&self.mutex);
+    }
 };
 
 var store: TodoStore = undefined;

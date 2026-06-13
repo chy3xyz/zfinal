@@ -21,15 +21,31 @@ else
 const DriverStub = struct {
     conn: ?*anyopaque = null,
     allocator: std.mem.Allocator = undefined,
-    pub fn connect(_: std.mem.Allocator, _: DBConfig) !@This() { return error.DriverNotEnabled; }
+    pub fn connect(_: std.mem.Allocator, _: DBConfig) !@This() {
+        return error.DriverNotEnabled;
+    }
     pub fn close(_: *@This()) void {}
-    pub fn ping(_: *@This()) bool { return false; }
-    pub fn exec(_: *@This(), _: [:0]const u8) !void { return error.DriverNotEnabled; }
-    pub fn execParams(_: *@This(), _: [:0]const u8, _: []const SqlParam) !void { return error.DriverNotEnabled; }
-    pub fn query(_: *@This(), _: [:0]const u8) !ResultSet { return error.DriverNotEnabled; }
-    pub fn queryParams(_: *@This(), _: [:0]const u8, _: []const SqlParam) !ResultSet { return error.DriverNotEnabled; }
-    pub fn lastInsertId(_: *@This()) !i64 { return error.DriverNotEnabled; }
-    pub fn affectedRows(_: *@This()) i64 { return 0; }
+    pub fn ping(_: *@This()) bool {
+        return false;
+    }
+    pub fn exec(_: *@This(), _: [:0]const u8) !void {
+        return error.DriverNotEnabled;
+    }
+    pub fn execParams(_: *@This(), _: [:0]const u8, _: []const SqlParam) !void {
+        return error.DriverNotEnabled;
+    }
+    pub fn query(_: *@This(), _: [:0]const u8) !ResultSet {
+        return error.DriverNotEnabled;
+    }
+    pub fn queryParams(_: *@This(), _: [:0]const u8, _: []const SqlParam) !ResultSet {
+        return error.DriverNotEnabled;
+    }
+    pub fn lastInsertId(_: *@This()) !i64 {
+        return error.DriverNotEnabled;
+    }
+    pub fn affectedRows(_: *@This()) i64 {
+        return 0;
+    }
 };
 
 pub const Driver = union(DBType) {

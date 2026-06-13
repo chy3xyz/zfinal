@@ -26,7 +26,10 @@ pub fn list(ctx: *zfinal.Context) !void {
     const page = try ctx.getParaToIntDefault("page", 1);
     const size = try ctx.getParaToIntDefault("size", 20);
     const items = try service.paginate(db, @intCast(page), @intCast(size), ctx.allocator);
-    defer { for (items) |*it| it.deinit(ctx.allocator); ctx.allocator.free(items); }
+    defer {
+        for (items) |*it| it.deinit(ctx.allocator);
+        ctx.allocator.free(items);
+    }
     const total = try service.count(db);
     try ctx.renderJson(.{ .data = items, .total = total, .page = page, .size = size });
 }
@@ -47,11 +50,11 @@ pub fn create(ctx: *zfinal.Context) !void {
     const db = try pool_ref.acquire();
     defer pool_ref.release(db) catch {};
     const data: service.Data = .{
-            .name = (try ctx.getPara("name")) orelse "",
-            .code = (try ctx.getPara("code")) orelse "",
-            .sort = std.fmt.parseInt(i64, (try ctx.getPara("sort")) orelse "0", 10) catch 0,
-            .data_scope = std.fmt.parseInt(i64, (try ctx.getPara("data_scope")) orelse "0", 10) catch 0,
-            .data_scope_dept_ids = (try ctx.getPara("data_scope_dept_ids")) orelse "",
+        .name = (try ctx.getPara("name")) orelse "",
+        .code = (try ctx.getPara("code")) orelse "",
+        .sort = std.fmt.parseInt(i64, (try ctx.getPara("sort")) orelse "0", 10) catch 0,
+        .data_scope = std.fmt.parseInt(i64, (try ctx.getPara("data_scope")) orelse "0", 10) catch 0,
+        .data_scope_dept_ids = (try ctx.getPara("data_scope_dept_ids")) orelse "",
     };
     const instance = service.create(db, data) catch |e| {
         if (e == error.ValidationError) return err(ctx, .unprocessable_entity, "Validation failed", 42201);

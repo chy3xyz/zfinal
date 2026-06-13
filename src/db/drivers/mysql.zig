@@ -19,13 +19,17 @@ pub const MySQLDB = struct {
         var d_buf: [256]u8 = undefined;
 
         const h_slice = try std.fmt.bufPrint(&h_buf, "{s}", .{config.host orelse "localhost"});
-        h_buf[h_slice.len] = 0; const h: [:0]const u8 = h_buf[0..h_slice.len :0];
+        h_buf[h_slice.len] = 0;
+        const h: [:0]const u8 = h_buf[0..h_slice.len :0];
         const u_slice = try std.fmt.bufPrint(&u_buf, "{s}", .{config.username orelse "root"});
-        u_buf[u_slice.len] = 0; const u: [:0]const u8 = u_buf[0..u_slice.len :0];
+        u_buf[u_slice.len] = 0;
+        const u: [:0]const u8 = u_buf[0..u_slice.len :0];
         const pw_slice = try std.fmt.bufPrint(&p_buf, "{s}", .{config.password orelse ""});
-        p_buf[pw_slice.len] = 0; const pw: [:0]const u8 = p_buf[0..pw_slice.len :0];
+        p_buf[pw_slice.len] = 0;
+        const pw: [:0]const u8 = p_buf[0..pw_slice.len :0];
         const db_slice = try std.fmt.bufPrint(&d_buf, "{s}", .{config.database});
-        d_buf[db_slice.len] = 0; const db: [:0]const u8 = d_buf[0..db_slice.len :0];
+        d_buf[db_slice.len] = 0;
+        const db: [:0]const u8 = d_buf[0..db_slice.len :0];
 
         if (c.mysql_real_connect(conn, h.ptr, u.ptr, pw.ptr, db.ptr, config.port orelse 3306, null, 0) == null) {
             @memset(&p_buf, 0);
@@ -243,7 +247,7 @@ pub const MySQLDB = struct {
                     data.lengths.appendAssumeCapacity(0);
                     data.bind.appendAssumeCapacity(.{
                         .buffer_type = c.MYSQL_TYPE_NULL,
-                        .buffer = @constCast(@ptrCast(&data.ints.items[data.ints.items.len - 1])),
+                        .buffer = @ptrCast(@constCast(&data.ints.items[data.ints.items.len - 1])),
                         .buffer_length = 8,
                         .is_null = &data.is_nulls.items[data.is_nulls.items.len - 1],
                         .length = &data.lengths.items[data.lengths.items.len - 1],
@@ -257,7 +261,7 @@ pub const MySQLDB = struct {
                     data.lengths.appendAssumeCapacity(0);
                     data.bind.appendAssumeCapacity(.{
                         .buffer_type = c.MYSQL_TYPE_LONGLONG,
-                        .buffer = @constCast(@ptrCast(&data.ints.items[data.ints.items.len - 1])),
+                        .buffer = @ptrCast(@constCast(&data.ints.items[data.ints.items.len - 1])),
                         .buffer_length = 8,
                         .is_null = &data.is_nulls.items[data.is_nulls.items.len - 1],
                         .length = &data.lengths.items[data.lengths.items.len - 1],
@@ -271,7 +275,7 @@ pub const MySQLDB = struct {
                     data.lengths.appendAssumeCapacity(0);
                     data.bind.appendAssumeCapacity(.{
                         .buffer_type = c.MYSQL_TYPE_DOUBLE,
-                        .buffer = @constCast(@ptrCast(&data.reals.items[data.reals.items.len - 1])),
+                        .buffer = @ptrCast(@constCast(&data.reals.items[data.reals.items.len - 1])),
                         .buffer_length = 8,
                         .is_null = &data.is_nulls.items[data.is_nulls.items.len - 1],
                         .length = &data.lengths.items[data.lengths.items.len - 1],
@@ -285,7 +289,7 @@ pub const MySQLDB = struct {
                     data.lengths.appendAssumeCapacity(@intCast(v.len));
                     data.bind.appendAssumeCapacity(.{
                         .buffer_type = c.MYSQL_TYPE_STRING,
-                        .buffer = @constCast(@ptrCast(v.ptr)),
+                        .buffer = @ptrCast(@constCast(v.ptr)),
                         .buffer_length = @intCast(v.len),
                         .is_null = &data.is_nulls.items[data.is_nulls.items.len - 1],
                         .length = &data.lengths.items[data.lengths.items.len - 1],

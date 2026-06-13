@@ -24,19 +24,19 @@ pub const InfraConfigModel = zfinal.Model(InfraConfig, "infra_config");
 pub const jsonNaming: zfinal.JsonNaming = .snake_case;
 
 pub const fieldMap = [_]struct { db: []const u8, json: []const u8 }{
-        .{ .db = "id", .json = "id" },
-        .{ .db = "category", .json = "category" },
-        .{ .db = "type", .json = "type" },
-        .{ .db = "name", .json = "name" },
-        .{ .db = "config_key", .json = "config_key" },
-        .{ .db = "value", .json = "value" },
-        .{ .db = "visible", .json = "visible" },
-        .{ .db = "remark", .json = "remark" },
-        .{ .db = "creator", .json = "creator" },
-        .{ .db = "create_time", .json = "create_time" },
-        .{ .db = "updater", .json = "updater" },
-        .{ .db = "update_time", .json = "update_time" },
-        .{ .db = "deleted", .json = "deleted" },
+    .{ .db = "id", .json = "id" },
+    .{ .db = "category", .json = "category" },
+    .{ .db = "type", .json = "type" },
+    .{ .db = "name", .json = "name" },
+    .{ .db = "config_key", .json = "config_key" },
+    .{ .db = "value", .json = "value" },
+    .{ .db = "visible", .json = "visible" },
+    .{ .db = "remark", .json = "remark" },
+    .{ .db = "creator", .json = "creator" },
+    .{ .db = "create_time", .json = "create_time" },
+    .{ .db = "updater", .json = "updater" },
+    .{ .db = "update_time", .json = "update_time" },
+    .{ .db = "deleted", .json = "deleted" },
 };
 
 pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
@@ -46,19 +46,19 @@ pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
 
 /// Fields safe to expose in API responses (sensitive columns excluded).
 pub const safeFields = [_][]const u8{
-        "id",
-        "category",
-        "type",
-        "name",
-        "config_key",
-        "value",
-        "visible",
-        "remark",
-        "creator",
-        "create_time",
-        "updater",
-        "update_time",
-        "deleted",
+    "id",
+    "category",
+    "type",
+    "name",
+    "config_key",
+    "value",
+    "visible",
+    "remark",
+    "creator",
+    "create_time",
+    "updater",
+    "update_time",
+    "deleted",
 };
 
 /// Validate InfraConfig data before insert/update.

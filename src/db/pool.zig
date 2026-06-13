@@ -108,11 +108,17 @@ pub const ConnectionPool = struct {
         var i: usize = 0;
         while (i < self.available.items.len) {
             const conn = self.available.items[i];
-            if (conn.ping()) { i += 1; continue; }
+            if (conn.ping()) {
+                i += 1;
+                continue;
+            }
             conn.deinit();
             self.allocator.destroy(conn);
             for (self.connections.items, 0..) |item, j| {
-                if (item == conn) { _ = self.connections.swapRemove(j); break; }
+                if (item == conn) {
+                    _ = self.connections.swapRemove(j);
+                    break;
+                }
             }
             _ = self.available.swapRemove(i);
             self.current_connections -= 1;

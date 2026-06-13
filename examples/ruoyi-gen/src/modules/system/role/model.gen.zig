@@ -17,12 +17,12 @@ pub const SystemRoleModel = zfinal.Model(SystemRole, "system_role");
 pub const jsonNaming: zfinal.JsonNaming = .snake_case;
 
 pub const fieldMap = [_]struct { db: []const u8, json: []const u8 }{
-        .{ .db = "id", .json = "id" },
-        .{ .db = "name", .json = "name" },
-        .{ .db = "code", .json = "code" },
-        .{ .db = "sort", .json = "sort" },
-        .{ .db = "data_scope", .json = "data_scope" },
-        .{ .db = "data_scope_dept_ids", .json = "data_scope_dept_ids" },
+    .{ .db = "id", .json = "id" },
+    .{ .db = "name", .json = "name" },
+    .{ .db = "code", .json = "code" },
+    .{ .db = "sort", .json = "sort" },
+    .{ .db = "data_scope", .json = "data_scope" },
+    .{ .db = "data_scope_dept_ids", .json = "data_scope_dept_ids" },
 };
 
 pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
@@ -32,12 +32,12 @@ pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
 
 /// Fields safe to expose in API responses (sensitive columns excluded).
 pub const safeFields = [_][]const u8{
-        "id",
-        "name",
-        "code",
-        "sort",
-        "data_scope",
-        "data_scope_dept_ids",
+    "id",
+    "name",
+    "code",
+    "sort",
+    "data_scope",
+    "data_scope_dept_ids",
 };
 
 /// Validate SystemRole data before insert/update.

@@ -45,23 +45,44 @@ pub fn ModelWithPK(comptime T: type, comptime table_name: []const u8, comptime p
 
             fn insert(self: *Instance, db: *DB) !void {
                 @setEvalBranchQuota(20000);
-                const param_count = comptime blk: { var n: usize = 0; for (fields) |f| { if (!std.mem.eql(u8, f.name, pk_name)) n += 1; } break :blk n; };
+                const param_count = comptime blk: {
+                    var n: usize = 0;
+                    for (fields) |f| {
+                        if (!std.mem.eql(u8, f.name, pk_name)) n += 1;
+                    }
+                    break :blk n;
+                };
                 var params: [param_count]SqlParam = undefined;
                 comptime var pi: usize = 0;
                 inline for (fields) |f| {
                     if (comptime std.mem.eql(u8, f.name, pk_name)) continue;
-                    params[pi] = toSqlParam(@field(self.data, f.name)); pi += 1;
+                    params[pi] = toSqlParam(@field(self.data, f.name));
+                    pi += 1;
                 }
                 try db.execParams(@ptrCast(comptime blk: {
-                    var cbuf: [1024]u8 = undefined; var vbuf: [512]u8 = undefined; var cl: usize = 0; var vl: usize = 0;
+                    var cbuf: [1024]u8 = undefined;
+                    var vbuf: [512]u8 = undefined;
+                    var cl: usize = 0;
+                    var vl: usize = 0;
                     var idx: usize = 1;
                     for (fields) |f| {
                         if (std.mem.eql(u8, f.name, pk_name)) continue;
-                        if (cl > 0) { cbuf[cl]=','; cbuf[cl+1]=' '; cl+=2; }
-                        @memcpy(cbuf[cl..][0..f.name.len], f.name); cl += f.name.len;
-                        if (vl > 0) { vbuf[vl]=','; vbuf[vl+1]=' '; vl+=2; }
+                        if (cl > 0) {
+                            cbuf[cl] = ',';
+                            cbuf[cl + 1] = ' ';
+                            cl += 2;
+                        }
+                        @memcpy(cbuf[cl..][0..f.name.len], f.name);
+                        cl += f.name.len;
+                        if (vl > 0) {
+                            vbuf[vl] = ',';
+                            vbuf[vl + 1] = ' ';
+                            vl += 2;
+                        }
                         const num = std.fmt.comptimePrint("${d}", .{idx});
-                        for (num, 0..) |c, j| { vbuf[vl + j] = c; }
+                        for (num, 0..) |c, j| {
+                            vbuf[vl + j] = c;
+                        }
                         vl += num.len;
                         idx += 1;
                     }
@@ -72,23 +93,38 @@ pub fn ModelWithPK(comptime T: type, comptime table_name: []const u8, comptime p
 
             fn update(self: *Instance, db: *DB, id: i64) !void {
                 @setEvalBranchQuota(20000);
-                const param_count = comptime blk: { var n: usize = 0; for (fields) |f| { if (!std.mem.eql(u8, f.name, pk_name)) n += 1; } break :blk n + 1; };
+                const param_count = comptime blk: {
+                    var n: usize = 0;
+                    for (fields) |f| {
+                        if (!std.mem.eql(u8, f.name, pk_name)) n += 1;
+                    }
+                    break :blk n + 1;
+                };
                 var params: [param_count]SqlParam = undefined;
                 comptime var pj: usize = 0;
                 inline for (fields) |f| {
                     if (comptime std.mem.eql(u8, f.name, pk_name)) continue;
-                    params[pj] = toSqlParam(@field(self.data, f.name)); pj += 1;
+                    params[pj] = toSqlParam(@field(self.data, f.name));
+                    pj += 1;
                 }
                 params[param_count - 1] = SqlParam{ .int = id };
                 try db.execParams(@ptrCast(comptime blk: {
-                    var sbuf: [2048]u8 = undefined; var sl: usize = 0;
+                    var sbuf: [2048]u8 = undefined;
+                    var sl: usize = 0;
                     var idx: usize = 1;
                     for (fields) |f| {
                         if (std.mem.eql(u8, f.name, pk_name)) continue;
-                        if (sl > 0) { sbuf[sl]=','; sbuf[sl+1]=' '; sl+=2; }
-                        @memcpy(sbuf[sl..][0..f.name.len], f.name); sl += f.name.len;
+                        if (sl > 0) {
+                            sbuf[sl] = ',';
+                            sbuf[sl + 1] = ' ';
+                            sl += 2;
+                        }
+                        @memcpy(sbuf[sl..][0..f.name.len], f.name);
+                        sl += f.name.len;
                         const eq = std.fmt.comptimePrint(" = ${d}", .{idx});
-                        for (eq, 0..) |c, j| { sbuf[sl + j] = c; }
+                        for (eq, 0..) |c, j| {
+                            sbuf[sl + j] = c;
+                        }
                         sl += eq.len;
                         idx += 1;
                     }
@@ -98,7 +134,10 @@ pub fn ModelWithPK(comptime T: type, comptime table_name: []const u8, comptime p
             }
 
             pub fn delete(self: *Instance, db: *DB) !void {
-                if (self.id) |id_val| { try Self.deleteById(db, id_val); self.id = null; }
+                if (self.id) |id_val| {
+                    try Self.deleteById(db, id_val);
+                    self.id = null;
+                }
             }
         };
 
@@ -119,7 +158,10 @@ pub fn ModelWithPK(comptime T: type, comptime table_name: []const u8, comptime p
             var result = try db.query(sql);
             defer result.deinit();
             var list = std.ArrayList(Instance).empty;
-            errdefer { for (list.items) |*item| item.deinit(allocator); list.deinit(allocator); }
+            errdefer {
+                for (list.items) |*item| item.deinit(allocator);
+                list.deinit(allocator);
+            }
             while (result.next()) {
                 if (result.getCurrentRowMap()) |row| try list.append(allocator, try mapFromRow(allocator, row));
             }
@@ -155,7 +197,10 @@ pub fn ModelWithPK(comptime T: type, comptime table_name: []const u8, comptime p
             var result = try db.queryParams(sql, &.{ SqlParam{ .int = @intCast(page_size) }, SqlParam{ .int = @intCast(offset) } });
             defer result.deinit();
             var list = std.ArrayList(Instance).empty;
-            errdefer { for (list.items) |*item| item.deinit(allocator); list.deinit(allocator); }
+            errdefer {
+                for (list.items) |*item| item.deinit(allocator);
+                list.deinit(allocator);
+            }
             while (result.next()) {
                 if (result.getCurrentRowMap()) |row| try list.append(allocator, try mapFromRow(allocator, row));
             }
@@ -175,7 +220,9 @@ pub fn ModelWithPK(comptime T: type, comptime table_name: []const u8, comptime p
             defer db.allocator.free(sql);
             var result = try db.query(sql);
             defer result.deinit();
-            if (result.next()) { if (try result.getInt(0)) |c| return c; }
+            if (result.next()) {
+                if (try result.getInt(0)) |c| return c;
+            }
             return 0;
         }
 
@@ -268,9 +315,14 @@ test "model: findAll" {
     var item1 = ItemModel.Instance{ .id = null, .data = .{ .id = 0, .title = "a" } };
     var item2 = ItemModel.Instance{ .id = null, .data = .{ .id = 0, .title = "b" } };
     var item3 = ItemModel.Instance{ .id = null, .data = .{ .id = 0, .title = "c" } };
-    try item1.insert(&db); try item2.insert(&db); try item3.insert(&db);
+    try item1.insert(&db);
+    try item2.insert(&db);
+    try item3.insert(&db);
     const all = try ItemModel.findAll(&db, a);
-    defer { for (all) |*it| it.deinit(a); a.free(all); }
+    defer {
+        for (all) |*it| it.deinit(a);
+        a.free(all);
+    }
     try std.testing.expectEqual(@as(usize, 3), all.len);
 }
 

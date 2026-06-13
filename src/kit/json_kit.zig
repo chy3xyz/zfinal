@@ -17,9 +17,18 @@ pub const JsonKit = struct {
         var in_string = false;
         var escaped = false;
         for (json_str) |c| {
-            if (escaped) { escaped = false; continue; }
-            if (c == '\\' and in_string) { escaped = true; continue; }
-            if (c == '"') { in_string = !in_string; continue; }
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (c == '\\' and in_string) {
+                escaped = true;
+                continue;
+            }
+            if (c == '"') {
+                in_string = !in_string;
+                continue;
+            }
             if (in_string) continue;
             if (c == '{' or c == '[') {
                 depth += 1;

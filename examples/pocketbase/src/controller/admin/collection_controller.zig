@@ -27,7 +27,7 @@ pub fn list(ctx: *zfinal.Context) !void {
     var html = std.ArrayList(u8).empty;
     defer html.deinit(ctx.allocator);
 
-    try html.appendSlice(ctx.allocator, 
+    try html.appendSlice(ctx.allocator,
         \\<!DOCTYPE html><html><head><title>Collections</title><script src="https://cdn.tailwindcss.com"></script></head>
         \\<body class="bg-gray-50 font-sans text-gray-800 h-screen hidden sm:block">
         \\  <div class="flex h-screen overflow-hidden">
@@ -87,7 +87,7 @@ pub fn list(ctx: *zfinal.Context) !void {
         const row = rs.getCurrentRowMap().?;
         const name = row.get("name").?;
         const t_type = row.get("type").?;
-        try html.print(ctx.allocator, 
+        try html.print(ctx.allocator,
             \\        <tr class="hover:bg-indigo-50/30 transition group">
             \\          <td class="p-4 pl-6">
             \\            <a href="/admin/collections/{s}/records" class="font-bold text-indigo-600 hover:text-indigo-800 hover:underline flex items-center gap-2">
@@ -108,14 +108,14 @@ pub fn list(ctx: *zfinal.Context) !void {
     }
 
     if (count == 0) {
-        try html.appendSlice(ctx.allocator, 
+        try html.appendSlice(ctx.allocator,
             \\        <tr>
             \\          <td colspan="3" class="p-8 text-center text-gray-400 italic">No collections found. Create your first table above.</td>
             \\        </tr>
         );
     }
 
-    try html.appendSlice(ctx.allocator, 
+    try html.appendSlice(ctx.allocator,
         \\        </tbody>
         \\      </table>
         \\    </div>

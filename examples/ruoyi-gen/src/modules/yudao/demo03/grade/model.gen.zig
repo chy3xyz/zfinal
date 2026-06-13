@@ -21,16 +21,16 @@ pub const YudaoDemo03GradeModel = zfinal.Model(YudaoDemo03Grade, "yudao_demo03_g
 pub const jsonNaming: zfinal.JsonNaming = .snake_case;
 
 pub const fieldMap = [_]struct { db: []const u8, json: []const u8 }{
-        .{ .db = "id", .json = "id" },
-        .{ .db = "student_id", .json = "student_id" },
-        .{ .db = "name", .json = "name" },
-        .{ .db = "teacher", .json = "teacher" },
-        .{ .db = "creator", .json = "creator" },
-        .{ .db = "create_time", .json = "create_time" },
-        .{ .db = "updater", .json = "updater" },
-        .{ .db = "update_time", .json = "update_time" },
-        .{ .db = "deleted", .json = "deleted" },
-        .{ .db = "tenant_id", .json = "tenant_id" },
+    .{ .db = "id", .json = "id" },
+    .{ .db = "student_id", .json = "student_id" },
+    .{ .db = "name", .json = "name" },
+    .{ .db = "teacher", .json = "teacher" },
+    .{ .db = "creator", .json = "creator" },
+    .{ .db = "create_time", .json = "create_time" },
+    .{ .db = "updater", .json = "updater" },
+    .{ .db = "update_time", .json = "update_time" },
+    .{ .db = "deleted", .json = "deleted" },
+    .{ .db = "tenant_id", .json = "tenant_id" },
 };
 
 pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
@@ -40,16 +40,16 @@ pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
 
 /// Fields safe to expose in API responses (sensitive columns excluded).
 pub const safeFields = [_][]const u8{
-        "id",
-        "student_id",
-        "name",
-        "teacher",
-        "creator",
-        "create_time",
-        "updater",
-        "update_time",
-        "deleted",
-        "tenant_id",
+    "id",
+    "student_id",
+    "name",
+    "teacher",
+    "creator",
+    "create_time",
+    "updater",
+    "update_time",
+    "deleted",
+    "tenant_id",
 };
 
 /// Validate YudaoDemo03Grade data before insert/update.
