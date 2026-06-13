@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-06-13
+
+### Fixed
+- **Zig 0.17-dev test runner crash**: `zig build test` now runs the compiled test binary directly to avoid the `EndOfStream` panic in server-mode runner on `0.17.0-dev.813+2153f8143`. Tests pass: 144 passed; 2 skipped; 0 failed.
+
+### Changed
+- **Code style**: Applied `zig fmt` across 346 Zig files in `src/`, `test/`, `tools/`, `examples/`, and `benchmark/`.
+
+### Added
+- **Project skill `zfinal-health`**: Documents the ZFinal health-check workflow, Health Stack commands, and the Zig 0.17-dev runner workaround.
+- **CLAUDE.md**: Added Health Stack and ZFinal development notes.
+
 ## [0.8.0] - 2026-06-01
 
 ### Added
