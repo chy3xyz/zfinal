@@ -116,10 +116,13 @@ pub fn build(b: *std.Build) void {
     zfinal_mod.addImport("build_options", log_opts.createModule());
 
     // Tests (unit)
+    // NOTE: Zig 0.17-dev server-mode test runner crashes with EndOfStream on this
+    // machine, so run the compiled test binary directly in standalone mode.
     const lib_unit_tests = b.addTest(.{
         .root_module = zfinal_mod,
     });
-    const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
+    const run_lib_unit_tests = b.addRunFile(lib_unit_tests.getEmittedBin());
+    run_lib_unit_tests.expectExitCode(0);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
 
