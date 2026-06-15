@@ -72,11 +72,14 @@ pub fn main(init: std.process.Init) !void {
         },
         .generate => {
             if (args.len < 4) {
-                std.debug.print("Usage: {s} generate <type> <name>\n", .{args[0]});
+                std.debug.print("Usage: {s} generate <type> <name> [--json]\n", .{args[0]});
                 std.debug.print("Types: controller, model, interceptor, plugin\n", .{});
+                std.debug.print("      handler, service, middleware, task\n", .{});
+                std.debug.print("Flags: --json   Emit machine-readable manifest.\n", .{});
                 return;
             }
-            try generateCode(allocator, args[2], args[3], false);
+            const json_mode = hasFlag(args, "--json");
+            try generateCode(allocator, args[2], args[3], false, json_mode);
         },
         .api => {
             if (args.len < 3) {
@@ -84,7 +87,7 @@ pub fn main(init: std.process.Init) !void {
                 std.debug.print("Generate API handler (JSON output)\n", .{});
                 return;
             }
-            try generateCode(allocator, "handler", args[2], true);
+            try generateCode(allocator, "handler", args[2], true, false);
         },
         .migrate => {
             if (args.len < 3) {
@@ -130,14 +133,16 @@ pub fn main(init: std.process.Init) !void {
         },
         .crud_sql => {
             if (args.len < 3) {
-                std.debug.print("Usage: {s} crud:sql <sql_file> [project_name] [--force]\n", .{args[0]});
+                std.debug.print("Usage: {s} crud:sql <sql_file> [project_name] [--force] [--json]\n", .{args[0]});
                 std.debug.print("  project_name  Optional. Creates project dir and generates inside it.\n", .{});
                 std.debug.print("  --force       Overwrite existing files instead of generating .gen.new\n", .{});
+                std.debug.print("  --json        Emit machine-readable manifest for AI agents.\n", .{});
                 return;
             }
-            const project_name = if (args.len > 3 and !std.mem.eql(u8, args[3], "--force")) args[3] else null;
+            const project_name = if (args.len > 3 and !std.mem.eql(u8, args[3], "--force") and !std.mem.eql(u8, args[3], "--json")) args[3] else null;
             const force = hasFlag(args, "--force");
-            try handleCrudFromSql(allocator, args[2], project_name, force);
+            const json_mode = hasFlag(args, "--json");
+            try handleCrudFromSql(allocator, args[2], project_name, force, json_mode);
         },
         .crud_dsn => {
             if (args.len < 3) {
@@ -342,28 +347,76 @@ fn createProject(allocator: std.mem.Allocator, project_name: []const u8, clean: 
     std.debug.print("\n", .{});
 }
 
-fn generateCode(allocator: std.mem.Allocator, gen_type: []const u8, name: []const u8, is_api: bool) !void {
+fn generateCode(allocator: std.mem.Allocator, gen_type: []const u8, name: []const u8, is_api: bool, json_mode: bool) !void {
     if (name.len == 0) {
         std.debug.print("Error: Name is required\n", .{});
         return;
     }
 
+    var buf = std.ArrayList(u8).empty;
+    defer buf.deinit(allocator);
+
     if (std.mem.eql(u8, gen_type, "handler")) {
         try generateHandler(allocator, name, is_api);
+        try buf.appendSlice(allocator, "src/handler/");
+        try buf.appendSlice(allocator, name);
+        try buf.appendSlice(allocator, ".zig");
     } else if (std.mem.eql(u8, gen_type, "model")) {
         try generateModel(allocator, name);
+        try buf.appendSlice(allocator, "src/model/");
+        try buf.appendSlice(allocator, name);
+        try buf.appendSlice(allocator, ".zig");
     } else if (std.mem.eql(u8, gen_type, "middleware")) {
         try generateMiddleware(allocator, name);
+        try buf.appendSlice(allocator, "src/middleware/");
+        try buf.appendSlice(allocator, name);
+        try buf.appendSlice(allocator, ".zig");
     } else if (std.mem.eql(u8, gen_type, "service")) {
         try generateService(allocator, name);
+        try buf.appendSlice(allocator, "src/service/");
+        try buf.appendSlice(allocator, name);
+        try buf.appendSlice(allocator, ".zig");
     } else if (std.mem.eql(u8, gen_type, "task")) {
         try generateTask(allocator, name);
+        try buf.appendSlice(allocator, "src/task/");
+        try buf.appendSlice(allocator, name);
+        try buf.appendSlice(allocator, ".zig");
     } else if (std.mem.eql(u8, gen_type, "controller")) {
         // Backward compat: map controller → handler
         try generateHandler(allocator, name, is_api);
+        try buf.appendSlice(allocator, "src/handler/");
+        try buf.appendSlice(allocator, name);
+        try buf.appendSlice(allocator, ".zig");
     } else {
         std.debug.print("Unknown type: {s}\n", .{gen_type});
         std.debug.print("Available: handler, model, middleware, service, task\n", .{});
+        return;
+    }
+
+    if (json_mode) {
+        var out_buf = std.ArrayList(u8).empty;
+        defer out_buf.deinit(allocator);
+        try out_buf.appendSlice(allocator, "{\n");
+        try out_buf.appendSlice(allocator, "  \"$schema\": \"https://zfinal.dev/schemas/manifest-1.json\",\n");
+        try out_buf.appendSlice(allocator, "  \"version\": \"0.9.0\",\n");
+        try out_buf.appendSlice(allocator, "  \"generator\": \"zf g\",\n");
+        try out_buf.appendSlice(allocator, "  \"type\": \"");
+        try appendJsonString(allocator, &out_buf, gen_type);
+        try out_buf.appendSlice(allocator, "\",\n");
+        try out_buf.appendSlice(allocator, "  \"name\": \"");
+        try appendJsonString(allocator, &out_buf, name);
+        try out_buf.appendSlice(allocator, "\",\n");
+        try out_buf.appendSlice(allocator, "  \"file\": \"");
+        try appendJsonString(allocator, &out_buf, buf.items);
+        try out_buf.appendSlice(allocator, "\",\n");
+        try out_buf.appendSlice(allocator, "  \"next_steps\": [\n");
+        try out_buf.appendSlice(allocator, "    \"Fill the generated handler/service body\",\n");
+        try out_buf.appendSlice(allocator, "    \"Add route registration: try app.get(\\\"/<path>\\\", <Name>Handler.<action>)\",\n");
+        try out_buf.appendSlice(allocator, "    \"Run: zf check && zig build test\"\n");
+        try out_buf.appendSlice(allocator, "  ]\n");
+        try out_buf.appendSlice(allocator, "}\n");
+        var out = std.Io.File.stdout();
+        try out.writeStreamingAll(io, out_buf.items);
     }
 }
 
@@ -971,7 +1024,7 @@ fn handleCrudFromDsn(allocator: std.mem.Allocator, dsn_url: []const u8) !void {
     try generateIntegrationTestEntry(allocator, tables.items);
 }
 
-fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8, project_name: ?[]const u8, force: bool) !void {
+fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8, project_name: ?[]const u8, force: bool, json_mode: bool) !void {
     // Resolve SQL path to absolute before any chdir
     var resolved_sql: []const u8 = undefined;
     if (std.fs.path.isAbsolute(sql_path)) {
@@ -1052,6 +1105,115 @@ fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8, project
 
     // Step 5: Generate integration test entry point
     try generateIntegrationTestEntry(allocator, tables.items);
+
+    // Step 6: Emit machine-readable manifest for AI agents
+    if (json_mode) {
+        try emitJsonManifest(allocator, sql_path, tables.items);
+    }
+}
+
+/// Emit a JSON manifest on stdout describing the generated artifacts.
+/// AI agents parse this to know which files to edit and which fields to fill.
+fn emitJsonManifest(allocator: std.mem.Allocator, sql_path: []const u8, tables: []codegen.Table) !void {
+    var buf = std.ArrayList(u8).empty;
+    defer buf.deinit(allocator);
+
+    try buf.appendSlice(allocator, "{\n");
+    try buf.appendSlice(allocator, "  \"$schema\": \"https://zfinal.dev/schemas/manifest-1.json\",\n");
+    try buf.appendSlice(allocator, "  \"version\": \"0.9.0\",\n");
+
+    // sql_path
+    try buf.appendSlice(allocator, "  \"sql_path\": \"");
+    try appendJsonString(allocator, &buf, sql_path);
+    try buf.appendSlice(allocator, "\",\n");
+
+    try buf.appendSlice(allocator, "  \"tables\": [\n");
+    for (tables, 0..) |*table, i| {
+        if (i > 0) try buf.appendSlice(allocator, ",\n");
+        try buf.appendSlice(allocator, "    {\n");
+        try buf.appendSlice(allocator, "      \"name\": \"");
+        try appendJsonString(allocator, &buf, table.name);
+        try buf.appendSlice(allocator, "\",\n");
+        try buf.appendSlice(allocator, "      \"pascal_name\": \"");
+        try appendJsonString(allocator, &buf, table.pascal_name);
+        try buf.appendSlice(allocator, "\",\n");
+
+        // Files
+        try buf.appendSlice(allocator, "      \"files\": {\n");
+        try buf.appendSlice(allocator, "        \"model\": \"");
+        try appendJsonString(allocator, &buf, table.name);
+        try buf.appendSlice(allocator, "/model.zig\",\n");
+        try buf.appendSlice(allocator, "        \"service\": \"");
+        try appendJsonString(allocator, &buf, table.name);
+        try buf.appendSlice(allocator, "/service.zig\",\n");
+        try buf.appendSlice(allocator, "        \"handler\": \"");
+        try appendJsonString(allocator, &buf, table.name);
+        try buf.appendSlice(allocator, "/handler.zig\",\n");
+        try buf.appendSlice(allocator, "        \"routes\": \"");
+        try appendJsonString(allocator, &buf, table.name);
+        try buf.appendSlice(allocator, "/routes.zig\"\n");
+        try buf.appendSlice(allocator, "      },\n");
+
+        // AI edit zones
+        try buf.appendSlice(allocator, "      \"ai_edit_zones\": [\n");
+        try buf.appendSlice(allocator, "        { \"file\": \"service.zig\", \"markers\": [\"// ai-edit-zone: business rules\", \"// ai-edit-zone: validation\"], \"purpose\": \"custom business logic beyond generated CRUD\" },\n");
+        try buf.appendSlice(allocator, "        { \"file\": \"handler.zig\", \"markers\": [\"// ai-edit-zone: auth check\", \"// ai-edit-zone: response shaping\"], \"purpose\": \"per-route auth, response transformation\" }\n");
+        try buf.appendSlice(allocator, "      ],\n");
+
+        // Fields
+        try buf.appendSlice(allocator, "      \"fields\": [\n");
+        for (table.columns.items, 0..) |col, j| {
+            if (j > 0) try buf.appendSlice(allocator, ",\n");
+            try buf.appendSlice(allocator, "        { \"name\": \"");
+            try appendJsonString(allocator, &buf, col.name);
+            try buf.appendSlice(allocator, "\", \"sql_type\": \"");
+            try appendJsonString(allocator, &buf, col.sql_type);
+            try buf.appendSlice(allocator, "\", \"nullable\": ");
+            try buf.appendSlice(allocator, if (col.is_nullable) "true" else "false");
+            try buf.appendSlice(allocator, ", \"primary_key\": ");
+            try buf.appendSlice(allocator, if (col.is_primary_key) "true" else "false");
+            try buf.appendSlice(allocator, " }");
+        }
+        try buf.appendSlice(allocator, "\n      ]\n");
+        try buf.appendSlice(allocator, "    }");
+    }
+    try buf.appendSlice(allocator, "\n  ],\n");
+
+    // Next steps for the AI
+    try buf.appendSlice(allocator, "  \"next_steps\": [\n");
+    try buf.appendSlice(allocator, "    \"Review each handler.zig — fill ai-edit-zones for auth, response shaping, custom errors\",\n");
+    try buf.appendSlice(allocator, "    \"Add routes via zf route <Table> /<path> (if not auto-generated)\",\n");
+    try buf.appendSlice(allocator, "    \"Run: zf check && zig build test\",\n");
+    try buf.appendSlice(allocator, "    \"Commit when all checks pass\"\n");
+    try buf.appendSlice(allocator, "  ]\n");
+    try buf.appendSlice(allocator, "}\n");
+
+    // Write to stdout so AI can pipe
+    var out = std.Io.File.stdout();
+    try out.writeStreamingAll(io, buf.items);
+}
+
+/// Append a JSON-escaped string (no surrounding quotes).
+fn appendJsonString(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), s: []const u8) !void {
+    for (s) |c| {
+        switch (c) {
+            '"' => try buf.appendSlice(allocator, "\\\""),
+            '\\' => try buf.appendSlice(allocator, "\\\\"),
+            '\n' => try buf.appendSlice(allocator, "\\n"),
+            '\r' => try buf.appendSlice(allocator, "\\r"),
+            '\t' => try buf.appendSlice(allocator, "\\t"),
+            0x08 => try buf.appendSlice(allocator, "\\b"),
+            0x0C => try buf.appendSlice(allocator, "\\f"),
+            else => if (c < 0x20) {
+                var esc: [8]u8 = undefined;
+                const len = try std.fmt.bufPrint(&esc, "\\u{x:0>4}", .{c});
+                try buf.appendSlice(allocator, len);
+            } else {
+                const ch: [1]u8 = .{c};
+                try buf.appendSlice(allocator, &ch);
+            },
+        }
+    }
 }
 
 /// Generate modules/manifest.gen.zig — auto-discovers and registers all module routes.

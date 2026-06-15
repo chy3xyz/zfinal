@@ -507,6 +507,14 @@ pub fn generateService(allocator: std.mem.Allocator, table: *const Table) ![]con
         \\    var item = try {s}Model.findById(db, id, db.allocator) orelse return error.NotFound;
         \\    try item.delete(db);
         \\}}
+        \\
+        \\// ── ai-edit-zone: business rules ─────────────────────────────────
+        \\// AI: add custom business logic beyond generated CRUD. Examples:
+        \\//   - computed fields (e.g. "is_adult" derived from birth_date)
+        \\//   - cross-table validation (e.g. "order total == sum(items)")
+        \\//   - audit fields (created_by, updated_by pulled from ctx session)
+        \\// Keep functions pure (no ctx mutation) when possible.
+        \\// ─────────────────────────────────────────────────────────────────
     , .{ name, name, name, name, name, name, name, name, name, name, name, name, name, name, name });
 }
 
@@ -622,6 +630,11 @@ pub fn generateModel(allocator: std.mem.Allocator, table: *const Table, naming: 
         \\    _ = safeFields; // comptime-verified field list
         \\    try ctx.renderJson(instance);
         \\}}
+        \\
+        \\// ── ai-edit-zone: model hooks ────────────────────────────────────
+        \\// AI: add custom hooks here (e.g. beforeSave, afterLoad). Keep tiny —
+        \\// large logic belongs in service.zig.
+        \\// ─────────────────────────────────────────────────────────────────
         \\
     , .{ table.pascal_name, table.name, table.pascal_name, fields.items, table.pascal_name, table.pascal_name, table.name, pk_name, naming_str, json_map.items, safe_fields.items, table.pascal_name, table.pascal_name, validation.items });
 }
@@ -750,6 +763,14 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\    const id_str = ctx.getPathParam("id") orelse return error.InvalidId;
         \\    return std.fmt.parseInt(i64, id_str, 10) catch return error.InvalidId;
         \\}}
+        \\
+        \\// ── ai-edit-zone: handler hooks ─────────────────────────────────
+        \\// AI: add per-route auth checks, response shaping, or custom error
+        \\// mappings here. Typical patterns:
+        \\//   pub fn list(ctx) -> requireAuth(ctx, ...) -> then list
+        \\//   pub fn show(ctx) -> then add eager-load fields
+        \\// Keep hooks small; promote complex logic to a new business.zig.
+        \\// ────────────────────────────────────────────────────────────────
     , .{ deps_prefix, deps_prefix, deps_prefix, name, name, name, create_fields.items, name, create_fields.items, name, name, create_fields.items });
 }
 
