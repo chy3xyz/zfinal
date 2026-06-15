@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.5] - 2026-06-13
+
+### Added
+- **`zf admin <sql>` command**: emits vben-style admin HTML for every table in a SQL schema. 4 templates per table: `admin.html` (list + table + pagination + modal), `admin_form.html`, `admin_row.html`, plus a shared `admin_layout.html` (topbar + dark sidebar).
+- **All assets via CDN**: Tailwind CSS (Play CDN with JIT), HTMX 1.9.10, Alpine.js 3.13. No local build step.
+- **vben design tokens**: deep blue (`#2b85e4`), dark sidebar (`#001529`), gray content area (`#f0f2f5`), all wired through `tailwind.config`.
+- **SQL-type → input mapping**: INTEGER→number, REAL→number-step, BOOLEAN→checkbox, DATE→date, DATETIME→datetime-local, TEXT>200→textarea, TEXT→text.
+- **AI edit zones in HTML**: each generated template contains `// ── ai-edit-zone: ...` markers for search filters, row actions, form layout, topbar, sidebar.
+- **`examples/htmx-admin/`**: runnable demo with `main.zig`, `schema.sql`, and generated `public/` directory. Run with `zig build run-htmx-admin`.
+
 ## [0.9.4] - 2026-06-13
 
 ### Changed
