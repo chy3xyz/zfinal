@@ -147,6 +147,7 @@ pub fn build(b: *std.Build) void {
     // Example runners
     addExample(b, zfinal_mod, "hello", "examples/hello-world/main.zig", "Run hello-world demo");
     addExample(b, zfinal_mod, "blog", "examples/blog-single/main.zig", "Run blog-single demo");
+    addExample(b, zfinal_mod, "ai-blog-5min", "examples/ai-blog-5min/main.zig", "Run 5-minute AI speedrun demo (blog CRUD scaffold)");
     addExample(b, zfinal_mod, "htmx", "examples/htmx/main.zig", "Run HTMX demo");
     addExample(b, zfinal_mod, "ws", "examples/websocket/main.zig", "Run WebSocket demo");
     addExample(b, zfinal_mod, "edge", "examples/edge/main.zig", "Run edge computing demo");
