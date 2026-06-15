@@ -17,6 +17,7 @@ Key routing rules for this project:
 - typecheck: zig build
 - lint: zig fmt --check src/ test/ benchmark/ tools/ examples/ build.zig
 - test: zig build test
+- codegen-regression: zig build test-zf
 - deadcode: (none available for Zig)
 - shell: (none available)
 

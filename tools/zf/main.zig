@@ -1194,7 +1194,7 @@ fn emitJsonManifest(allocator: std.mem.Allocator, sql_path: []const u8, tables: 
 }
 
 /// Append a JSON-escaped string (no surrounding quotes).
-fn appendJsonString(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), s: []const u8) !void {
+pub fn appendJsonString(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), s: []const u8) !void {
     for (s) |c| {
         switch (c) {
             '"' => try buf.appendSlice(allocator, "\\\""),
@@ -1717,7 +1717,7 @@ fn writeAiConfigs(allocator: std.mem.Allocator, cwd: std.Io.Dir) !void {
     _ = allocator;
 }
 
-fn hasFlag(args: [][]const u8, flag: []const u8) bool {
+pub fn hasFlag(args: [][]const u8, flag: []const u8) bool {
     for (args) |arg| {
         if (std.mem.eql(u8, arg, flag)) return true;
     }

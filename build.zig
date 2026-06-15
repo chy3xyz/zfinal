@@ -243,4 +243,33 @@ pub fn build(b: *std.Build) void {
     // NATS integration test — disabled (NATS v0.1.0 incompatible with Zig 0.17-dev.704)
     // TODO: re-enable when NATS releases a 0.17-compatible version
     //const nats_test_step = b.step("test-nats", "Run NATS integration test (requires nats-server)");
+
+    // zf code generator regression tests
+    {
+        const codegen_mod = b.createModule(.{
+            .root_source_file = b.path("tools/zf/codegen.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        codegen_mod.link_libc = true;
+        codegen_mod.linkSystemLibrary("sqlite3", .{});
+        codegen_mod.addImport("c_sqlite3", sqlite3_c_mod);
+
+        const zf_test_mod = b.createModule(.{
+            .root_source_file = b.path("tools/zf/codegen_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "codegen", .module = codegen_mod },
+            },
+        });
+        zf_test_mod.link_libc = true;
+        zf_test_mod.linkSystemLibrary("sqlite3", .{});
+        zf_test_mod.addImport("c_sqlite3", sqlite3_c_mod);
+        const zf_tests = b.addTest(.{ .root_module = zf_test_mod });
+        const run_zf_tests = b.addRunFile(zf_tests.getEmittedBin());
+        run_zf_tests.expectExitCode(0);
+        const zf_test_step = b.step("test-zf", "Run zf code generator regression tests");
+        zf_test_step.dependOn(&run_zf_tests.step);
+    }
 }
