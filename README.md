@@ -2,13 +2,14 @@
 
 # ⚡ ZFinal
 
-**A fast, production-hardened web framework for Zig**
+**Zig 的 AI 极速开发框架** — *AI speedrun web framework for Zig*
 
-*Inspired by JFinal — minimal API, maximal performance*
+*Inspired by JFinal — minimal API, maximal performance, AI-first design*
 
 [![Zig](https://img.shields.io/badge/Zig-0.17.0-orange.svg)](https://ziglang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-142%20passing%2C%200%20leaks-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-145%20passing%2C%200%20leaks-brightgreen.svg)]()
+[![Codegen](https://img.shields.io/badge/codegen%20tests-6%2F6-brightgreen.svg)]()
 [![Production](https://img.shields.io/badge/production--readiness-92%25-green.svg)](PRODUCTION_AUDIT.md)
 
 **English** | [中文文档](README_CN.md)
@@ -17,15 +18,43 @@
 
 ---
 
+## 🤖 If you are an AI agent
+
+> **Read `.claude/skills/zfinal-onboarding.md` first** — a 30-second
+> orientation that tells you the 5-command speedrun, which skill to
+> load next, and what you must never do (e.g. hand-write `model.zig`).
+
+ZFinal is the **first Zig web framework designed AI-first**. The CLI
+emits machine-readable JSON, generated files contain
+`// ── ai-edit-zone: ...` markers, and the in-framework `ZfTool` lets
+you invoke the generator from code.
+
+| Step | Command | Time |
+|------|---------|------|
+| 1 | `cat schema.sql` | 5 s |
+| 2 | `zf crud:sql schema.sql --json` | 2 s |
+| 3 | Edit `ai-edit-zones` in the generated files | 2 min |
+| 4 | `zf check && zig build test` | 5 s |
+| 5 | `zig build run` | 1 s |
+
+**5 commands. 5 minutes. Full CRUD + tests + manifest.**
+
+---
+
 ## What is ZFinal?
 
-ZFinal is a **lightweight, high-performance web framework** for Zig 0.17. It provides routing, ORM, plugins, templating, and a rich utility toolkit — all in idiomatic Zig with minimal ceremony. Fiber-based async I/O with zero heap allocation per connection.
+A high-performance, production-grade Zig web framework with the usual
+features (router, ORM, CSRF, captcha, i18n, WebSocket, plugins,
+metrics) — and one property no other Zig web framework has:
+**AI-native tooling**. The `zf` CLI is designed so an AI agent can
+add a feature without reading the working tree.
 
 ```zig
 const zfinal = @import("zfinal");
 
 pub fn main() !void {
-    var app = zfinal.ZFinal.init(std.heap.page_allocator);
+    @import("zfinal").io_instance.init(init);
+    var app = zfinal.ZFinal.init(allocator);
     defer app.deinit();
 
     try app.get("/", index);
@@ -39,47 +68,15 @@ fn index(ctx: *zfinal.Context) !void {
 
 ---
 
-## Production Readiness
+## Why ZFinal is different
 
-| Status | Dimension | Score |
-|--------|-----------|-------|
-| ✅ | Build Stability | 95% |
-| ✅ | Security | 90% |
-| ✅ | Memory Safety | 88% |
-| ✅ | Correctness | 88% |
-| ✅ | Observability | 85% |
-| ✅ | Concurrency | 85% |
-| ✅ | Testability | 85% |
-| ✅ | Code Quality | 85% |
-| 🟡 | Documentation | 60% |
-| 🟡 | Examples | 82% |
-| **→** | **Overall** | **88%** |
-
-See [PRODUCTION_AUDIT.md](PRODUCTION_AUDIT.md) for the full assessment (51 findings, all critical/high resolved).
-
----
-
-## Project Structure
-
-```
-src/
-├── core/           # Fiber-based async server, router, context, session, logger, metrics
-├── db/             # Database abstraction, connection pool, ORM, SQLite + PG + MySQL drivers
-├── plugin/         # Plugin system (cache, cron — stable; others experimental)
-├── interceptor/    # AOP interceptors (auth, CORS, logging, CSRF token)
-├── token/          # CSRF token generation and validation
-├── captcha/        # CAPTCHA generation (numeric, alpha, math)
-├── template/       # Template engine (variables, loops, conditions, layouts)
-├── kit/            # 17 utility kits (string, hash, json, http, file, validate, ...)
-├── i18n/           # Internationalization with pluralization
-├── upload/         # Multipart file upload parser
-├── websocket/      # WebSocket server and connection manager
-├── generator/      # Code generation utilities
-├── validator/      # Request data validation
-├── config/         # Configuration loader (.ini, .json)
-├── io_instance.zig # Global IO instance (Zig 0.16 IO reform)
-└── main.zig        # Module entry point — exports all public API
-```
+| | Other Zig web frameworks | ZFinal |
+|---|--------------------------|--------|
+| Code generation | None — hand-write everything | `zf crud:sql` emits model/service/handler/routes in 1 command |
+| AI contract | No boundary — AI invents patterns | `// ── ai-edit-zone: ...` markers tell the AI exactly where to edit |
+| Machine output | None — AI must grep | `zf --json` emits structured manifest (tables, files, fields, next steps) |
+| In-framework | AI must shell out to invoke | `zfinal.ZfTool` callable from any Zig code |
+| Self-check | None | `zf check` audits AI boundary compliance |
 
 ---
 
@@ -91,25 +88,35 @@ src/
 git clone https://github.com/chy3xyz/zfinal.git
 cd zfinal
 zig build                  # Build framework + all examples
-zig build test             # Run 107 unit tests
-zig build test -Ddriver_pg=true -Ddriver_mysql=true  # All drivers
-zig build test-db           # DB integration tests
+zig build test             # Run 145 unit + integration tests
+zig build test-zf          # Run 6 codegen regression tests
 ```
 
 ### Run an example
 
 ```bash
-zig build run-hello        # Hello-world demo
-zig build run-blog         # Blog with SQLite
-zig build run-htmx         # HTMX interactive app
-zig build run-production   # Production example (logging, metrics, CSRF)
+zig build run-hello              # Hello-world demo
+zig build run-blog               # Blog with SQLite
+zig build run-ai-blog-5min       # 5-minute AI speedrun demo
+zig build run-production         # Production example
+zig build run-htmx               # HTMX interactive app
 ```
 
-### Add to your project
+### Add ZFinal to your project
 
 ```bash
-# Zig package manager (recommended)
-zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.6.0.tar.gz
+zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.9.3.tar.gz
+```
+
+In your `build.zig.zon`:
+
+```zon
+.dependencies = .{
+    .zfinal = .{
+        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.9.3.tar.gz",
+        .hash = "...",  // auto-filled by `zig fetch`
+    },
+},
 ```
 
 In your `build.zig`:
@@ -128,22 +135,87 @@ exe_mod.link_libc = true;
 exe_mod.linkSystemLibrary("sqlite3", .{});
 ```
 
-In your `build.zig.zon`:
-
-```zon
-.dependencies = .{
-    .zfinal = .{
-        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.6.0.tar.gz",
-        .hash = "...", // auto-filled by `zig fetch`
-    },
-},
-```
-
-Or use local path for development:
+Or use a local path for development:
 
 ```zon
 .zfinal = .{ .path = "../zfinal" },
 ```
+
+---
+
+## The AI speedrun (long form)
+
+### Step 1 — Schema is the source of truth
+
+```sql
+-- schema.sql
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    email TEXT NOT NULL
+);
+
+CREATE TABLE posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INT NOT NULL REFERENCES users(id),
+    title TEXT NOT NULL,
+    body TEXT
+);
+```
+
+### Step 2 — One command generates everything
+
+```bash
+zf crud:sql schema.sql --json
+```
+
+Output (parsed by an AI):
+
+```json
+{
+  "tables": [
+    {
+      "name": "users",
+      "files": { "model": "users/model.zig", "service": "users/service.zig", "handler": "users/handler.zig", "routes": "users/routes.zig" },
+      "ai_edit_zones": [
+        { "file": "service.zig", "purpose": "business rules beyond CRUD" },
+        { "file": "handler.zig", "purpose": "auth + response shaping" }
+      ],
+      "fields": [
+        { "name": "id", "sql_type": "INTEGER", "primary_key": true },
+        { "name": "username", "sql_type": "TEXT", "nullable": false },
+        { "name": "email", "sql_type": "TEXT", "nullable": false }
+      ]
+    }
+  ]
+}
+```
+
+### Step 3 — Edit only inside `ai-edit-zones`
+
+```zig
+// ── ai-edit-zone: business rules ─────────────
+pub fn isUsernameTaken(db: *zfinal.DB, username: []const u8) !bool {
+    // AI writes this
+}
+// ──────────────────────────────────────────────
+```
+
+### Step 4 — Verify
+
+```bash
+zf check           # AI boundary audit
+zig build test     # 145+ tests
+```
+
+### Step 5 — Run
+
+```bash
+zig build run
+```
+
+Full walkthrough: [doc/ai-quickstart.md](doc/ai-quickstart.md).
+Runnable demo: [`examples/ai-blog-5min/`](examples/ai-blog-5min/ZF_GEN.md).
 
 ---
 
@@ -152,17 +224,14 @@ Or use local path for development:
 ### Routing + Interceptors
 
 ```zig
-// HTTP methods with path parameters
 try app.get("/users/:id", showUser);
 try app.post("/users", createUser);
 try app.put("/users/:id", updateUser);
 try app.delete("/users/:id", deleteUser);
 
-// Route groups with shared prefix
 var api = zfinal.RouteGroup.init(&app, "/api");
 try api.get("/health", healthHandler);
 
-// Global interceptors (auth, CORS, logging, rate limiting)
 try app.addGlobalInterceptor(zfinal.CORSInterceptor);
 ```
 
@@ -172,72 +241,121 @@ try app.addGlobalInterceptor(zfinal.CORSInterceptor);
 const User = struct { id: ?i64, name: []const u8, email: []const u8 };
 const UserModel = zfinal.Model(User, "users");
 
-// Connection pool with health checks
 var pool = zfinal.ConnectionPool.init(allocator, config, 10);
 
-// CRUD with parameterized queries (SQL injection safe)
 const users = try UserModel.findAll(&db, allocator);
-var user = UserModel.Instance{ .data = User{ .name = "Alice", .email = "alice@example.com" } };
+var user = UserModel.Instance{ .data = .{ .name = "Alice", .email = "alice@example.com" } };
 try user.save(&db);
-try user.delete(&db);
 ```
+
+**AI-friendly errors**: constraint violations return typed errors like
+`UniqueViolation` with `table` and `column` extracted, so an AI can
+show "users.email already exists" instead of "SQLite step failed: 19".
 
 ### Security
 
-```zig
-// CSRF token protection
-var token_mgr = zfinal.TokenManager.init(allocator);
-const token = try token_mgr.generate();          // 32-byte random, Base64-encoded
-const valid = try token_mgr.validate(token);     // One-time use, auto-expiry
+- CSRF token (32-byte CSPRNG, Base64, one-time, auto-expiry)
+- Rate limiting (real socket address, not spoofable headers)
+- CAPTCHA (numeric, alpha, alphanumeric, math)
+- Parameterized SQL everywhere — no string interpolation
 
-// Rate limiting (real socket address, no spoofable headers)
-var limiter = zfinal.RateLimitHandler.init(allocator);
-limiter.max_requests = 100;                       // Per 60s window
-try limiter.handle(ctx);
-
-// CAPTCHA (numeric, alpha, alphanumeric, math)
-var captcha_mgr = zfinal.CaptchaManager.init(allocator);
-const captcha = try captcha_mgr.generate(.numeric, session_id);
-```
-
-### Structured Logging + Observability
+### In-framework AI
 
 ```zig
-// Structured logger with compile-time level filtering
-var logger = zfinal.Logger.init(allocator);
-logger.setLevel(.info);
-logger.prefix = "myapp";
-zfinal.initGlobalLogger(logger);
+const zfinal = @import("zfinal");
+const tool = zfinal.ZfTool.init(allocator);
 
-zfinal.getLogger().info("request handled", .{
-    zfinal.Field{ .key = "method", .value = .{ .string = "GET" } },
-    zfinal.Field{ .key = "status", .value = .{ .int = 200 } },
-});
+// Same manifest as `zf crud:sql --json`, callable from Zig code:
+const manifest = try tool.manifestFromSql(schema_text);
+defer allocator.free(manifest);
 
-// Health endpoint with metrics
-var metrics = zfinal.Metrics.init(allocator);
-metrics.recordRequest(200);
-const uptime = metrics.uptime();
+// Build a system prompt for an AI agent that knows this project's schema:
+const prompt = try tool.buildAgentSystemPrompt(schema_text);
+defer allocator.free(prompt);
 ```
 
-**Build with log level:** `zig build -Dlog-level=debug|info|warn|err`
+---
 
-### Template Engine
+## Project Structure
 
-```html
-{# Layout inheritance #}
-{% extends "layout.html" %}
-
-{% block content %}
-  <h1>{{ title }}</h1>
-  <ul>
-  {% for item in items %}
-    <li>{{ item.name }} — {{ item.price | upper }}</li>
-  {% endfor %}
-  </ul>
-  {% include "footer.html" %}
-{% endblock %}
 ```
+zfinal/
+├── src/                          # Framework source
+│   ├── main.zig                  # Public API
+│   ├── core/                     # Server, Router, Context
+│   ├── db/                       # DB + drivers + ORM
+│   ├── interceptor/              # Auth, CORS, CSRF
+│   ├── plugin/                   # Cache, Cron, Redis
+│   ├── kit/                      # 17 utility kits
+│   ├── aichat/                   # AI client + ZfTool
+│   └── io_instance.zig           # Global Io + allocator
+├── tools/zf/                     # CLI tool
+│   ├── main.zig                  # Entry point
+│   ├── codegen.zig               # Code generator
+│   ├── codegen_test.zig          # 6 generator regression tests
+│   └── templates.zig             # Code templates
+├── examples/                     # 10+ runnable examples
+│   ├── ai-blog-5min/             # 5-minute AI speedrun
+│   ├── blog-single/
+│   ├── hello-world/
+│   └── ...
+├── .claude/
+│   ├── skills/                   # AI-recognizable skills
+│   │   ├── zfinal-onboarding.md  # Read first
+│   │   ├── zfinal-ai-playbook.md
+│   │   ├── zfinal-health.md
+│   │   ├── zfinal-framework.md
+│   │   ├── zfinal-app.md
+│   │   └── zfinal-evolution.md
+│   └── agents/
+│       └── zfinal-developer.md   # Sub-agent definition
+├── doc/                          # AI-targeted documentation
+│   ├── index.md                  # Dual-audience landing page
+│   ├── ai-quickstart.md          # 5-minute walkthrough
+│   └── ...
+├── AGENTS.md                     # AI-first rules (read first)
+├── CLAUDE.md                     # Health Stack + skill routing
+└── build.zig                     # Build configuration
+```
+
+---
+
+## AI Skill Set
+
+ZFinal ships 6 skills + 1 sub-agent for AI agents:
+
+| Skill | Read it when… |
+|-------|---------------|
+| `zfinal-onboarding` | First contact with the project |
+| `zfinal-ai-playbook` | Adding a new feature / entity / route |
+| `zfinal-health` | Running tests, CI, health check |
+| `zfinal-framework` | Adding a module to the framework |
+| `zfinal-app` | Building a complete app from scratch |
+| `zfinal-evolution` | Zig 0.17, memory safety, leaks, races |
+
+Plus a sub-agent `zfinal-developer` in `.claude/agents/` that bundles
+the onboarding + playbook + hard rules into a single auto-dispatched
+unit.
+
+---
+
+## Production Readiness
+
+| Status | Dimension | Score |
+|--------|-----------|-------|
+| ✅ | Build Stability | 95% |
+| ✅ | Security | 90% |
+| ✅ | Memory Safety | 88% |
+| ✅ | Correctness | 88% |
+| ✅ | Observability | 85% |
+| ✅ | Concurrency | 85% |
+| ✅ | Testability | 85% |
+| ✅ | Code Quality | 85% |
+| 🟡 | Documentation | **85%** (was 60%, AI-targeted rewrite) |
+| 🟡 | Examples | 82% |
+| **→** | **Overall** | **92%** |
+
+See [PRODUCTION_AUDIT.md](PRODUCTION_AUDIT.md) for the full assessment.
 
 ---
 
@@ -246,65 +364,16 @@ const uptime = metrics.uptime();
 | Plugin | Status | Description |
 |--------|--------|-------------|
 | Cache (memory) | ✅ Stable | In-memory cache with TTL, thread-safe |
-| Cron | ✅ Stable | Cron expression parser, job scheduling |
-| PostgreSQL | 🔧 Opt-in | Full libpq driver in `drivers/` — requires `libpq` |
-| MySQL | 🔧 Opt-in | Full mysqlclient driver in `drivers/` — requires `libmysqlclient` |
 | Cache (Redis) | ✅ Stable | Full Redis client with RESP protocol over TCP |
-| MQTT | 🟡 Stub | MQTT 3.1.1 client — IoT protocol, not core framework |
-| Agent (MCP) | 🔧 Experimental | Model Context Protocol agent — early development |
-| P2P | 🔧 Experimental | Peer-to-peer networking — early development |
-| DID | 🔧 Experimental | Decentralized Identity — early development |
-
-**Stable plugins** are production-ready. **Stub** plugins have their API defined but lack full implementation. **Experimental** plugins are under active development and not recommended for production use.
-
----
-
-## Utility Kits (17 modules)
-
-| Kit | Purpose |
-|-----|---------|
-| `StrKit` | String operations (split, join, trim, case) |
-| `HashKit` | MD5, SHA256, Base64 |
-| `JsonKit` | JSON parse / stringify |
-| `DateKit` | Date formatting, leap year, month days |
-| `TimeKit` | Timestamps, sleep, ISO 8601 |
-| `FileKit` | Read/write/copy/delete, path sandboxing |
-| `PathKit` | Path join, basename, dirname, resolve |
-| `HttpKit` | MIME types, status codes, browser detection |
-| `UrlKit` | URL encode/decode |
-| `ArrayKit` | Contains, unique, sum, filter, map |
-| `RandomKit` | CSPRNG-backed random int, float, UUID, shuffle |
-| `RegexKit` | Regex match, email/IP/phone validation |
-| `ValidateKit` | Email, phone, IP, password strength |
-| `NumberKit` | Parse, clamp, format |
-| `FormatKit` | File size, number formatting |
-| `SysKit` | System info, environment |
-| `CacheKit` | Simple key-value cache |
+| Cron | ✅ Stable | Cron expression parser, job scheduling |
+| PostgreSQL | 🔧 Opt-in | libpq driver — `-Ddriver_pg=true` |
+| MySQL | 🔧 Opt-in | mysqlclient driver — `-Ddriver_mysql=true` |
+| MQTT | 🟡 Stub | MQTT 3.1.1 client — IoT, not core |
+| Agent (MCP) | 🔧 Experimental | Model Context Protocol agent |
+| P2P | 🔧 Experimental | Peer-to-peer networking |
+| DID | 🔧 Experimental | Decentralized Identity |
 
 ---
-
-## Architecture
-
-ZFinal uses a **fiber-based async I/O model** built on `std.Io.Threaded`:
-
-```
-┌─────────────────────────────────────────┐
-│  Io.Threaded (kqueue / io_uring)        │
-│  ┌─────────────────────────────────┐    │
-│  │  acceptLoop (fiber)             │    │
-│  │  ┌──────────────────────────┐   │    │
-│  │  │ handleConn (fiber)       │   │    │
-│  │  │  dispatch → router → ctx │   │    │
-│  │  └──────────────────────────┘   │    │
-│  │  handleConn (fiber) × N         │    │
-│  └─────────────────────────────────┘    │
-└─────────────────────────────────────────┘
-```
-
-- **Zero heap allocation per connection** — all request state is stack-resident
-- **Keep-alive** — up to 100 requests per connection
-- **Backpressure** — 503 response when `max_connections` exceeded
-- **Accept retry** — exponential backoff on transient errors
 
 ## Performance
 
@@ -317,40 +386,34 @@ Benchmark characteristics (M1 Pro, 8 cores, localhost):
 | SQLite write (pooled) | ~5,000 req/s | 1.2ms | ~14MB |
 | 1,000 concurrent keep-alive | ~30,000 req/s | 0.5ms | ~18MB |
 
-Key performance properties:
-
 - **Zero GC pauses** — no garbage collector
-- **Fiber-based concurrency** — kqueue (macOS) / io_uring (Linux), no thread-per-connection overhead
-- **Stack-allocated request handling** — no heap allocations per request
+- **Fiber-based concurrency** — kqueue (macOS) / io_uring (Linux)
+- **Zero heap allocation per connection** — stack-resident state
 - **Compile-time optimization** — log levels, SQL templates, route parsing
-- **Connection pooling** — database connection reuse with health checks
+- **Connection pooling** — database reuse with health checks
 
-For detailed benchmarks, run: `zig build run-bench`
+For detailed benchmarks: `zig build run-bench`
 
 ---
 
 ## Roadmap
 
-### v0.3 (current) — Production Hardening ✅
+### v0.9 (current) — AI Protocol Layer ✅
 
-Security hardening, structured logging, health endpoints, concurrency fixes, template engine, i18n, cron, 90 tests.
-
-### v0.4 (next) — Ecosystem & Polish
-
-- [x] Redis client network implementation (RESP protocol, TCP)
-- [ ] Template engine: advanced filters, macros
-- [ ] WebSocket: frame fragmentation, ping/pong
-- [ ] Admin dashboard (metrics, health, recent errors)
-- [ ] Docker deployment example
-- [ ] API reference documentation (`zig build docs`)
+- `zf --json` machine-readable manifest
+- `// ── ai-edit-zone: ...` markers
+- `zfinal.ZfTool` in-framework generator
+- AI-friendly SQLite constraint errors
+- 6 codegen regression tests
+- 5 skill files + 1 sub-agent
 
 ### v1.0 — Stable Release
 
 - [ ] Stable API surface (no breaking changes without major version)
-- [x] PostgreSQL and MySQL driver implementations (opt-in, in `drivers/`)
 - [ ] Comprehensive integration test suite
 - [ ] Production deployment guide
 - [ ] gRPC support (optional module)
+- [ ] Live demo deployment
 
 ---
 
@@ -358,9 +421,10 @@ Security hardening, structured logging, health endpoints, concurrency fixes, tem
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/amazing`
-3. Make changes, run tests: `zig build test`
-4. Commit: `git commit -m 'feat: add amazing feature'`
-5. Push and open a Pull Request
+3. Read `.claude/skills/zfinal-ai-playbook.md` (AI agents)
+4. Make changes, run tests: `zig build test && zig build test-zf`
+5. Commit: `git commit -m 'feat: add amazing feature'`
+6. Push and open a Pull Request
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
@@ -373,5 +437,9 @@ MIT — see [LICENSE](LICENSE) for details.
 ---
 
 <div align="center">
+
 Made with ❤️ by the ZFinal Team
+
+**ZFinal v0.9.3** — Zig 的 AI 极速开发框架
+
 </div>

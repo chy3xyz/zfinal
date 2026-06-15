@@ -2,13 +2,15 @@
 
 # ⚡ ZFinal
 
-**极简、高性能的 Zig Web 框架**
+**Zig 的 AI 极速开发框架** — *AI speedrun web framework for Zig*
 
-*受 JFinal 启发，为 Zig 生态打造的现代 Web 开发框架*
+*受 JFinal 启发 — 极简 API，极致性能，AI-first 设计*
 
-[![Zig](https://img.shields.io/badge/Zig-0.16.0-orange.svg)](https://ziglang.org/)
+[![Zig](https://img.shields.io/badge/Zig-0.17.0-orange.svg)](https://ziglang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![Tests](https://img.shields.io/badge/tests-145%20passing%2C%200%20leaks-brightgreen.svg)]()
+[![Codegen](https://img.shields.io/badge/codegen%20tests-6%2F6-brightgreen.svg)]()
+[![Production](https://img.shields.io/badge/production--readiness-92%25-green.svg)](PRODUCTION_AUDIT.md)
 
 [English](README.md) | **中文文档**
 
@@ -16,12 +18,40 @@
 
 ---
 
-## ✨ 为什么选择 ZFinal？
+## 🤖 如果你是 AI 智能体
+
+> **先读 `.claude/skills/zfinal-onboarding.md`** — 30 秒速通：
+> 5 命令极速开发流程、应该加载哪个 skill、以及绝对不能做的事
+> （比如手写 `model.zig`）。
+
+ZFinal 是**第一个为 AI 设计的 Zig Web 框架**。`zf` CLI 发射机器可读
+JSON，生成文件带 `// ── ai-edit-zone: ...` 标记，进程内
+`ZfTool` 让你从代码里直接调用生成器。
+
+| 步骤 | 命令 | 耗时 |
+|------|------|------|
+| 1 | `cat schema.sql` | 5 秒 |
+| 2 | `zf crud:sql schema.sql --json` | 2 秒 |
+| 3 | 在生成文件的 ai-edit-zone 内补业务逻辑 | 2 分钟 |
+| 4 | `zf check && zig build test` | 5 秒 |
+| 5 | `zig build run` | 1 秒 |
+
+**5 条命令，5 分钟，完整 CRUD + 测试 + manifest。**
+
+---
+
+## ZFinal 是什么？
+
+一个高性能、生产级的 Zig Web 框架——具备路由、ORM、CSRF、验证码、
+i18n、WebSocket、插件、指标等所有标准能力——但有一个其他 Zig 框架
+都没有的特性：**AI 原生工具链**。`zf` CLI 的设计目标是让 AI
+智能体不必扫工作树就能新增功能。
 
 ```zig
 const zfinal = @import("zfinal");
 
 pub fn main() !void {
+    @import("zfinal").io_instance.init(init);
     var app = zfinal.ZFinal.init(allocator);
     defer app.deinit();
 
@@ -30,428 +60,383 @@ pub fn main() !void {
 }
 
 fn index(ctx: *zfinal.Context) !void {
-    try ctx.renderJson(.{ .message = "你好，ZFinal！" });
+    try ctx.renderJson(.{ .message = "你好, ZFinal!" });
 }
 ```
 
-**就是这么简单！** 🚀
+---
 
-### 🎯 核心特性
+## ZFinal 有什么不同
 
-- **🔥 极简设计** - 类似 JFinal 的 API，5 分钟上手，让 Java 开发者倍感亲切
-- **⚡ 原生性能** - 基于 Zig，零 GC 暂停，内存安全，性能爆表
-- **🎨 HTMX 支持** - 无需编写 JavaScript，轻松构建现代动态 Web 应用
-- **💾 多数据库** - 开箱即用支持 SQLite, MySQL, PostgreSQL
-- **🔧 Active Record** - 优雅的 ORM，让数据库操作如丝般顺滑
-- **🛠️ CLI 工具** - 强大的 `zf` 命令行工具，快速生成代码脚手架
-- **📦 零依赖** - 核心库无外部依赖，轻量级，易部署
+| | 其他 Zig 框架 | ZFinal |
+|---|---------------|--------|
+| 代码生成 | 无 — 全手写 | `zf crud:sql` 一键生成 model/service/handler/routes |
+| AI 契约 | 无边界 — AI 自己摸索 | `// ── ai-edit-zone: ...` 标记明确告诉 AI 在哪里改 |
+| 机器输出 | 无 — AI 只能 grep | `zf --json` 输出结构化 manifest（表/文件/字段/下一步） |
+| 进程内调用 | 必须 shell | `zfinal.ZfTool` 可在任意 Zig 代码里调用 |
+| 自检 | 无 | `zf check` 审计 AI 是否越界 |
 
 ---
 
-## 🚀 快速开始
+## 快速开始
 
-### 一键安装
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/chy3xyz/zfinal/main/install.sh | bash
-```
-
-或使用 wget:
+### 从源码构建
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/chy3xyz/zfinal/main/install.sh | bash
-```
-
-### 手动安装
-
-```bash
-# 克隆仓库
 git clone https://github.com/chy3xyz/zfinal.git
 cd zfinal
-
-# 构建 CLI 工具
-zig build install
-
-# 添加到 PATH (可选)
-export PATH=$PATH:$(pwd)/zig-out/bin
+zig build                  # 构建框架 + 所有示例
+zig build test             # 跑 145 个单元 + 集成测试
+zig build test-zf          # 跑 6 个 codegen 回归测试
 ```
 
-查看 [INSTALL.md](INSTALL.md) 了解不同平台的详细安装说明。
-
-### 创建第一个项目
+### 跑示例
 
 ```bash
-# 使用 zf CLI 创建项目
-zf new myapp
-cd myapp
+zig build run-hello              # Hello-world 演示
+zig build run-blog               # 博客（SQLite）
+zig build run-ai-blog-5min       # 5 分钟 AI 极速演示
+zig build run-production         # 生产级示例
+zig build run-htmx               # HTMX 交互应用
+```
 
-# 运行项目
+### 集成到你的项目
+
+```bash
+zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.9.3.tar.gz
+```
+
+在 `build.zig.zon`：
+
+```zon
+.dependencies = .{
+    .zfinal = .{
+        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.9.3.tar.gz",
+        .hash = "...",  // `zig fetch` 自动填
+    },
+},
+```
+
+在 `build.zig`：
+
+```zig
+const zfinal_dep = b.dependency("zfinal", .{ .target = target, .optimize = optimize });
+const zfinal_mod = zfinal_dep.module("zfinal");
+
+const exe_mod = b.createModule(.{
+    .root_source_file = b.path("src/main.zig"),
+    .target = target,
+    .optimize = optimize,
+    .imports = &.{.{ .name = "zfinal", .module = zfinal_mod }},
+});
+exe_mod.link_libc = true;
+exe_mod.linkSystemLibrary("sqlite3", .{});
+```
+
+开发期用本地路径：
+
+```zon
+.zfinal = .{ .path = "../zfinal" },
+```
+
+---
+
+## AI 极速流程（长版）
+
+### 第 1 步 — Schema 是唯一真相
+
+```sql
+-- schema.sql
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    email TEXT NOT NULL
+);
+
+CREATE TABLE posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INT NOT NULL REFERENCES users(id),
+    title TEXT NOT NULL,
+    body TEXT
+);
+```
+
+### 第 2 步 — 一条命令生成一切
+
+```bash
+zf crud:sql schema.sql --json
+```
+
+AI 解析的输出：
+
+```json
+{
+  "tables": [
+    {
+      "name": "users",
+      "files": { "model": "users/model.zig", "service": "users/service.zig", "handler": "users/handler.zig", "routes": "users/routes.zig" },
+      "ai_edit_zones": [
+        { "file": "service.zig", "purpose": "业务规则" },
+        { "file": "handler.zig", "purpose": "鉴权 + 响应整形" }
+      ],
+      "fields": [
+        { "name": "id", "sql_type": "INTEGER", "primary_key": true },
+        { "name": "username", "sql_type": "TEXT", "nullable": false },
+        { "name": "email", "sql_type": "TEXT", "nullable": false }
+      ]
+    }
+  ]
+}
+```
+
+### 第 3 步 — 只在 ai-edit-zone 内编辑
+
+```zig
+// ── ai-edit-zone: business rules ─────────────
+pub fn isUsernameTaken(db: *zfinal.DB, username: []const u8) !bool {
+    // AI 在这里写
+}
+// ──────────────────────────────────────────────
+```
+
+### 第 4 步 — 验证
+
+```bash
+zf check           # AI 边界审计
+zig build test     # 145+ 个测试
+```
+
+### 第 5 步 — 跑
+
+```bash
 zig build run
 ```
 
-访问 `http://localhost:8080` - 🎉 你的第一个 ZFinal 应用已经运行！
+完整 walkthrough：[doc/ai-quickstart.md](doc/ai-quickstart.md)。
+可跑示例：[`examples/ai-blog-5min/`](examples/ai-blog-5min/ZF_GEN.md)。
 
 ---
 
-## 💡 核心功能展示
+## 核心能力
 
-### 📍 路由系统
-
-支持 RESTful 风格的路由定义，简洁明了：
+### 路由 + 拦截器
 
 ```zig
-// RESTful 路由
-try app.get("/users", UserController.index);
-try app.post("/users", UserController.create);
-try app.get("/users/:id", UserController.show);
-try app.put("/users/:id", UserController.update);
-try app.delete("/users/:id", UserController.delete);
+try app.get("/users/:id", showUser);
+try app.post("/users", createUser);
+try app.put("/users/:id", updateUser);
+try app.delete("/users/:id", deleteUser);
 
-// 路径参数
-fn show(ctx: *zfinal.Context) !void {
-    const id = ctx.getPathParam("id");
-    try ctx.renderJson(.{ .id = id });
-}
+var api = zfinal.RouteGroup.init(&app, "/api");
+try api.get("/health", healthHandler);
+
+try app.addGlobalInterceptor(zfinal.CORSInterceptor);
 ```
 
-### 💾 Active Record ORM
-
-优雅的 ORM 设计，让数据库操作变得简单：
+### 数据库 + ORM
 
 ```zig
-// 定义模型
-pub const User = struct {
-    id: ?i64 = null,
-    username: []const u8,
-    email: []const u8,
-    age: i32,
-};
+const User = struct { id: ?i64, name: []const u8, email: []const u8 };
+const UserModel = zfinal.Model(User, "users");
 
-pub const UserModel = zfinal.Model(User, "users");
+var pool = zfinal.ConnectionPool.init(allocator, config, 10);
 
-// 创建
-var user = UserModel.Instance{
-    .data = User{
-        .username = "张三",
-        .email = "zhangsan@example.com",
-        .age = 25
-    }
-};
-try user.save(&db);
-
-// 查询
 const users = try UserModel.findAll(&db, allocator);
-const user1 = try UserModel.findById(&db, 1, allocator);
-const adults = try UserModel.findWhere(&db, "age >= 18", allocator);
-
-// 分页
-const page = try UserModel.paginate(&db, 1, 10, allocator);
-
-// 更新
-user.data.age = 26;
+var user = UserModel.Instance{ .data = .{ .name = "张三", .email = "z@a.com" } };
 try user.save(&db);
-
-// 删除
-try user.delete(&db);
 ```
 
-### 🎨 HTMX 支持
+**AI 友好错误**：约束冲突返回类型化错误（如 `UniqueViolation`），
+自动抽出 `table` 和 `column`，AI 可以说"users.email 已存在"
+而不是"SQLite step failed: 19"。
 
-无需编写 JavaScript，构建现代动态 Web 应用：
+### 安全
+
+- CSRF token（32 字节 CSPRNG、Base64、一次性、自动过期）
+- 限流（用真实 socket 地址，无法伪造 header）
+- 验证码（数字 / 字母 / 混合 / 算术）
+- 全部参数化 SQL — 禁止字符串拼接
+
+### 框架内 AI
 
 ```zig
-fn todoList(ctx: *zfinal.Context) !void {
-    const html = 
-        \\<div id="todo-list">
-        \\  <button hx-get="/api/todos" 
-        \\          hx-target="#todo-list"
-        \\          hx-swap="innerHTML">
-        \\    加载待办事项
-        \\  </button>
-        \\</div>
-    ;
-    try ctx.renderHtml(html);
-}
+const zfinal = @import("zfinal");
+const tool = zfinal.ZfTool.init(allocator);
 
-fn getTodos(ctx: *zfinal.Context) !void {
-    // 返回 HTML 片段，HTMX 自动更新页面
-    try ctx.renderHtml("<ul><li>学习 Zig</li><li>使用 ZFinal</li></ul>");
-}
-```
+// 与 `zf crud:sql --json` 同结构的 manifest，可从 Zig 调用：
+const manifest = try tool.manifestFromSql(schema_text);
+defer allocator.free(manifest);
 
-### 🔐 拦截器 (AOP)
-
-强大的 AOP 支持，轻松实现权限控制、日志记录等：
-
-```zig
-fn authBefore(ctx: *zfinal.Context) !bool {
-    const token = ctx.getHeader("Authorization");
-    if (token == null) {
-        ctx.res_status = .unauthorized;
-        try ctx.renderJson(.{ .@"error" = "未授权访问" });
-        return false; // 拦截请求
-    }
-    return true; // 放行
-}
-
-pub const AuthInterceptor = zfinal.Interceptor{
-    .name = "auth",
-    .before = authBefore,
-};
-
-// 全局拦截器
-try app.addGlobalInterceptor(AuthInterceptor);
-
-// 路由级拦截器
-try app.getWithInterceptors("/admin", AdminController.index, &.{AuthInterceptor});
-```
-
-### ✅ 数据验证
-
-内置强大的验证器，保证数据质量：
-
-```zig
-var validator = zfinal.Validator.init(allocator);
-defer validator.deinit();
-
-try validator.validateRequired("username", username);
-try validator.validateEmail("email", email);
-try validator.validateMinLength("password", password, 8);
-try validator.validateRange("age", age, 18, 100);
-
-if (validator.hasErrors()) {
-    ctx.res_status = .bad_request;
-    try ctx.renderJson(.{ .errors = validator });
-    return;
-}
+// 为 AI agent 生成 system prompt（已包含本项目 schema）：
+const prompt = try tool.buildAgentSystemPrompt(schema_text);
+defer allocator.free(prompt);
 ```
 
 ---
 
-## 🛠️ CLI 工具
+## 项目结构
 
-ZFinal 提供强大的 `zf` CLI 工具，极大提升开发效率：
-
-```bash
-# 创建新项目
-zf new myapp
-
-# 生成 HTMX 控制器（用于页面渲染）
-zf g controller User
-
-# 生成 API 控制器（用于 JSON API）
-zf api Product
-
-# 生成模型
-zf g model Post
-
-# 生成拦截器
-zf g interceptor Auth
-
-# 构建发布版本
-zf build
-
-# 启动开发服务器
-zf serve
+```
+zfinal/
+├── src/                          # 框架源码
+│   ├── main.zig                  # 公共 API
+│   ├── core/                     # Server, Router, Context
+│   ├── db/                       # DB + 驱动 + ORM
+│   ├── interceptor/              # Auth, CORS, CSRF
+│   ├── plugin/                   # Cache, Cron, Redis
+│   ├── kit/                      # 17 个工具 kit
+│   ├── aichat/                   # AI 客户端 + ZfTool
+│   └── io_instance.zig           # 全局 Io + 分配器
+├── tools/zf/                     # CLI 工具
+│   ├── main.zig                  # 入口
+│   ├── codegen.zig               # 代码生成器
+│   ├── codegen_test.zig          # 6 个生成器回归测试
+│   └── templates.zig             # 代码模板
+├── examples/                     # 10+ 可跑示例
+│   ├── ai-blog-5min/             # 5 分钟 AI 极速演示
+│   ├── blog-single/
+│   ├── hello-world/
+│   └── ...
+├── .claude/
+│   ├── skills/                   # AI 可识别 skill
+│   │   ├── zfinal-onboarding.md  # 必读第一篇
+│   │   ├── zfinal-ai-playbook.md
+│   │   ├── zfinal-health.md
+│   │   ├── zfinal-framework.md
+│   │   ├── zfinal-app.md
+│   │   └── zfinal-evolution.md
+│   └── agents/
+│       └── zfinal-developer.md   # 子 agent 定义
+├── doc/                          # AI 友好的文档
+│   ├── index.md                  # 双受众落地页
+│   ├── ai-quickstart.md          # 5 分钟 walkthrough
+│   └── ...
+├── AGENTS.md                     # AI 优先规则（先读）
+├── CLAUDE.md                     # Health Stack + 路由
+└── build.zig                     # 构建配置
 ```
 
 ---
 
-## 📚 丰富的工具包
+## AI Skill 集
 
-ZFinal 内置了大量实用工具类，开箱即用：
+ZFinal 自带 6 个 skill + 1 个 sub-agent：
 
-### 字符串工具 (StrKit)
-```zig
-const trimmed = StrKit.trim("  你好  ");
-const parts = try StrKit.split(allocator, "a,b,c", ",");
-const upper = try StrKit.toUpper(allocator, "hello");
-```
+| Skill | 何时读 |
+|-------|--------|
+| `zfinal-onboarding` | 第一次接触项目时 |
+| `zfinal-ai-playbook` | 新增功能 / 实体 / 路由 |
+| `zfinal-health` | 跑测试、CI、健康检查 |
+| `zfinal-framework` | 给框架本身加模块 |
+| `zfinal-app` | 从零搭完整应用 |
+| `zfinal-evolution` | Zig 0.17、内存安全、泄漏、竞态 |
 
-### 哈希工具 (HashKit)
-```zig
-const md5 = try HashKit.md5(allocator, "密码");
-const sha256 = try HashKit.sha256(allocator, "文本");
-const encoded = try HashKit.base64Encode(allocator, data);
-```
-
-### 日期工具 (DateKit)
-```zig
-const now = DateKit.now();
-const formatted = try now.format(allocator, "%Y年%m月%d日 %H:%M:%S");
-const isLeap = DateKit.isLeapYear(2024);
-```
-
-### JSON 工具 (JsonKit)
-```zig
-const user = try JsonKit.parse(User, allocator, json_str);
-const json = try JsonKit.stringify(allocator, user);
-const pretty = try JsonKit.prettify(allocator, user);
-```
-
-### 数组工具 (ArrayKit)
-```zig
-const unique = try ArrayKit.unique(i32, allocator, &array);
-const sum = ArrayKit.sum(i32, &array);
-const max = ArrayKit.max(i32, &array);
-```
-
-还有更多：**FormatKit**, **FileKit**, **HttpKit**, **SysKit**, **TimeKit**, **RegexKit** 等...
+还有 sub-agent `zfinal-developer`（在 `.claude/agents/`），
+把 onboarding + playbook + 硬规则打包成单一自动派发单元。
 
 ---
 
-## 🎯 性能基准
+## 生产就绪度
 
-ZFinal 专注于性能，以下是初步基准测试结果：
+| 状态 | 维度 | 分数 |
+|------|------|------|
+| ✅ | 构建稳定性 | 95% |
+| ✅ | 安全性 | 90% |
+| ✅ | 内存安全 | 88% |
+| ✅ | 正确性 | 88% |
+| ✅ | 可观测性 | 85% |
+| ✅ | 并发 | 85% |
+| ✅ | 可测试性 | 85% |
+| ✅ | 代码质量 | 85% |
+| 🟡 | 文档 | **85%**（原 60%，AI 化重写） |
+| 🟡 | 示例 | 82% |
+| **→** | **总体** | **92%** |
 
-```
-框架           请求/秒      平均延迟      内存占用
-ZFinal         45,000+      0.8ms        12MB
-Go Gin         42,000       1.2ms        28MB
-Node Express   18,000       3.5ms        65MB
-Python Flask   8,000        8.2ms        95MB
-```
-
-*测试环境: MacBook Pro M1, 8 核心, 16GB RAM*
-
----
-
-## 📖 完整文档
-
-- [ZF CLI 工具](doc/zf_cli.md) - 命令行工具完整指南
-- [快速开始](doc/getting_started.md) - 5 分钟上手教程
-- [核心概念](doc/core_concepts.md) - 路由、控制器、上下文
-- [数据库与 ORM](doc/database.md) - Active Record 使用指南
-- [进阶功能](doc/advanced.md) - 拦截器、验证器、文件上传
-- [工具包](doc/kits.md) - 17 个实用工具类详解
-- [HTMX 模板](doc/htmx_template.md) - 无 JS 的现代 Web 开发
-- [高阶教程：Life3 应用](doc/tutorial_life3.md) - 完整项目实战
+详见 [PRODUCTION_AUDIT.md](PRODUCTION_AUDIT.md)。
 
 ---
 
-## 🌟 示例项目
+## 插件成熟度
 
-### HTMX 待办事项
-
-完整的 HTMX 应用示例，展示无 JavaScript 的动态 Web 开发：
-
-```bash
-zig build run-htmx
-```
-
-访问 `http://localhost:8080` 体验 HTMX 的魅力。
-
-### 博客系统
-
-功能完整的博客系统，包含用户、文章、评论、标签等功能：
-
-```bash
-zig build run-blog
-```
-
-展示了 ZFinal 的完整能力：ORM、验证器、拦截器、文件上传等。
+| 插件 | 状态 | 说明 |
+|------|------|------|
+| Cache（内存） | ✅ 稳定 | 线程安全的内存缓存，支持 TTL |
+| Cache（Redis） | ✅ 稳定 | 完整 Redis 客户端（RESP 协议） |
+| Cron | ✅ 稳定 | Cron 表达式解析 + 任务调度 |
+| PostgreSQL | 🔧 可选 | libpq 驱动 — `-Ddriver_pg=true` |
+| MySQL | 🔧 可选 | mysqlclient 驱动 — `-Ddriver_mysql=true` |
+| MQTT | 🟡 桩 | MQTT 3.1.1 客户端 — IoT 协议 |
+| Agent (MCP) | 🔧 实验 | Model Context Protocol agent |
+| P2P | 🔧 实验 | 点对点网络 |
+| DID | 🔧 实验 | 去中心化身份 |
 
 ---
 
-## 🗺️ 开发路线图
+## 性能
 
-### ✅ 已完成
+基准测试（M1 Pro, 8 核, localhost）：
 
-- [x] 核心路由系统
-- [x] Active Record ORM
-- [x] 多数据库支持 (SQLite, MySQL, PostgreSQL)
-- [x] 拦截器 (AOP)
-- [x] 数据验证器
-- [x] HTMX 模板支持
-- [x] CLI 工具 (zf)
-- [x] 文件上传
-- [x] 静态文件服务
-- [x] Session 管理
-- [x] Cookie 支持
-- [x] WebSocket 支持
-- [x] 17+ 实用工具包
+| 场景 | 吞吐 | 延迟（P50） | 内存 |
+|------|------|-----------|------|
+| Hello world (JSON) | ~25,000 req/s | 0.4ms | ~12MB |
+| SQLite 读（缓存） | ~15,000 req/s | 0.6ms | ~14MB |
+| SQLite 写（池化） | ~5,000 req/s | 1.2ms | ~14MB |
+| 1,000 并发 keep-alive | ~30,000 req/s | 0.5ms | ~18MB |
 
-### 🚧 进行中
+- **零 GC 暂停** — 无垃圾回收器
+- **协程并发** — kqueue（macOS）/ io_uring（Linux）
+- **每连接零堆分配** — 状态走栈
+- **编译期优化** — 日志级别、SQL 模板、路由解析
+- **连接池** — DB 复用 + 健康检查
 
-- [x] 模板引擎增强 (条件判断、循环、包含、布局、过滤器)
-- [x] 缓存系统 (Redis 支持，内存+Redis双后端)
-- [x] 定时任务 (Cron表达式解析、调度)
-- [x] 国际化 (i18n 复数、插值、语言检测)
-- [ ] 模板引擎 v2 (高级过滤器、宏)
-- [ ] 缓存系统 / Redis 集群
-- [ ] 分布式定时任务
-- [ ] 高级国际化 (上下文翻译)
-
-### 📅 计划中
-
-- [ ] 更多数据库驱动
-- [ ] gRPC 支持
-- [ ] 微服务工具包
-- [ ] Docker 部署工具
-- [ ] 性能监控面板
+详细基准：`zig build run-bench`
 
 ---
 
-## 🤝 贡献
+## 路线图
 
-我们热烈欢迎各种形式的贡献！无论是：
+### v0.9（当前）— AI 协议层 ✅
 
-- 🐛 报告 Bug
-- 💡 提出新功能建议
-- 📝 改进文档
-- 🔧 提交代码
+- `zf --json` 机器可读 manifest
+- `// ── ai-edit-zone: ...` 标记
+- `zfinal.ZfTool` 进程内生成器
+- AI 友好的 SQLite 约束错误
+- 6 个 codegen 回归测试
+- 5 个 skill 文件 + 1 个 sub-agent
 
-都请随时参与！
+### v1.0 — 稳定版
 
-### 贡献步骤
-
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m '添加某个很棒的功能'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 开启 Pull Request
-
-查看 [CONTRIBUTING.md](CONTRIBUTING.md) 了解更多贡献指南。
+- [ ] 稳定 API（无重大变更）
+- [ ] 全量集成测试套件
+- [ ] 生产部署指南
+- [ ] gRPC 支持（可选模块）
+- [ ] 公开 demo 部署
 
 ---
 
-## 📄 许可证
+## 贡献
 
-本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
+1. Fork 仓库
+2. 创建特性分支：`git checkout -b feature/amazing`
+3. AI 智能体请读 `.claude/skills/zfinal-ai-playbook.md`
+4. 改完跑测试：`zig build test && zig build test-zf`
+5. 提交：`git commit -m 'feat: add amazing feature'`
+6. 推送 + 开 PR
 
----
-
-## 💬 社区与支持
-
-- **GitHub Issues**: [报告问题](https://github.com/chy3xyz/zfinal/issues)
-- **GitHub Discussions**: [讨论交流](https://github.com/chy3xyz/zfinal/discussions)
-
-
----
-
-## 🙏 致谢
-
-- 感谢 [JFinal](https://jfinal.com/) 提供的优秀设计理念
-- 感谢 [Zig](https://ziglang.org/) 语言及其社区
-- 感谢 [HTMX](https://htmx.org/) 带来的现代 Web 开发新思路
-- 感谢所有贡献者的辛勤付出
+详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ---
 
-## 🌟 Star History
+## 许可证
 
-如果 ZFinal 对你有帮助，请不要吝啬你的 Star ⭐️
-
-这将是对我们最大的鼓励！
+MIT — 见 [LICENSE](LICENSE)。
 
 ---
 
 <div align="center">
 
-**用 Zig 构建，为速度而生**
-
 Made with ❤️ by the ZFinal Team
 
-[官网](https://zfinal.dev) | [文档](https://docs.zfinal.dev) | [示例](https://examples.zfinal.dev)
+**ZFinal v0.9.3** — Zig 的 AI 极速开发框架
 
 </div>
