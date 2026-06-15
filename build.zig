@@ -35,6 +35,15 @@ pub fn build(b: *std.Build) void {
     const enable_pg = b.option(bool, "enable-pg", "Enable PostgreSQL introspection (requires libpq)") orelse false;
     const enable_mysql = b.option(bool, "enable-mysql", "Enable MySQL introspection (requires libmysqlclient)") orelse false;
 
+    // Platform-aware include paths (user overridable)
+    const mysql_include = b.option([]const u8, "mysql-include", "Path to MySQL include directory (e.g. /usr/include/mysql)");
+    const pg_include = b.option([]const u8, "pg-include", "Path to PostgreSQL include directory (e.g. /usr/include/postgresql)");
+
+    // Detect platform-appropriate defaults
+    const native_os = target.result.os.tag;
+    const default_mysql_include: []const u8 = if (native_os == .macos) "/opt/homebrew/include" else "/usr/include/mysql";
+    const default_pg_include: []const u8 = if (native_os == .macos) "/opt/homebrew/opt/libpq/include" else "/usr/include/postgresql";
+
     // --- C header translation (Zig 0.17: @cImport removed, use build-system translate-c) ---
 
     // SQLite — always available (system SDK or Homebrew)
@@ -52,7 +61,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
-        tc.addSystemIncludePath(.{ .cwd_relative = "/opt/homebrew/include" });
+        tc.addSystemIncludePath(.{ .cwd_relative = mysql_include orelse default_mysql_include });
         break :blk tc.createModule();
     } else null;
 
@@ -63,7 +72,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
-        tc.addSystemIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/libpq/include" });
+        tc.addSystemIncludePath(.{ .cwd_relative = pg_include orelse default_pg_include });
         break :blk tc.createModule();
     } else null;
 
@@ -74,7 +83,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
-        tc.addSystemIncludePath(.{ .cwd_relative = "/opt/homebrew/include/mysql" });
+        tc.addSystemIncludePath(.{ .cwd_relative = mysql_include orelse default_mysql_include });
         break :blk tc.createModule();
     } else null;
 
@@ -85,7 +94,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
-        tc.addSystemIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/libpq/include" });
+        tc.addSystemIncludePath(.{ .cwd_relative = pg_include orelse default_pg_include });
         break :blk tc.createModule();
     } else null;
 

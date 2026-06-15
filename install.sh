@@ -129,8 +129,45 @@ build_zfinal() {
     print_info "Building ZFinal..."
     cd "$INSTALL_DIR"
     
-    if zig build install; then
+    local build_args=""
+    
+    # Offer MySQL/PostgreSQL support if dependencies are found
+    case "$OS" in
+        macos)
+            if [ -f /opt/homebrew/include/mysql/mysql.h ] || [ -f /usr/local/include/mysql/mysql.h ]; then
+                print_info "MySQL headers found — building with MySQL driver"
+                build_args="$build_args -Ddriver_mysql=true"
+            fi
+            if [ -f /opt/homebrew/opt/libpq/include/libpq-fe.h ] || [ -f /usr/local/opt/libpq/include/libpq-fe.h ]; then
+                print_info "PostgreSQL headers found — building with PostgreSQL driver"
+                build_args="$build_args -Ddriver_pg=true"
+            fi
+            ;;
+        linux)
+            if [ -f /usr/include/mysql/mysql.h ] || [ -f /usr/include/mariadb/mysql.h ]; then
+                print_info "MySQL headers found — building with MySQL driver"
+                build_args="$build_args -Ddriver_mysql=true"
+            else
+                print_info "MySQL headers not found — skipping MySQL driver"
+                print_info "  Install: sudo apt-get install libmysqlclient-dev  (Debian/Ubuntu)"
+                print_info "       or: sudo yum install mariadb-connector-c-devel (RHEL/CentOS)"
+            fi
+            if [ -f /usr/include/postgresql/libpq-fe.h ] || [ -f /usr/include/pgsql/libpq-fe.h ]; then
+                print_info "PostgreSQL headers found — building with PostgreSQL driver"
+                build_args="$build_args -Ddriver_pg=true"
+            else
+                print_info "PostgreSQL headers not found — skipping PostgreSQL driver"
+                print_info "  Install: sudo apt-get install libpq-dev  (Debian/Ubuntu)"
+                print_info "       or: sudo yum install libpq-devel      (RHEL/CentOS)"
+            fi
+            ;;
+    esac
+    
+    if zig build install $build_args; then
         print_success "ZFinal built successfully!"
+        if [ -n "$build_args" ]; then
+            print_info "Built with flags: $build_args"
+        fi
     else
         print_error "Build failed!"
         exit 1
