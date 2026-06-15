@@ -1,16 +1,31 @@
 # CLAUDE.md
 
+## 🟢 FIRST-READ for any AI agent
+
+If you are an AI agent and this is your first contact with this project,
+**read `.claude/skills/zfinal-onboarding.md` before doing anything else**.
+That 30-second orientation tells you the framework, the 5-command speedrun,
+and which skill to load next. This CLAUDE.md is the persistent reference;
+on subsequent visits you can skip the onboarding.
+
 ## Skill routing
 
 When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.
 
 Key routing rules for this project:
 
+- **First contact / "what is zfinal" / orientation** → invoke `zfinal-onboarding`
 - Add a new entity / regenerate from SQL → invoke `zfinal-ai-playbook`
 - Health check / CI / `zig build test` issues → invoke `zfinal-health`
 - Add a new module / fix framework internals → invoke `zfinal-framework`
 - Build a ZFinal app from scratch → invoke `zfinal-app`
 - General ZFinal development (Zig 0.17, memory safety, CSRF) → invoke `zfinal-evolution`
+
+There is also a sub-agent `zfinal-developer` in
+`.claude/agents/zfinal-developer.md` that bundles the onboarding +
+playbook + hard rules into a single auto-dispatched unit. If the host
+supports sub-agents, dispatching that is equivalent to invoking
+`zfinal-onboarding` followed by the appropriate task-specific skill.
 
 ## Health Stack
 

@@ -1,5 +1,13 @@
 # AGENTS.md
 
+> **🤖 ZFinal is an AI-first Zig web framework.**
+> Optimized for AI-driven development: the `zf` CLI emits machine-readable
+> JSON manifests, generated files contain `// ── ai-edit-zone: ...`
+> markers telling you exactly where to write business logic, and the
+> in-framework `zfinal.ZfTool` lets you invoke the generator from code.
+> When you (an AI agent) start a ZFinal task, read
+> `.claude/skills/zfinal-onboarding.md` first.
+
 > **🛑 RULE: Use `zf` CLI tools. Never hand-code Zig from scratch.**
 
 ## ▶️ START — pick your flow

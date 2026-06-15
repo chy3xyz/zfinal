@@ -1,3 +1,8 @@
+---
+name: zfinal-evolution
+description: Use when working on any ZFinal development task that touches Zig 0.17 API quirks, memory safety (errdefer/defer/poison), thread safety (Io.Mutex), or framework conventions. Triggers on "升级", "优化", "评估", "修复", Zig 0.17 API questions, or `zig build` / `zig build test` errors in this repo.
+---
+
 # ZFinal 开发技能
 
 当开始 ZFinal 任何开发工作时，自动激活。

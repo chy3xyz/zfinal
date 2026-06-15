@@ -1,56 +1,136 @@
-# ZFinal 开发文档
+# ZFinal — AI Speedrun Zig Web Framework
 
-欢迎使用 ZFinal！这是一个受 JFinal 启发的 Zig Web 框架，旨在提供极简、高性能的 Web 开发体验。
+> **🤖 If you are an AI agent: read `.claude/skills/zfinal-onboarding.md` first.**
+> That file is the 30-second orientation. This page is the long-form
+> reference. Both target the same goal: let an AI build a ZFinal
+> feature in minutes, not hours.
 
-## 目录
+ZFinal is a high-performance Zig web framework with a unique property:
+**it is designed for AI-driven development**. Every generated file
+tells the AI exactly where to add business logic. The `zf` CLI emits
+machine-readable JSON. The in-framework `ZfTool` lets the AI invoke
+the generator from code. The result: an AI can add a CRUD feature in
+**5 minutes**.
 
-1. [ZF CLI 工具](zf_cli.md)
-   - 命令行工具使用指南
-   - 快速创建项目和生成代码
+## Why ZFinal
 
-2. [快速开始 (Getting Started)](getting_started.md)
-   - 环境要求
-   - 安装 zfctl 工具
-   - 创建第一个项目
-   - 项目结构说明
+| Property | Why it matters for AI |
+|----------|----------------------|
+| `zf crud:sql <file> --json` | Emits a manifest the AI parses instead of grepping the working tree |
+| `// ── ai-edit-zone: ...` markers | Tells the AI exactly where to edit, never overwrites generated code |
+| `zfinal.ZfTool` (in-framework) | The AI can call the generator from Zig code, no shell out |
+| `zig fmt` clean | 346+ files, all formatted; AI doesn't have to fight style |
+| `zf check` | Audits AI boundary compliance; catches hand-edited generated code |
+| `zig build test` | 145 tests pass, 0 leak, 0 fail; AI can rely on green CI |
 
-2. [核心概念 (Core Concepts)](core_concepts.md)
-   - 路由 (Routing)
-   - 控制器 (Controller)
-   - 上下文 (Context)
-   - 参数获取 (Parameter Handling)
-   - 响应渲染 (Rendering)
+## The 5-minute AI speedrun
 
-3. [数据库与 ORM (Database & ORM)](database.md)
-   - 数据库配置
-   - Active Record 模式
-   - CRUD 操作
-   - 事务处理
-   - SQL 模板
+```bash
+# 1. Schema is the source of truth
+cat schema.sql
 
-4. [进阶功能 (Advanced Features)](advanced.md)
-   - 拦截器 (Interceptors / AOP)
-   - 验证器 (Validators)
-   - 文件上传与下载
-   - 插件系统 (Plugins)
-   - 国际化 (I18n)
+# 2. Generate everything (model, service, handler, routes, tests)
+zf crud:sql schema.sql --json > manifest.json
 
-5. [工具包 (Kits)](kits.md)
-   - StringKit, HashKit, DateKit 等常用工具
+# 3. Edit only inside ai-edit-zones
+$EDITOR src/modules/users/service.zig  # add business rules
+$EDITOR src/modules/users/handler.zig  # add auth checks
 
-6. [高阶教程：Life3 应用](tutorial_life3.md)
-   - 完整开发一个生活管理应用
-   - 旅程、计划、记录、统计分析
-   - 数据建模、RESTful API、服务层设计
+# 4. Verify
+zf check && zig build test
 
-7. [HTMX 模板系统](htmx_template.md)
-   - 基于 HTMX 的现代 Web 开发
-   - 无需编写 JavaScript
-   - 完整的待办事项应用示例
+# 5. Run
+zig build run
+```
 
-## 为什么选择 ZFinal？
+5 commands. 5 minutes. Full walkthrough in [ai-quickstart.md](ai-quickstart.md).
+Runnable demo in [`examples/ai-blog-5min/`](../examples/ai-blog-5min/ZF_GEN.md).
 
-- **高性能**: 基于 Zig 语言，原生编译，无 GC 暂停。
-- **极简设计**: 核心库轻量，无繁杂依赖。
-- **开发效率**: 类似 JFinal 的极简 API，让 Java 开发者倍感亲切。
-- **全栈能力**: 内置 ORM、模板引擎（规划中）、验证器等，开箱即用。
+## For AI agents
+
+| You want to… | Read |
+|--------------|------|
+| Get oriented (first 30 seconds) | [`.claude/skills/zfinal-onboarding.md`](../.claude/skills/zfinal-onboarding.md) |
+| Add a new feature / entity / route | [`.claude/skills/zfinal-ai-playbook.md`](../.claude/skills/zfinal-ai-playbook.md) |
+| Run / fix tests or health checks | [`.claude/skills/zfinal-health.md`](../.claude/skills/zfinal-health.md) |
+| Build a complete app from scratch | [`.claude/skills/zfinal-app.md`](../.claude/skills/zfinal-app.md) |
+| Add a module to the framework | [`.claude/skills/zfinal-framework.md`](../.claude/skills/zfinal-framework.md) |
+| Understand Zig 0.17, memory safety, etc. | [`.claude/skills/zfinal-evolution.md`](../.claude/skills/zfinal-evolution.md) |
+| See a 5-minute walkthrough | [ai-quickstart.md](ai-quickstart.md) |
+| Run a live demo | `zig build run-ai-blog-5min` |
+
+## For humans
+
+| You want to… | Read |
+|--------------|------|
+| Understand the framework's design | [core_concepts.md](core_concepts.md) |
+| Set up a project from scratch | [getting_started.md](getting_started.md) |
+| Use the database / ORM | [database.md](database.md) |
+| Write advanced features (interceptors, plugins, i18n) | [advanced.md](advanced.md) |
+| Use the utility kits | [kits.md](kits.md) |
+| Compare with JFinal (Java inspiration) | [jfinal_comparison.md](jfinal_comparison.md) |
+| Migrate a legacy Java/PHP/Go/Rust project | [java_migration.md](java_migration.md) |
+| Use the `zf` CLI | [zf_cli.md](zf_cli.md) |
+| Build an HTMX-driven UI | [htmx_template.md](htmx_template.md) |
+| Follow a full tutorial (Life3 app) | [tutorial_life3.md](tutorial_life3.md) |
+
+## What you get out of the box
+
+- HTTP/1.1 server with router, middleware, interceptors
+- Database layer (SQLite, PostgreSQL, MySQL) with connection pool
+- Active Record ORM with auto-generated CRUD
+- CSRF token manager, captcha, i18n, validators
+- WebSocket, template engine, metrics
+- 17 utility kits (string, hash, time, file, etc.)
+- 145+ unit tests + integration tests, 0 leak
+- Cross-platform: macOS, Linux, Windows
+
+## Project structure (for AI agents)
+
+```
+zfinal/
+├── src/                          # Framework source
+│   ├── main.zig                  # Public API
+│   ├── core/                     # Server, Router, Context
+│   ├── db/                       # DB + drivers + ORM
+│   ├── interceptor/              # Auth, CORS, CSRF
+│   ├── plugin/                   # Cache, Cron, Redis
+│   ├── kit/                      # 17 utility kits
+│   ├── aichat/                   # AI client + ZfTool
+│   └── io_instance.zig           # Global Io + allocator
+├── tools/zf/                     # CLI tool
+│   ├── main.zig                  # Entry point
+│   ├── codegen.zig               # Code generator
+│   ├── csql.zig                  # SQL parser
+│   ├── codegen_test.zig          # Generator tests
+│   └── templates.zig             # Code templates
+├── examples/                     # 10+ runnable examples
+│   ├── hello-world/
+│   ├── blog-single/
+│   ├── ai-blog-5min/             # AI speedrun demo
+│   └── ...
+├── doc/                          # This documentation
+├── .claude/skills/               # AI-recognizable skills
+│   ├── zfinal-onboarding.md      # Read first
+│   ├── zfinal-ai-playbook.md
+│   ├── zfinal-health.md
+│   ├── zfinal-framework.md
+│   ├── zfinal-app.md
+│   └── zfinal-evolution.md
+├── .claude/agents/
+│   └── zfinal-developer.md       # Sub-agent definition
+├── AGENTS.md                     # Top-level rules
+├── CLAUDE.md                     # Health Stack + skill routing
+└── build.zig                     # Build configuration
+```
+
+## Versioning
+
+ZFinal uses semantic versioning. Current: **v0.9.2**. Releases are
+tagged on `main` and published via GitHub releases. The
+`zfinal.ZfTool.manifestFromSql` version field in the manifest
+matches the framework version.
+
+## License
+
+ZFinal is open source. See [LICENSE](../LICENSE).
