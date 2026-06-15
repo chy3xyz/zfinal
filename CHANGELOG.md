@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-06-13
+
+### Added
+- **`zfinal.ZfTool`**: In-process wrapper around the code generator. `ZfTool.manifestFromSql` produces the same JSON manifest as `zf crud:sql --json`, callable from any in-framework code (aichat, embedded assistants). Exposed at `src/aichat/zf_tool.zig`.
+- **AI-friendly SQLite constraint errors**: `SQLiteDB.execParams` / `queryParams` now return typed errors (`UniqueViolation`, `NotNullViolation`, `ForeignKeyViolation`, `CheckViolation`, `DuplicatePrimaryKey`) with `table` and `column` extracted from the SQLite message. Lets AI agents show "users.email already exists" instead of "SQLite step failed: 19".
+- **Code generator regression tests**: `tools/zf/codegen_test.zig` with 6 tests covering model/service/handler/routes templates, SQL parsing, and JSON escaping. Run with `zig build test-zf`.
+
 ## [0.9.1] - 2026-06-13
 
 ### Added
