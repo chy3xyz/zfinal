@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-06-13
+
+### Added
+- **AI protocol layer**: `zf crud:sql <file> --json` and `zf g <type> <name> --json` emit machine-readable manifests listing generated files, AI edit zones, fields, and next steps. Lets AI agents parse what was created and where to edit.
+- **AI edit-zone markers**: `model.zig`, `service.zig`, and `handler.zig` templates now include `// ── ai-edit-zone: ...` blocks so AI agents know exactly where to add business logic vs. leave generated boilerplate untouched.
+- **Project skill `zfinal-ai-playbook`**: Captures the standard "add a feature" script (read → generate → edit zones → verify → ship) for AI agents.
+- **CLAUDE.md skill routing**: New `## Skill routing` section so future agents pick the right skill by trigger.
+
+### Changed
+- **`zf` subcommand surface**: `zf crud:sql` and `zf g` now accept `--json` to switch to machine-readable output.
+
 ## [0.8.2] - 2026-06-13
 
 ### Fixed
