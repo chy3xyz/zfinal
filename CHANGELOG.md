@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.6] - 2026-06-13
+
+### Added
+- **`zf crud:sql <file> --admin`**: One command emits Zig (model/service/handler/routes) AND vben-style admin HTML together.
+- **Manifest `ui` metadata**: each field in the `--json` manifest now includes `input` (number/text/checkbox/date/datetime-local), `label_zh`, and `required` flags.
+- **`doc/admin_template.md`**: long-form walkthrough of the vben admin generator — design tokens, field-type mapping, AI edit zones, custom styling.
+
+### Fixed
+- **SQL parser**: column types were captured with trailing `)` from the closing paren of `CREATE TABLE`. Now correctly stops at `)`.
+
+### Changed
+- **`admin_templates` and `csql_*.zig`**: refactored to import `codegen` as a named module instead of a file path, enabling the admin templates tests to run in `zig build test-zf`. Test count: 6 → 10.
+
 ## [0.9.5] - 2026-06-13
 
 ### Added
