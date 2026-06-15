@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-06-13
+
+### Changed
+- **ConnectionPool**: documented pthread_mutex value-copy safety. `PTHREAD_MUTEX_INITIALIZER` static init + value-copy is safe on macOS/Linux/glibc/musl. Doc comment describes mitigation path if platform-specific hangs occur.
+
+### Investigated (no action)
+- **PollerConfig / SyncTask string lifetime**: not in ZFinal framework — these are in a downstream project (test_final) and already fixed there.
+
 ## [0.10.0] - 2026-06-13
 
 ### Added
