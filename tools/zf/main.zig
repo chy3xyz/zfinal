@@ -24,6 +24,7 @@ const Command = enum {
     check,
     upgrade,
     life,
+    admin,
 };
 
 var io: std.Io = undefined;
@@ -144,6 +145,22 @@ pub fn main(init: std.process.Init) !void {
             const json_mode = hasFlag(args, "--json");
             try handleCrudFromSql(allocator, args[2], project_name, force, json_mode);
         },
+        .admin => {
+            if (args.len < 3) {
+                std.debug.print("Usage: {s} admin <sql_file> [--out <dir>]\n", .{args[0]});
+                std.debug.print("  Generate vben-style admin HTML (htmx + alpine + tailwind, CDN).\n", .{});
+                std.debug.print("  --out <dir>   Output directory (default: src/modules)\n", .{});
+                return;
+            }
+            const out_dir = blk: {
+                var i: usize = 3;
+                while (i + 1 < args.len) : (i += 1) {
+                    if (std.mem.eql(u8, args[i], "--out")) break :blk args[i + 1];
+                }
+                break :blk "src/modules";
+            };
+            try handleAdmin(allocator, args[2], out_dir);
+        },
         .crud_dsn => {
             if (args.len < 3) {
                 std.debug.print("Usage: {s} crud:dsn <dsn_url>\n", .{args[0]});
@@ -181,6 +198,7 @@ fn parseCommand(cmd: []const u8) ?Command {
     if (std.mem.eql(u8, cmd, "help") or std.mem.eql(u8, cmd, "h")) return .help;
     if (std.mem.eql(u8, cmd, "crud")) return .crud;
     if (std.mem.eql(u8, cmd, "crud:sql")) return .crud_sql;
+    if (std.mem.eql(u8, cmd, "admin")) return .admin;
     if (std.mem.eql(u8, cmd, "crud:dsn")) return .crud_dsn;
     if (std.mem.eql(u8, cmd, "check")) return .check;
     if (std.mem.eql(u8, cmd, "upgrade")) return .upgrade;
@@ -203,6 +221,7 @@ fn printHelp(exe_name: []const u8) void {
     std.debug.print("  test:gen <name>         Generate test file\n", .{});
     std.debug.print("  crud <db> <table>       Generate full CRUD from SQLite DB schema\n", .{});
     std.debug.print("  crud:sql <file> [name]  Generate from .sql file. Optional project name creates dir.\n", .{});
+    std.debug.print("  admin <file>            Generate vben-style admin HTML (htmx + alpine + tailwind, CDN)\n", .{});
     std.debug.print("  check                   Audit project for AI compliance (gen/ext boundaries)\n", .{});
     std.debug.print("  upgrade                 Upgrade zfinal dependency to latest release\n", .{});
     std.debug.print("  docker                  Generate Dockerfile\n", .{});
@@ -627,6 +646,84 @@ fn writeFile(dir: std.Io.Dir, path: []const u8, content: []const u8) !void {
     const file = try dir.createFile(io, path, .{});
     defer file.close(io);
     try file.writeStreamingAll(io, content);
+}
+
+const admin_templates = @import("admin_templates.zig");
+
+fn readFileAlloc(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    var f = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer f.close(io);
+    const stat = try f.stat(io);
+    const buf = try allocator.alloc(u8, @intCast(stat.size));
+    const chunks = [_][]u8{buf};
+    _ = try f.readStreaming(io, &chunks);
+    return buf;
+}
+
+/// Generate vben-style admin HTML files for every table in a SQL file.
+/// Each table produces 4 files: admin.html, admin_form.html, admin_row.html
+/// plus a shared layout.html at the output root.
+fn handleAdmin(allocator: std.mem.Allocator, sql_path: []const u8, out_dir: []const u8) !void {
+    std.debug.print("📋 zf admin — generating vben-style UI for {s}\n", .{sql_path});
+    std.debug.print("   output: {s}/\n", .{out_dir});
+
+    const sql_text = readFileAlloc(allocator, sql_path) catch |e| {
+        std.debug.print("error: cannot read {s}: {t}\n", .{ sql_path, e });
+        return e;
+    };
+    defer allocator.free(sql_text);
+
+    var tables = codegen.parseSqlFile(allocator, sql_text) catch |e| {
+        std.debug.print("error: failed to parse SQL: {t}\n", .{e});
+        return e;
+    };
+    defer {
+        for (tables.items) |*t| t.deinit();
+        tables.deinit(allocator);
+    }
+    if (tables.items.len == 0) {
+        std.debug.print("error: no CREATE TABLE found in {s}\n", .{sql_path});
+        return error.NoTables;
+    }
+
+    // Ensure output directory exists
+    const dir = std.Io.Dir.createDirPathOpen(.cwd(), io, out_dir, .{}) catch |e| {
+        std.debug.print("error: cannot create {s}: {t}\n", .{ out_dir, e });
+        return e;
+    };
+    defer std.Io.Dir.close(dir, io);
+
+    var written: usize = 0;
+    for (tables.items) |*table| {
+        const files = admin_templates.renderAll(allocator, table) catch |e| {
+            std.debug.print("error rendering {s}: {t}\n", .{ table.name, e });
+            return e;
+        };
+        defer files.deinit(allocator);
+
+        const module_dir_path = try std.fmt.allocPrint(allocator, "{s}", .{table.name});
+        defer allocator.free(module_dir_path);
+        const module_dir = std.Io.Dir.createDirPathOpen(dir, io, module_dir_path, .{}) catch |e| {
+            std.debug.print("error: cannot create {s}/{s}: {t}\n", .{ out_dir, table.name, e });
+            return e;
+        };
+        defer std.Io.Dir.close(module_dir, io);
+
+        try writeFile(module_dir, "admin.html", files.list);
+        try writeFile(module_dir, "admin_form.html", files.form);
+        try writeFile(module_dir, "admin_row.html", files.row);
+        written += 1;
+    }
+
+    // Shared layout at out_dir root
+    if (tables.items.len > 0) {
+        const layout_files = admin_templates.renderAll(allocator, &tables.items[0]) catch return error.RenderLayout;
+        defer layout_files.deinit(allocator);
+        try writeFile(dir, "admin_layout.html", layout_files.layout);
+    }
+
+    std.debug.print("✅ Generated {d} module(s) × 3 admin files + 1 shared layout\n", .{written});
+    std.debug.print("   Edit ai-edit-zones in each file to customize.\n", .{});
 }
 
 fn capitalizeOwned(allocator: std.mem.Allocator, str: []const u8) ![]const u8 {
