@@ -6,6 +6,8 @@ pub const DEFAULT_SYSTEM_PROMPT = @import("types.zig").DEFAULT_SYSTEM_PROMPT;
 pub const AiClient = @import("client.zig").AiClient;
 pub const CurlAiClient = @import("client.zig").CurlAiClient;
 
+pub const ZfTool = @import("zf_tool.zig").ZfTool;
+
 pub const ChatPersistence = @import("service.zig").ChatPersistence;
 pub const buildSystemPrompt = @import("service.zig").buildSystemPrompt;
 pub const buildSystemPromptWithDate = @import("service.zig").buildSystemPromptWithDate;
