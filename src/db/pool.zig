@@ -2,7 +2,15 @@ const std = @import("std");
 const DB = @import("db.zig").DB;
 const DBConfig = @import("config.zig").DBConfig;
 
-/// 数据库连接池 with POSIX thread synchronization
+/// 数据库连接池 with POSIX thread synchronization.
+///
+/// Known limitation: pthread_mutex_t / pthread_cond_t are value-copied
+/// from init() via PTHREAD_MUTEX_INITIALIZER. On most platforms (macOS,
+/// Linux, glibc, musl) this is safe because the static initializer sets
+/// up a zero-initialized platform primitive whose copy is also valid.
+/// If a platform-specific issue is observed (pool.acquire silently hangs
+/// in worker threads), switch to heap-allocated mutex or use
+/// `@cImport("pthread.h")` to call pthread_mutex_init explicitly.
 pub const ConnectionPool = struct {
     connections: std.ArrayList(*DB),
     available: std.ArrayList(*DB),
