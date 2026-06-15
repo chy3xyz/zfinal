@@ -16,31 +16,29 @@
 const std = @import("std");
 const codegen = @import("codegen");
 
-/// Generate the 4 admin HTML files for a single table.
-/// Returns owned slices the caller must free. List ends with a
-/// null terminator (paired arrays).
+/// Generate the 3 admin HTML files for a single table.
+/// `list` is a full page (layout + table list + pagination + modal).
+/// `form` and `row` are HTMX fragments loaded into the modal / table.
 pub const AdminFiles = struct {
-    layout: []u8,
     list: []u8,
     form: []u8,
     row: []u8,
 
     pub fn deinit(self: AdminFiles, allocator: std.mem.Allocator) void {
-        allocator.free(self.layout);
         allocator.free(self.list);
         allocator.free(self.form);
         allocator.free(self.row);
     }
 };
 
-/// Render all admin files for one table. The caller must
-/// deinit() the returned AdminFiles.
-pub fn renderAll(allocator: std.mem.Allocator, table: *const codegen.Table) !AdminFiles {
+/// Render all admin files for one table, with the sidebar nav
+/// built from all `tables` (so each per-table page can navigate to
+/// sibling tables). The caller must deinit() the returned AdminFiles.
+pub fn renderAll(allocator: std.mem.Allocator, tables: []const *const codegen.Table, current: *const codegen.Table) !AdminFiles {
     return .{
-        .layout = try renderLayout(allocator, table),
-        .list = try renderList(allocator, table),
-        .form = try renderForm(allocator, table),
-        .row = try renderRow(allocator, table),
+        .list = try renderList(allocator, tables, current),
+        .form = try renderForm(allocator, current),
+        .row = try renderRow(allocator, current),
     };
 }
 
@@ -84,11 +82,31 @@ const SHARED_HEAD =
 ;
 
 // ============================================================
-// Layout: topbar + sidebar shell
+// Page shell: head + topbar + multi-table sidebar + content slot
+// Returns the full HTML page wrapping the given content.
 // ============================================================
-fn renderLayout(allocator: std.mem.Allocator, table: *const codegen.Table) ![]u8 {
-    const title = try std.fmt.allocPrint(allocator, "{s} 管理 - ZFinal Admin", .{table.pascal_name});
+fn renderPageShell(allocator: std.mem.Allocator, tables: []const *const codegen.Table, current: *const codegen.Table, content: []const u8) ![]u8 {
+    const title = try std.fmt.allocPrint(allocator, "{s} 管理 - ZFinal Admin", .{current.pascal_name});
     defer allocator.free(title);
+
+    // Build sidebar links from all tables
+    var nav: std.ArrayList(u8) = .empty;
+    defer nav.deinit(allocator);
+    for (tables) |t| {
+        const active = std.mem.eql(u8, t.name, current.name);
+        const link = try std.fmt.allocPrint(allocator,
+            \\    <a href="/{s}" class="flex items-center px-4 py-3 hover:bg-vben-sidebar-h transition-colors"{s}>
+            \\      <span class="text-base">📋</span>
+            \\      <span x-show="!sidebarCollapsed" x-cloak class="ml-3 text-sm">{s}</span>
+            \\    </a>
+        , .{
+            t.name,
+            if (active) " :class=\"!sidebarCollapsed && 'border-l-2 border-vben-primary bg-vben-sidebar-h'\"" else "",
+            t.pascal_name,
+        });
+        try nav.appendSlice(allocator, link);
+        allocator.free(link);
+    }
 
     return std.fmt.allocPrint(allocator,
         \\{s}
@@ -118,14 +136,7 @@ fn renderLayout(allocator: std.mem.Allocator, table: *const codegen.Table) ![]u8
         \\      <span class="text-base">🏠</span>
         \\      <span x-show="!sidebarCollapsed" x-cloak class="ml-3 text-sm">仪表盘</span>
         \\    </a>
-        \\    <a href="/{s}" class="flex items-center px-4 py-3 hover:bg-vben-sidebar-h transition-colors">
-        \\      <span class="text-base">📋</span>
-        \\      <span x-show="!sidebarCollapsed" x-cloak class="ml-3 text-sm">{s}</span>
-        \\    </a>
-        \\    <a href="#" class="flex items-center px-4 py-3 hover:bg-vben-sidebar-h transition-colors">
-        \\      <span class="text-base">📊</span>
-        \\      <span x-show="!sidebarCollapsed" x-cloak class="ml-3 text-sm">报表</span>
-        \\    </a>
+        \\{s}
         \\  </nav>
         \\</aside>
         \\<!-- ──────────────────────────────────────────────────────────────── -->
@@ -139,21 +150,21 @@ fn renderLayout(allocator: std.mem.Allocator, table: *const codegen.Table) ![]u8
         \\</html>
     , .{
         SHARED_HEAD, // 1: head
-        title, // 2: page title
-        table.name, // 3: href in sidebar
-        table.pascal_name, // 4: sidebar label
-        table.name, // 5: content slot
+        title, // 2: page title (current table)
+        nav.items, // 3: sidebar nav (all tables)
+        content, // 4: page content (list + table + modal)
     });
 }
 
 // ============================================================
-// List page: search bar + table + pagination + add button
+// List page: full HTML (head + topbar + sidebar + content + modal)
+// Built by composing the page shell with the table list content.
 // ============================================================
-fn renderList(allocator: std.mem.Allocator, table: *const codegen.Table) ![]u8 {
+fn renderList(allocator: std.mem.Allocator, tables: []const *const codegen.Table, current: *const codegen.Table) ![]u8 {
     var headers: std.ArrayList(u8) = .empty;
     defer headers.deinit(allocator);
     try headers.appendSlice(allocator, "      <th class=\"px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider\">ID</th>\n");
-    for (table.columns.items) |col| {
+    for (current.columns.items) |col| {
         if (col.is_primary_key) continue;
         const h = try std.fmt.allocPrint(allocator, "      <th class=\"px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider\">{s}</th>\n", .{col.name});
         try headers.appendSlice(allocator, h);
@@ -161,39 +172,70 @@ fn renderList(allocator: std.mem.Allocator, table: *const codegen.Table) ![]u8 {
     }
     try headers.appendSlice(allocator, "      <th class=\"px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider\">操作</th>\n");
 
-    return std.fmt.allocPrint(allocator,
+    // Build the inner content (list + table + pagination + modal)
+    const content = try std.fmt.allocPrint(allocator,
         \\<!-- {s} 列表页 -->
         \\<div class="bg-white rounded shadow-sm p-4">
         \\
         \\<!-- ── ai-edit-zone: list filters ──────────────────────────────────── -->
         \\<!-- AI: customize search bar (debounce, autocomplete, date range, status filter) -->
-        \\<div class="flex flex-wrap items-center gap-2 mb-4" x-data="{{ q: '' }}">
-        \\  <input type="text" x-model="q" placeholder="搜索 {s}…"
-        \\         @input.debounce.300ms="$el.dispatchEvent(new CustomEvent('search'))"
-        \\         class="flex-1 min-w-[200px] px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-vben-primary">
-        \\  <button hx-get="/{s}/list?q=''" hx-target="#rows" hx-swap="innerHTML"
-        \\          @search="$el.setAttribute('hx-get', `/{s}/list?q=${{encodeURIComponent(q)}}`); htmx.process($el); $el.click()"
-        \\          class="px-4 py-2 bg-vben-primary text-white rounded text-sm hover:bg-vben-primary-dk">
-        \\    🔍 搜索
-        \\  </button>
-        \\  <button hx-get="/{s}/form/new" hx-target="#modal-content" hx-swap="innerHTML"
-        \\          @click="window.dispatchEvent(new CustomEvent('open-modal'))"
-        \\          class="ml-auto px-4 py-2 bg-vben-primary text-white rounded text-sm hover:bg-vben-primary-dk">
-        \\    + 新增 {s}
-        \\  </button>
-        \\</div>
+        \\<div class="overflow-x-auto border border-gray-200 rounded"
+        \\     x-data="{{ rows: [], loading: true, total: 0, q: '',
+        \\              loadRows() {{
+        \\                this.loading = true;
+        \\                const url = new URL('/{s}/list', window.location.origin);
+        \\                if (this.q) url.searchParams.set('q', this.q);
+        \\                fetch(url).then(r => r.json()).then(d => {{
+        \\                  this.rows = d.data || [];
+        \\                  this.total = d.total || 0;
+        \\                  this.loading = false;
+        \\                }});
+        \\              }}
+        \\             }}"
+        \\     x-init="loadRows()"
+        \\     @search-debounced.window="loadRows()">
+        \\
+        \\  <!-- Search bar + add button share the same Alpine x-data above -->
+        \\  <div class="flex flex-wrap items-center gap-2 mb-4 p-3 border-b border-gray-200">
+        \\    <input type="text" x-model="q" placeholder="搜索 {s}…"
+        \\           @input.debounce.300ms="$dispatch('search-debounced')"
+        \\           class="flex-1 min-w-[200px] px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-vben-primary">
+        \\    <button @click="$dispatch('search-debounced')"
+        \\            class="px-4 py-2 bg-vben-primary text-white rounded text-sm hover:bg-vben-primary-dk">
+        \\      🔍 搜索 <span x-show="q" x-cloak class="ml-1 text-xs opacity-75" x-text="'「' + q + '」'"></span>
+        \\    </button>
+        \\    <button hx-get="/{s}/form/new" hx-target="#modal-content" hx-swap="innerHTML"
+        \\            @click="window.dispatchEvent(new CustomEvent('open-modal'))"
+        \\            class="ml-auto px-4 py-2 bg-vben-primary text-white rounded text-sm hover:bg-vben-primary-dk">
+        \\      + 新增 {s}
+        \\    </button>
+        \\  </div>
         \\<!-- ────────────────────────────────────────────────────────────────── -->
         \\
-        \\<div class="overflow-x-auto border border-gray-200 rounded">
         \\  <table class="min-w-full divide-y divide-gray-200">
         \\    <thead class="bg-gray-50">
         \\<tr>
         \\{s}
         \\</tr>
         \\    </thead>
-        \\    <tbody id="rows" class="bg-white divide-y divide-gray-200"
-        \\           hx-get="/{s}/list" hx-trigger="load delay:100ms" hx-swap="innerHTML">
-        \\      <tr><td colspan="100" class="text-center text-gray-400 py-8">加载中…</td></tr>
+        \\    <tbody id="rows" class="bg-white divide-y divide-gray-200">
+        \\      <!-- ── ai-edit-zone: row rendering ────────────────────────────── -->
+        \\      <!-- AI: replace this Alpine template with one column per field.
+        \\           The data is in `row.<col_name>`; bind via x-text.
+        \\           Example: <td x-text="row.name"></td> -->
+        \\      <template x-for="row in rows" :key="row.id">
+        \\        <tr class="hover:bg-gray-50">
+        \\          <td class="px-4 py-2 text-sm text-gray-900" x-text="row.id"></td>
+        \\          <!-- Add one <td x-text="row.<col>"></td> per column here -->
+        \\          <td class="px-4 py-2 text-sm space-x-2 whitespace-nowrap">
+        \\            <button class="text-vben-primary hover:underline">编辑</button>
+        \\            <button class="text-red-600 hover:underline">删除</button>
+        \\          </td>
+        \\        </tr>
+        \\      </template>
+        \\      <tr x-show="loading"><td colspan="100" class="text-center text-gray-400 py-8">加载中…</td></tr>
+        \\      <tr x-show="!loading && rows.length === 0"><td colspan="100" class="text-center text-gray-400 py-8">暂无数据</td></tr>
+        \\      <!-- ──────────────────────────────────────────────────────────────── -->
         \\    </tbody>
         \\  </table>
         \\</div>
@@ -221,16 +263,18 @@ fn renderList(allocator: std.mem.Allocator, table: *const codegen.Table) ![]u8 {
         \\  </div>
         \\</div>
     , .{
-        table.pascal_name, // 1: title
-        table.pascal_name, // 2: search placeholder
-        table.name, // 3: hx-get list
-        table.name, // 4: hx-get list (in @search handler)
-        table.pascal_name, // 5: add button
+        current.pascal_name, // 1: <!-- {s} 列表页 -->
+        current.name, // 2: /{s}/list in loadRows
+        current.pascal_name, // 3: 搜索 {s} placeholder
+        current.name, // 4: hx-get form/new (modal)
+        current.pascal_name, // 5: + 新增 {s} button
         headers.items, // 6: <th> cells
-        table.name, // 7: tbody hx-get
-        table.name, // 8: pagination hx-get
-        table.name, // 9: pagination hx-get
+        current.name, // 7: pagination hx-get
     });
+    defer allocator.free(content);
+
+    // Wrap the content with the layout shell (topbar + multi-table sidebar)
+    return renderPageShell(allocator, tables, current, content);
 }
 
 // ============================================================
@@ -393,7 +437,7 @@ fn inputHtmlForColumn(allocator: std.mem.Allocator, col: codegen.Column) ![]u8 {
 // Tests
 // ============================================================
 
-test "admin_templates: layout has vben sidebar and ai-edit-zone" {
+test "admin_templates: page shell has vben sidebar and ai-edit-zone" {
     const allocator = std.testing.allocator;
     const tables = try codegen.parseSqlFile(allocator,
         \\CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL);
@@ -403,14 +447,51 @@ test "admin_templates: layout has vben sidebar and ai-edit-zone" {
         tables.deinit(allocator);
     }
     const table = tables.items[0];
+    const ptrs = [_]*const codegen.Table{table};
 
-    const layout = try renderLayout(allocator, table);
-    defer allocator.free(layout);
+    const html = try renderPageShell(allocator, &ptrs, table, "<p>hello</p>");
+    defer allocator.free(html);
 
-    try std.testing.expect(std.mem.indexOf(u8, layout, "bg-vben-sidebar") != null);
-    try std.testing.expect(std.mem.indexOf(u8, layout, "#001529") != null);
-    try std.testing.expect(std.mem.indexOf(u8, layout, "ai-edit-zone: topbar") != null);
-    try std.testing.expect(std.mem.indexOf(u8, layout, "ai-edit-zone: sidebar") != null);
+    try std.testing.expect(std.mem.indexOf(u8, html, "bg-vben-sidebar") != null);
+    try std.testing.expect(std.mem.indexOf(u8, html, "#001529") != null);
+    try std.testing.expect(std.mem.indexOf(u8, html, "ai-edit-zone: topbar") != null);
+    try std.testing.expect(std.mem.indexOf(u8, html, "ai-edit-zone: sidebar") != null);
+    try std.testing.expect(std.mem.indexOf(u8, html, "Users") != null); // current table label
+}
+
+test "admin_templates: page shell renders all tables in sidebar (multi-table nav)" {
+    const allocator = std.testing.allocator;
+    const tables = try codegen.parseSqlFile(allocator,
+        \\CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
+        \\CREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT);
+        \\CREATE TABLE comments (id INTEGER PRIMARY KEY, body TEXT);
+    );
+    defer {
+        for (tables.items) |*t| t.deinit();
+        tables.deinit(allocator);
+    }
+
+    var ptrs: [3]*const codegen.Table = undefined;
+    for (tables.items, 0..) |*t, i| ptrs[i] = t;
+
+    const html = try renderPageShell(allocator, &ptrs, &tables.items[1], "<p>content</p>");
+    defer allocator.free(html);
+
+    // All three table labels in sidebar
+    try std.testing.expect(std.mem.indexOf(u8, html, "Users") != null);
+    try std.testing.expect(std.mem.indexOf(u8, html, "Posts") != null);
+    try std.testing.expect(std.mem.indexOf(u8, html, "Comments") != null);
+    // Three sidebar hrefs
+    var count: usize = 0;
+    var i: usize = 0;
+    while (std.mem.indexOfPos(u8, html, i, "href=\"/")) |pos| {
+        count += 1;
+        i = pos + 1;
+    } else {
+        try std.testing.expect(count >= 3);
+    }
+    // Active table is highlighted with border-l-2
+    try std.testing.expect(std.mem.indexOf(u8, html, "border-l-2 border-vben-primary") != null);
 }
 
 test "admin_templates: list has search, table, pagination, modal" {

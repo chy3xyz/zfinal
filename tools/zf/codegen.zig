@@ -443,6 +443,30 @@ pub fn generateIntegrationTest(allocator: std.mem.Allocator, table: *const Table
 pub fn generateService(allocator: std.mem.Allocator, table: *const Table) ![]const u8 {
     const name = table.pascal_name;
 
+    // Build the comptime list of LIKE-searchable column names.
+    // Only string-typed columns (TEXT / VARCHAR) are searchable.
+    var searchable: std.ArrayList(u8) = .empty;
+    defer searchable.deinit(allocator);
+    for (table.columns.items) |col| {
+        if (col.is_primary_key) continue;
+        const upper_type = blk: {
+            var buf: [32]u8 = undefined;
+            const n = @min(col.sql_type.len, buf.len);
+            for (0..n) |i| buf[i] = std.ascii.toUpper(col.sql_type[i]);
+            break :blk buf[0..n];
+        };
+        const is_string = std.mem.eql(u8, upper_type, "TEXT") or
+            std.mem.eql(u8, upper_type, "VARCHAR") or
+            std.mem.eql(u8, upper_type, "CHAR");
+        if (is_string) {
+            try searchable.appendSlice(allocator, "        \"");
+            try searchable.appendSlice(allocator, col.name);
+            try searchable.appendSlice(allocator, "\",\n");
+        }
+    }
+    const searchable_cols_text = try searchable.toOwnedSlice(allocator);
+    defer allocator.free(searchable_cols_text);
+
     return std.fmt.allocPrint(allocator,
         \\// @generated — DO NOT EDIT. AI: edit directly.
         \\// Regenerate: zf crud:sql <schema.sql> — runs zf check after
@@ -459,6 +483,42 @@ pub fn generateService(allocator: std.mem.Allocator, table: *const Table) ![]con
         \\/// List all {s} records.
         \\pub fn findAll(db: *zfinal.DB, allocator: std.mem.Allocator) ![]Data {{
         \\    return {s}Model.findAll(db, allocator);
+        \\}}
+        \\
+        \\/// Search {s} records across all string columns with LIKE %q%.
+        \\/// Empty `q` returns all records. AI: add per-column filters
+        \\/// in the ai-edit-zone below to scope searches.
+        \\pub fn search(db: *zfinal.DB, q: []const u8, allocator: std.mem.Allocator) ![]Data {{
+        \\    if (q.len == 0) return findAll(db, allocator);
+        \\
+        \\    // ── ai-edit-zone: search predicate ────────────────────────────
+        \\    const searchable = searchable_columns();
+        \\    var where_buf: std.ArrayList(u8) = .empty;
+        \\    defer where_buf.deinit(allocator);
+        \\    inline for (searchable) |col| {{
+        \\        if (where_buf.items.len > 0) try where_buf.appendSlice(allocator, " OR ");
+        \\        try where_buf.appendSlice(allocator, col);
+        \\        try where_buf.appendSlice(allocator, " LIKE ?");
+        \\    }}
+        \\    const where = try where_buf.toOwnedSlice(allocator);
+        \\    defer allocator.free(where);
+        \\
+        \\    var params_buf: [16]zfinal.SqlParam = undefined;
+        \\    var n: usize = 0;
+        \\    inline for (searchable) |_| {{
+        \\        params_buf[n] = zfinal.SqlParam{{ .text = q }};
+        \\        n += 1;
+        \\    }}
+        \\    const params = params_buf[0..n];
+        \\    // ────────────────────────────────────────────────────────────────
+        \\
+        \\    return {s}Model.findWhere(where, params, allocator);
+        \\}}
+        \\
+        \\/// Comptime list of columns to LIKE-search against. AI: trim
+        \\/// to your business needs (e.g. only `name` and `email`).
+        \\fn searchable_columns() []const []const u8 {{
+        \\{s}
         \\}}
         \\
         \\/// Find one {s} by primary key.
@@ -515,7 +575,10 @@ pub fn generateService(allocator: std.mem.Allocator, table: *const Table) ![]con
         \\//   - audit fields (created_by, updated_by pulled from ctx session)
         \\// Keep functions pure (no ctx mutation) when possible.
         \\// ─────────────────────────────────────────────────────────────────
-    , .{ name, name, name, name, name, name, name, name, name, name, name, name, name, name, name });
+    , .{
+        name, name, name, name, name, name, name, name, name, name, name, name, name, name, name, name, name, // 17 × {s} for table.pascal_name / table.name
+        searchable_cols_text, // 1 × {searchable}
+    });
 }
 
 // ============================================================
@@ -687,14 +750,21 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\    if (!try tokenMgr.validate(token)) return err(ctx, .forbidden, "Invalid CSRF token", 40302);
         \\}}
         \\
-        \\/// List {s} records with pagination + rate limiting.
+        \\/// List {s} records with pagination + rate limiting + search.
+        \\/// Query params:
+        \\///   page, size — pagination
+        \\///   q          — search term (LIKE-searches all string columns)
         \\pub fn list(ctx: *zfinal.Context) !void {{
         \\    rateLimiter.handle(ctx) catch |e| return err(ctx, .too_many_requests, @errorName(e), 42901);
         \\    const db = try pool.acquire();
         \\    defer pool.release(db) catch {{}};
         \\    const page = try ctx.getParaToIntDefault("page", 1);
         \\    const size = try ctx.getParaToIntDefault("size", 20);
-        \\    const items = try service.paginate(db, @intCast(page), @intCast(size), ctx.allocator);
+        \\    const q = ctx.getPara("q") orelse "";
+        \\    const items = if (q.len > 0)
+        \\        try service.search(db, q, ctx.allocator)
+        \\    else
+        \\        try service.paginate(db, @intCast(page), @intCast(size), ctx.allocator);
         \\    defer {{ for (items) |*it| it.deinit(ctx.allocator); ctx.allocator.free(items); }}
         \\    const total = try service.count(db);
         \\    try ctx.renderJson(.{{ .data = items, .total = total, .page = page, .size = size }});

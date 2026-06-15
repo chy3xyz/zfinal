@@ -53,6 +53,26 @@ test "codegen: service.zig contains ai-edit-zone: business rules" {
             try std.testing.expect(std.mem.indexOf(u8, code, "pub fn create") != null);
             try std.testing.expect(std.mem.indexOf(u8, code, "pub fn update") != null);
             try std.testing.expect(std.mem.indexOf(u8, code, "pub fn deleteOne") != null);
+            // v0.9.7: search function for q param
+            try std.testing.expect(std.mem.indexOf(u8, code, "pub fn search") != null);
+            try std.testing.expect(std.mem.indexOf(u8, code, "searchable_columns") != null);
+        }
+    }.f);
+}
+
+test "codegen: search function uses TEXT columns only" {
+    const allocator = std.testing.allocator;
+    try withTable(allocator,
+        \\CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, age INT, active BOOLEAN);
+    , struct {
+        fn f(t: *codegen.Table) !void {
+            const code = try codegen.generateService(t.allocator, t);
+            defer t.allocator.free(code);
+            // username is TEXT, so it's searchable
+            try std.testing.expect(std.mem.indexOf(u8, code, "\"username\",") != null);
+            // age (INT) and active (BOOLEAN) are NOT in searchable list
+            try std.testing.expect(std.mem.indexOf(u8, code, "\"age\",") == null);
+            try std.testing.expect(std.mem.indexOf(u8, code, "\"active\",") == null);
         }
     }.f);
 }
@@ -141,21 +161,21 @@ test "admin_templates: renderAll emits 4 files with vben colors" {
     }
     const table = tables.items[0];
 
-    const files = try admin_templates.renderAll(allocator, &table);
+    const files = try admin_templates.renderAll(allocator, &[_]*const codegen.Table{&table}, &table);
     defer files.deinit(allocator);
 
-    // vben blue + dark sidebar in layout
-    try std.testing.expect(std.mem.indexOf(u8, files.layout, "#2b85e4") != null);
-    try std.testing.expect(std.mem.indexOf(u8, files.layout, "#001529") != null);
+    // vben blue + dark sidebar in full page (list = full page now)
+    try std.testing.expect(std.mem.indexOf(u8, files.list, "#2b85e4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, files.list, "#001529") != null);
 
-    // ai-edit-zones in all 3 main files
-    try std.testing.expect(std.mem.indexOf(u8, files.layout, "ai-edit-zone: topbar") != null);
-    try std.testing.expect(std.mem.indexOf(u8, files.layout, "ai-edit-zone: sidebar") != null);
+    // ai-edit-zones in all files
+    try std.testing.expect(std.mem.indexOf(u8, files.list, "ai-edit-zone: topbar") != null);
+    try std.testing.expect(std.mem.indexOf(u8, files.list, "ai-edit-zone: sidebar") != null);
     try std.testing.expect(std.mem.indexOf(u8, files.list, "ai-edit-zone: list filters") != null);
     try std.testing.expect(std.mem.indexOf(u8, files.form, "ai-edit-zone: form fields") != null);
 }
 
-test "admin_templates: list has search, table, pagination, modal" {
+test "admin_templates: list has Alpine search, table, pagination, modal" {
     const allocator = std.testing.allocator;
     var tables = try codegen.parseSqlFile(allocator,
         \\CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, body TEXT);
@@ -166,14 +186,20 @@ test "admin_templates: list has search, table, pagination, modal" {
     }
     const table = tables.items[0];
 
-    const files = try admin_templates.renderAll(allocator, &table);
+    const files = try admin_templates.renderAll(allocator, &[_]*const codegen.Table{&table}, &table);
     defer files.deinit(allocator);
 
-    try std.testing.expect(std.mem.indexOf(u8, files.list, "hx-get=\"/posts/list\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, files.list, "搜索") != null);
-    try std.testing.expect(std.mem.indexOf(u8, files.list, "新增") != null);
+    // Alpine search bar
+    try std.testing.expect(std.mem.indexOf(u8, files.list, "x-model=\"q\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, files.list, "搜索 Posts") != null);
+    try std.testing.expect(std.mem.indexOf(u8, files.list, "新增 Posts") != null);
+    // Alpine loadRows function with fetch to /posts/list
+    try std.testing.expect(std.mem.indexOf(u8, files.list, "loadRows()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, files.list, "/posts/list") != null);
+    // Pagination
     try std.testing.expect(std.mem.indexOf(u8, files.list, "共") != null);
-    try std.testing.expect(std.mem.indexOf(u8, files.list, "x-data=") != null);
+    // Modal
+    try std.testing.expect(std.mem.indexOf(u8, files.list, "hx-get=\"/posts/form/new\"") != null);
 }
 
 test "admin_templates: form has all fields, save button" {
@@ -187,7 +213,7 @@ test "admin_templates: form has all fields, save button" {
     }
     const table = tables.items[0];
 
-    const files = try admin_templates.renderAll(allocator, &table);
+    const files = try admin_templates.renderAll(allocator, &[_]*const codegen.Table{&table}, &table);
     defer files.deinit(allocator);
 
     try std.testing.expect(std.mem.indexOf(u8, files.form, "name=\"sku\"") != null);
@@ -208,10 +234,51 @@ test "admin_templates: row has edit + delete actions" {
     }
     const table = tables.items[0];
 
-    const files = try admin_templates.renderAll(allocator, &table);
+    const files = try admin_templates.renderAll(allocator, &[_]*const codegen.Table{&table}, &table);
     defer files.deinit(allocator);
 
     try std.testing.expect(std.mem.indexOf(u8, files.row, "hx-delete") != null);
     try std.testing.expect(std.mem.indexOf(u8, files.row, "编辑") != null);
     try std.testing.expect(std.mem.indexOf(u8, files.row, "删除") != null);
+}
+
+test "admin_templates: multi-table sidebar lists all tables with active highlight" {
+    const allocator = std.testing.allocator;
+    var tables = try codegen.parseSqlFile(allocator,
+        \\CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
+        \\CREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT);
+        \\CREATE TABLE comments (id INTEGER PRIMARY KEY, body TEXT);
+    );
+    defer {
+        for (tables.items) |*t| t.deinit();
+        tables.deinit(allocator);
+    }
+    var ptrs: [3]*const codegen.Table = undefined;
+    for (tables.items, 0..) |*t, i| ptrs[i] = t;
+
+    // Render posts page — current = posts
+    const files = try admin_templates.renderAll(allocator, &ptrs, &tables.items[1]);
+    defer files.deinit(allocator);
+
+    // All three table labels in sidebar
+    try std.testing.expect(std.mem.indexOf(u8, files.list, ">Users<") != null);
+    try std.testing.expect(std.mem.indexOf(u8, files.list, ">Posts<") != null);
+    try std.testing.expect(std.mem.indexOf(u8, files.list, ">Comments<") != null);
+    // 3 sidebar hrefs to /<table>
+    var href_count: usize = 0;
+    var i: usize = 0;
+    while (std.mem.indexOfPos(u8, files.list, i, "href=\"/")) |pos| {
+        if (std.mem.startsWith(u8, files.list[pos..][7..], "users") or
+            std.mem.startsWith(u8, files.list[pos..][7..], "posts") or
+            std.mem.startsWith(u8, files.list[pos..][7..], "comments"))
+        {
+            href_count += 1;
+        }
+        i = pos + 1;
+    } else {
+        try std.testing.expectEqual(@as(usize, 3), href_count);
+    }
+    // Active table (Posts) is highlighted with border-l-2 border-vben-primary
+    // The active link's class attribute contains the highlight classes
+    try std.testing.expect(std.mem.indexOf(u8, files.list, "border-l-2 border-vben-primary") != null);
 }

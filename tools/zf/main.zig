@@ -695,9 +695,15 @@ fn handleAdmin(allocator: std.mem.Allocator, sql_path: []const u8, out_dir: []co
     };
     defer std.Io.Dir.close(dir, io);
 
+    // Build a slice of pointers once so each renderAll can iterate
+    // sibling tables and build the sidebar nav.
+    var table_ptrs: std.ArrayList(*const codegen.Table) = .empty;
+    defer table_ptrs.deinit(allocator);
+    for (tables.items) |*t| try table_ptrs.append(allocator, t);
+
     var written: usize = 0;
     for (tables.items) |*table| {
-        const files = admin_templates.renderAll(allocator, table) catch |e| {
+        const files = admin_templates.renderAll(allocator, table_ptrs.items, table) catch |e| {
             std.debug.print("error rendering {s}: {t}\n", .{ table.name, e });
             return e;
         };
@@ -717,14 +723,7 @@ fn handleAdmin(allocator: std.mem.Allocator, sql_path: []const u8, out_dir: []co
         written += 1;
     }
 
-    // Shared layout at out_dir root
-    if (tables.items.len > 0) {
-        const layout_files = admin_templates.renderAll(allocator, &tables.items[0]) catch return error.RenderLayout;
-        defer layout_files.deinit(allocator);
-        try writeFile(dir, "admin_layout.html", layout_files.layout);
-    }
-
-    std.debug.print("✅ Generated {d} module(s) × 3 admin files + 1 shared layout\n", .{written});
+    std.debug.print("✅ Generated {d} module(s) × 3 admin files (multi-table sidebar)\n", .{written});
     std.debug.print("   Edit ai-edit-zones in each file to customize.\n", .{});
 }
 
@@ -1213,8 +1212,15 @@ fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8, project
             return e;
         };
         defer std.Io.Dir.close(dir, io);
+
+        // Build slice of pointers so each renderAll can build a
+        // multi-table sidebar nav from all siblings.
+        var table_ptrs: std.ArrayList(*const codegen.Table) = .empty;
+        defer table_ptrs.deinit(allocator);
+        for (tables.items) |*t| try table_ptrs.append(allocator, t);
+
         for (tables.items) |*table| {
-            const files = admin_templates.renderAll(allocator, table) catch |e| {
+            const files = admin_templates.renderAll(allocator, table_ptrs.items, table) catch |e| {
                 std.debug.print("error rendering admin for {s}: {t}\n", .{ table.name, e });
                 return e;
             };
@@ -1228,13 +1234,7 @@ fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8, project
             try writeFile(module_dir, "admin_form.html", files.form);
             try writeFile(module_dir, "admin_row.html", files.row);
         }
-        // Shared layout
-        if (tables.items.len > 0) {
-            const layout_files = admin_templates.renderAll(allocator, &tables.items[0]) catch return error.RenderLayout;
-            defer layout_files.deinit(allocator);
-            try writeFile(dir, "admin_layout.html", layout_files.layout);
-        }
-        std.debug.print("✅ vben-style admin HTML emitted to {s}/\n", .{out_dir});
+        std.debug.print("✅ vben-style admin HTML emitted to {s}/ ({d} tables, multi-table sidebar)\n", .{ out_dir, table_ptrs.items.len });
     }
 
     // Step 6: Emit machine-readable manifest for AI agents
