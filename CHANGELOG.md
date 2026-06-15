@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.7] - 2026-06-13
+
+### Added
+- **Multi-table sidebar nav**: each generated `admin.html` now includes a sidebar listing ALL tables in the project, with the active table highlighted. Navigate between `users`, `posts`, `comments` without leaving the admin shell.
+- **Alpine-driven search**: the search bar in `admin.html` uses Alpine `x-data` with a `loadRows()` function that fetches `/<table>/list?q=...` and renders results via `x-for`. The input has `@input.debounce.300ms` and `@search-debounced` event dispatch.
+- **Backend `search` function in `service.zig`**: takes a `q` string and LIKE-searches all TEXT columns (skips INT/BOOLEAN/etc.). New `searchable_columns()` comptime function lists searchable columns; AI can trim it in the ai-edit-zone.
+- **`list` handler reads `q` query param** and routes to `service.search` when present. Falls back to `findAll` on empty.
+
+### Changed
+- **`AdminFiles` struct**: dropped the `layout` field; each per-table `admin.html` is now a full page (layout + list) so users can navigate directly to `/<table>`.
+- **Removed redundant shared `admin_layout.html`**: each per-table page already contains the layout.
+- **Test count**: 11 → 12 codegen tests (added multi-table sidebar and TEXT-only searchable tests).
+
 ## [0.9.6] - 2026-06-13
 
 ### Added
