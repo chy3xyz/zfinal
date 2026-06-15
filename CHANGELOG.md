@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.8] - 2026-06-13
+
+### Added
+- **`examples/htmx-admin-demo/`**: self-contained multi-table admin UI demo. Serves pre-generated vben-style admin HTML for 3 tables (users, posts, comments) with multi-table sidebar nav. Run with `zig build run-htmx-admin-demo`, open `http://localhost:8080/admin/users`. Zero generated code imports — just the framework + admin HTML.
+- **`public/` directory**: pre-generated admin HTML files (3 tables × 3 files each + multi-table layout). Regenerated with `zf admin examples/htmx-admin-demo/schema.sql --out public`.
+
+### Fixed
+- **codegen service template**: searchable_columns arg was at position 18 but template expected it at position 9. Fixed arg ordering so generated service.zig has correct `searchable_columns()` body instead of pascal name.
+- **`deps.zig`**: added `getPool()`, `getTokenMgr()`, `getRateLimiter()` accessor functions for generated handler import compatibility.
+
 ## [0.9.7] - 2026-06-13
 
 ### Added
