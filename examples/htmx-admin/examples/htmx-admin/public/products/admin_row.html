@@ -1,0 +1,18 @@
+<!-- BEGIN:row -->
+<tr id="row-{{item.idHBCLOSE" class="hover:bg-gray-50">
+  <td class="px-4 py-2 text-sm text-gray-900">{{item.idHBCLOSE</td>
+      <td class="px-4 py-2 text-sm text-gray-700">{{item.sku}}</td>
+      <td class="px-4 py-2 text-sm text-gray-700">{{item.name}}</td>
+      <td class="px-4 py-2 text-sm text-gray-700">{{item.price}}</td>
+      <td class="px-4 py-2 text-sm text-gray-700">{{item.active}}</td>
+      <td class="px-4 py-2 text-sm text-gray-700">{{item.description}}</td>
+  <td class="px-4 py-2 text-sm space-x-2 whitespace-nowrap">
+    <button hx-get="/products/form/{{item.idHBCLOSE" hx-target="#modal-content" hx-swap="innerHTML"
+            @click="window.dispatchEvent(new CustomEvent('open-modal'))"
+            class="text-vben-primary hover:underline">编辑</button>
+    <button hx-delete="/products/{{item.idHBCLOSE" hx-target="#row-{{item.idHBCLOSE" hx-swap="outerHTML"
+            hx-confirm="确认删除?此操作不可撤销。"
+            class="text-red-600 hover:underline">删除</button>
+  </td>
+</tr>
+<!-- END:row -->

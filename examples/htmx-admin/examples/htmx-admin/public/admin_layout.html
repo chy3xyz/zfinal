@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title}</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  // vben-style design tokens, exposed to Tailwind via theme.extend
+  tailwind.config = {{
+    theme: {{
+      extend: {{
+        colors: {{
+          'vben-primary':   '#2b85e4',
+          'vben-primary-dk':'#1e6cb8',
+          'vben-sidebar':   '#001529',
+          'vben-sidebar-h': '#000c17',
+          'vben-content':   '#f0f2f5',
+        }},
+        fontFamily: {{
+          sans: ['-apple-system','BlinkMacSystemFont','"Segoe UI"','Roboto','"PingFang SC"','"Hiragino Sans GB"','"Microsoft YaHei"','sans-serif'],
+        }},
+      }},
+    }},
+  }};
+</script>
+<script src="https://unpkg.com/htmx.org@1.9.10"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
+<style>
+  body {{ font-size: 14px; }}
+  [x-cloak] {{ display: none !important; }}
+</style>
+</head>
+<body class="bg-vben-content min-h-screen" x-data="{ sidebarCollapsed: false, theme: 'light' }">
+
+<!-- ── ai-edit-zone: topbar ──────────────────────────────────────── -->
+<!-- AI: customize topbar (logo, breadcrumbs, user menu, theme switch) -->
+<header class="h-14 bg-white shadow-sm flex items-center px-4 border-b border-gray-200 fixed top-0 left-0 right-0 z-30">
+  <button @click="sidebarCollapsed = !sidebarCollapsed" class="text-gray-600 hover:text-vben-primary mr-4">
+    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+    </svg>
+  </button>
+  <h1 class="text-lg font-semibold text-gray-800">Products 管理 - ZFinal Admin</h1>
+  <div class="ml-auto flex items-center space-x-3">
+    <button class="text-gray-500 hover:text-vben-primary text-sm">⚙ 设置</button>
+    <div class="w-8 h-8 rounded-full bg-vben-primary text-white flex items-center justify-center text-sm">U</div>
+  </div>
+</header>
+<!-- ──────────────────────────────────────────────────────────────── -->
+
+<!-- ── ai-edit-zone: sidebar ──────────────────────────────────────── -->
+<!-- AI: replace static menu with route group / permission check -->
+<aside :class="sidebarCollapsed ? 'w-16' : 'w-56'" class="fixed left-0 top-14 bottom-0 bg-vben-sidebar text-gray-300 transition-all duration-200 z-20 overflow-y-auto">
+  <nav class="py-2">
+    <a href="/" class="flex items-center px-4 py-3 hover:bg-vben-sidebar-h transition-colors" :class="!sidebarCollapsed && 'border-l-2 border-vben-primary bg-vben-sidebar-h'">
+      <span class="text-base">🏠</span>
+      <span x-show="!sidebarCollapsed" x-cloak class="ml-3 text-sm">仪表盘</span>
+    </a>
+    <a href="/products" class="flex items-center px-4 py-3 hover:bg-vben-sidebar-h transition-colors">
+      <span class="text-base">📋</span>
+      <span x-show="!sidebarCollapsed" x-cloak class="ml-3 text-sm">Products</span>
+    </a>
+    <a href="#" class="flex items-center px-4 py-3 hover:bg-vben-sidebar-h transition-colors">
+      <span class="text-base">📊</span>
+      <span x-show="!sidebarCollapsed" x-cloak class="ml-3 text-sm">报表</span>
+    </a>
+  </nav>
+</aside>
+<!-- ──────────────────────────────────────────────────────────────── -->
+
+<main :class="sidebarCollapsed ? 'ml-16' : 'ml-56'" class="pt-14 transition-all duration-200">
+  <div class="p-4">
+    products
+  </div>
+</main>
+</body>
+</html>

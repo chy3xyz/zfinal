@@ -1,0 +1,62 @@
+<!-- Categories 列表页 -->
+<div class="bg-white rounded shadow-sm p-4">
+
+<!-- ── ai-edit-zone: list filters ──────────────────────────────────── -->
+<!-- AI: customize search bar (debounce, autocomplete, date range, status filter) -->
+<div class="flex flex-wrap items-center gap-2 mb-4" x-data="{ q: '' }">
+  <input type="text" x-model="q" placeholder="搜索 Categories…"
+         @input.debounce.300ms="$el.dispatchEvent(new CustomEvent('search'))"
+         class="flex-1 min-w-[200px] px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-vben-primary">
+  <button hx-get="/categories/list?q=''" hx-target="#rows" hx-swap="innerHTML"
+          @search="$el.setAttribute('hx-get', `/categories/list?q=${encodeURIComponent(q)}`); htmx.process($el); $el.click()"
+          class="px-4 py-2 bg-vben-primary text-white rounded text-sm hover:bg-vben-primary-dk">
+    🔍 搜索
+  </button>
+  <button hx-get="/Categories/form/new" hx-target="#modal-content" hx-swap="innerHTML"
+          @click="window.dispatchEvent(new CustomEvent('open-modal'))"
+          class="ml-auto px-4 py-2 bg-vben-primary text-white rounded text-sm hover:bg-vben-primary-dk">
+    + 新增       <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+      <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">name</th>
+      <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">created_at</th>
+      <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+
+  </button>
+</div>
+<!-- ────────────────────────────────────────────────────────────────── -->
+
+<div class="overflow-x-auto border border-gray-200 rounded">
+  <table class="min-w-full divide-y divide-gray-200">
+    <thead class="bg-gray-50">
+<tr>
+categories
+</tr>
+    </thead>
+    <tbody id="rows" class="bg-white divide-y divide-gray-200"
+           hx-get="/categories/list" hx-trigger="load delay:100ms" hx-swap="innerHTML">
+      <tr><td colspan="100" class="text-center text-gray-400 py-8">加载中…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Pagination (server-side rendered by handler) -->
+<div id="pagination" class="mt-4 flex items-center justify-between text-sm text-gray-600"
+     hx-get="/categories/pagination" hx-trigger="refresh from:body" hx-swap="innerHTML">
+  <span>共 0 条</span>
+  <div class="flex space-x-1">
+    <button class="px-3 py-1 border border-gray-300 rounded hover:bg-gray-50">‹</button>
+    <button class="px-3 py-1 border border-vben-primary bg-vben-primary text-white rounded">1</button>
+    <button class="px-3 py-1 border border-gray-300 rounded hover:bg-gray-50">›</button>
+  </div>
+</div>
+</div>
+
+<!-- Modal container (filled by HTMX when /form/new is requested) -->
+<div x-data="{ open: false }" @open-modal.window="open = true" x-show="open" x-cloak
+     class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+     @keydown.escape.window="open = false">
+  <div @click.outside="open = false" class="bg-white rounded shadow-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+    <div id="modal-content">
+      <div class="p-8 text-center text-gray-400">加载表单…</div>
+    </div>
+  </div>
+</div>
