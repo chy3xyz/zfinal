@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.3] - 2026-06-13
+
+### Added
+- **`zfinal-onboarding` skill**: 30-second orientation any AI agent reads first when it encounters a ZFinal project. Includes the 5-command speedrun, skill-routing table, and forbidden actions.
+- **Sub-agent `zfinal-developer`**: `.claude/agents/zfinal-developer.md` bundles the onboarding + playbook + hard rules into a single auto-dispatched unit. Hosts that support sub-agents will pick it up via the `description` field.
+- **AI-first landing page**: `doc/index.md` rewritten with a dual-audience table (AI agents vs humans) and a complete project map.
+- **AGENTS.md top banner**: declares ZFinal as an AI-first framework and points agents at `zfinal-onboarding` on first contact.
+
+### Changed
+- **`zfinal-evolution` skill**: now has frontmatter (`name`, `description`) so it is discoverable by skill loaders.
+
 ## [0.9.2] - 2026-06-13
 
 ### Added
