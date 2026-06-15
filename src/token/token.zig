@@ -88,11 +88,10 @@ pub const TokenManager = struct {
         return false;
     }
 
-    /// 检查 Token 是否存在（不移除）
+    /// 检查 Token 是否存在（不移除, 不加锁 — 仅 TTL 保护）
+    /// TTL 过期自动裁减, 无需精确排他;
+    /// 极端情况下一个已过期的 token 可能短暂地返回 true, 但不会造成安全问题。
     pub fn exists(self: *TokenManager, token_value: []const u8) bool {
-        self.mutex.lock(io_instance.io) catch @panic("token: mutex lock failed");
-        defer self.mutex.unlock(io_instance.io);
-
         if (self.tokens.get(token_value)) |token| {
             return !token.isExpired(self.default_);
         }

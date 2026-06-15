@@ -52,7 +52,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
-        tc.addSystemIncludePath(b.path("/opt/homebrew/include"));
+        tc.addSystemIncludePath(.{ .cwd_relative = "/opt/homebrew/include" });
         break :blk tc.createModule();
     } else null;
 
@@ -63,7 +63,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
-        tc.addSystemIncludePath(b.path("/opt/homebrew/opt/libpq/include"));
+        tc.addSystemIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/libpq/include" });
         break :blk tc.createModule();
     } else null;
 
@@ -74,7 +74,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
-        tc.addSystemIncludePath(b.path("/opt/homebrew/include/mysql"));
+        tc.addSystemIncludePath(.{ .cwd_relative = "/opt/homebrew/include/mysql" });
         break :blk tc.createModule();
     } else null;
 
@@ -85,7 +85,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
-        tc.addSystemIncludePath(b.path("/opt/homebrew/opt/libpq/include"));
+        tc.addSystemIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/libpq/include" });
         break :blk tc.createModule();
     } else null;
 
