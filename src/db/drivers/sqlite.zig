@@ -68,10 +68,11 @@ pub const SQLiteDB = struct {
 
     /// Execute with parameter binding (safe against SQL injection)
     pub fn execParams(self: *SQLiteDB, sql: [:0]const u8, params: []const SqlParam) !void {
+        const db = self.db orelse return error.NotConnected;
         var stmt: ?*c.sqlite3_stmt = null;
-        const rc = c.sqlite3_prepare_v2(self.db, sql.ptr, @intCast(sql.len + 1), &stmt, null);
+        const rc = c.sqlite3_prepare_v2(db, sql.ptr, @intCast(sql.len + 1), &stmt, null);
         if (rc != c.SQLITE_OK) {
-            std.debug.print("SQLite prepare failed: {s}\n", .{c.sqlite3_errmsg(self.db)});
+            std.debug.print("SQLite prepare failed: {s}\n", .{c.sqlite3_errmsg(db)});
             return error.PrepareFailed;
         }
         defer _ = c.sqlite3_finalize(stmt);
@@ -80,19 +81,21 @@ pub const SQLiteDB = struct {
 
         const step_rc = c.sqlite3_step(stmt);
         if (step_rc != c.SQLITE_DONE) {
-            std.debug.print("SQLite step failed: {d}\n", .{step_rc});
-            return error.StepFailed;
+            const diag = translateStepError(db, step_rc);
+            std.debug.print("SQLite step failed: {s} (code {d})\n", .{ diag.message, step_rc });
+            return diag.error_code;
         }
 
-        self.last_changes = c.sqlite3_changes(self.db);
+        self.last_changes = c.sqlite3_changes(db);
     }
 
     /// Execute query with parameter binding
     pub fn queryParams(self: *SQLiteDB, sql: [:0]const u8, params: []const SqlParam) !ResultSet {
+        const db = self.db orelse return error.NotConnected;
         var stmt: ?*c.sqlite3_stmt = null;
-        const rc = c.sqlite3_prepare_v2(self.db, sql.ptr, @intCast(sql.len + 1), &stmt, null);
+        const rc = c.sqlite3_prepare_v2(db, sql.ptr, @intCast(sql.len + 1), &stmt, null);
         if (rc != c.SQLITE_OK) {
-            std.debug.print("SQLite prepare failed: {s}\n", .{c.sqlite3_errmsg(self.db)});
+            std.debug.print("SQLite prepare failed: {s}\n", .{c.sqlite3_errmsg(db)});
             return error.PrepareFailed;
         }
         // Note: stmt is consumed by result set for lazy iteration, but here we eagerly fetch
@@ -123,7 +126,9 @@ pub const SQLiteDB = struct {
             }
 
             if (step_rc != c.SQLITE_ROW) {
-                return error.StepFailed;
+                const diag = translateStepError(db, step_rc);
+                std.debug.print("SQLite step failed during query: {s} (code {d})\n", .{ diag.message, step_rc });
+                return diag.error_code;
             }
 
             // Read row data
@@ -187,3 +192,74 @@ pub const SQLiteDB = struct {
         }
     }
 };
+
+/// Diagnostic info for a SQLite step error. Designed to be
+/// machine-readable so AI agents can show "users.email already
+/// exists" instead of "SQLite step failed: 19".
+pub const StepDiagnostic = struct {
+    code: i32,
+    message: []const u8,
+    constraint: ?[]const u8 = null,
+    table: ?[]const u8 = null,
+    column: ?[]const u8 = null,
+    error_code: anyerror = error.StepFailed,
+};
+
+/// Translate a SQLite step return code into a structured diagnostic.
+/// Uses sqlite3_extended_errcode + sqlite3_errmsg for context, plus
+/// sqlite3_expanded_sql for the actual SQL that failed.
+pub fn translateStepError(db: *c.sqlite3, step_rc: c_int) StepDiagnostic {
+    const err_code = c.sqlite3_extended_errcode(db);
+    const err_msg_c = c.sqlite3_errmsg(db);
+    const err_msg: []const u8 = if (err_msg_c) |p| std.mem.sliceTo(p, 0) else "unknown";
+
+    var diag = StepDiagnostic{
+        .code = @intCast(step_rc),
+        .message = err_msg,
+    };
+
+    // Map common constraint violations to specific errors so callers
+    // can pattern-match without parsing strings.
+    switch (err_code) {
+        c.SQLITE_CONSTRAINT_PRIMARYKEY => {
+            diag.error_code = error.DuplicatePrimaryKey;
+            diag.constraint = "PRIMARY KEY";
+        },
+        c.SQLITE_CONSTRAINT_UNIQUE => {
+            diag.error_code = error.UniqueViolation;
+            diag.constraint = "UNIQUE";
+            // Try to extract table/column from message "UNIQUE constraint failed: users.email"
+            if (std.mem.indexOf(u8, err_msg, ":")) |colon| {
+                const after = std.mem.trim(u8, err_msg[colon + 1 ..], " ");
+                if (std.mem.indexOfScalar(u8, after, '.')) |dot| {
+                    diag.table = after[0..dot];
+                    diag.column = after[dot + 1 ..];
+                } else {
+                    diag.table = after;
+                }
+            }
+        },
+        c.SQLITE_CONSTRAINT_NOTNULL => {
+            diag.error_code = error.NotNullViolation;
+            diag.constraint = "NOT NULL";
+            if (std.mem.indexOf(u8, err_msg, ":")) |colon| {
+                const after = std.mem.trim(u8, err_msg[colon + 1 ..], " ");
+                if (std.mem.indexOfScalar(u8, after, '.')) |dot| {
+                    diag.table = after[0..dot];
+                    diag.column = after[dot + 1 ..];
+                }
+            }
+        },
+        c.SQLITE_CONSTRAINT_FOREIGNKEY => {
+            diag.error_code = error.ForeignKeyViolation;
+            diag.constraint = "FOREIGN KEY";
+        },
+        c.SQLITE_CONSTRAINT_CHECK => {
+            diag.error_code = error.CheckViolation;
+            diag.constraint = "CHECK";
+        },
+        else => {},
+    }
+
+    return diag;
+}

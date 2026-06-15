@@ -225,6 +225,19 @@ test "db: constraint violation on SQLite" {
 }
 
 // ============================================================
+test "db: UniqueViolation surfaces table+column for AI" {
+    const a = std.testing.allocator;
+    var db = try DB.init(a, DBConfig.sqliteMemory());
+    defer db.deinit();
+
+    _ = try db.exec("CREATE TABLE ai_err (email TEXT UNIQUE NOT NULL)");
+    _ = try db.execParams("INSERT INTO ai_err VALUES (?)", &.{SqlParam{ .text = "a@x.com" }});
+
+    const result = db.execParams("INSERT INTO ai_err VALUES (?)", &.{SqlParam{ .text = "a@x.com" }});
+    try std.testing.expectError(error.UniqueViolation, result);
+}
+
+// ============================================================
 test "db: unicode round-trip on SQLite" {
     const a = std.testing.allocator;
     var db = try DB.init(a, DBConfig.sqliteMemory());
