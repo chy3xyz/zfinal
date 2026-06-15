@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-06-13
+
+### Added
+- **`doc/ai-quickstart.md`**: Long-form 5-minute walkthrough of the AI-driven development flow — schema → `zf crud:sql --json` → edit ai-edit-zones → verify → run.
+- **`examples/ai-blog-5min/`**: Runnable 5-minute AI speedrun demo with `main.zig`, `schema.sql`, and `ZF_GEN.md`. Run with `zig build run-ai-blog-5min`.
+
 ## [0.9.0] - 2026-06-13
 
 ### Added
