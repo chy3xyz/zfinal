@@ -1,6 +1,6 @@
 const std = @import("std");
 const templates = @import("templates.zig");
-const codegen = @import("codegen.zig");
+const codegen = @import("codegen");
 const csql = @import("csql.zig");
 const zf_cfg = @import("zf_cfg");
 const sqlite_c = @import("c_sqlite3");
@@ -134,16 +134,18 @@ pub fn main(init: std.process.Init) !void {
         },
         .crud_sql => {
             if (args.len < 3) {
-                std.debug.print("Usage: {s} crud:sql <sql_file> [project_name] [--force] [--json]\n", .{args[0]});
+                std.debug.print("Usage: {s} crud:sql <sql_file> [project_name] [--force] [--json] [--admin]\n", .{args[0]});
                 std.debug.print("  project_name  Optional. Creates project dir and generates inside it.\n", .{});
                 std.debug.print("  --force       Overwrite existing files instead of generating .gen.new\n", .{});
                 std.debug.print("  --json        Emit machine-readable manifest for AI agents.\n", .{});
+                std.debug.print("  --admin       Also emit vben-style admin HTML (htmx + alpine + tailwind, CDN).\n", .{});
                 return;
             }
-            const project_name = if (args.len > 3 and !std.mem.eql(u8, args[3], "--force") and !std.mem.eql(u8, args[3], "--json")) args[3] else null;
+            const project_name = if (args.len > 3 and !std.mem.eql(u8, args[3], "--force") and !std.mem.eql(u8, args[3], "--json") and !std.mem.eql(u8, args[3], "--admin")) args[3] else null;
             const force = hasFlag(args, "--force");
             const json_mode = hasFlag(args, "--json");
-            try handleCrudFromSql(allocator, args[2], project_name, force, json_mode);
+            const admin_mode = hasFlag(args, "--admin");
+            try handleCrudFromSql(allocator, args[2], project_name, force, json_mode, admin_mode);
         },
         .admin => {
             if (args.len < 3) {
@@ -1121,7 +1123,7 @@ fn handleCrudFromDsn(allocator: std.mem.Allocator, dsn_url: []const u8) !void {
     try generateIntegrationTestEntry(allocator, tables.items);
 }
 
-fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8, project_name: ?[]const u8, force: bool, json_mode: bool) !void {
+fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8, project_name: ?[]const u8, force: bool, json_mode: bool, admin_mode: bool) !void {
     // Resolve SQL path to absolute before any chdir
     var resolved_sql: []const u8 = undefined;
     if (std.fs.path.isAbsolute(sql_path)) {
@@ -1203,6 +1205,38 @@ fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8, project
     // Step 5: Generate integration test entry point
     try generateIntegrationTestEntry(allocator, tables.items);
 
+    // Step 5b: Optionally emit vben-style admin HTML for each table
+    if (admin_mode) {
+        const out_dir: []const u8 = "src/modules";
+        const dir = std.Io.Dir.createDirPathOpen(.cwd(), io, out_dir, .{}) catch |e| {
+            std.debug.print("error: cannot create {s}: {t}\n", .{ out_dir, e });
+            return e;
+        };
+        defer std.Io.Dir.close(dir, io);
+        for (tables.items) |*table| {
+            const files = admin_templates.renderAll(allocator, table) catch |e| {
+                std.debug.print("error rendering admin for {s}: {t}\n", .{ table.name, e });
+                return e;
+            };
+            defer files.deinit(allocator);
+            const module_dir = std.Io.Dir.createDirPathOpen(dir, io, table.name, .{}) catch |e| {
+                std.debug.print("error: cannot create {s}/{s}: {t}\n", .{ out_dir, table.name, e });
+                return e;
+            };
+            defer std.Io.Dir.close(module_dir, io);
+            try writeFile(module_dir, "admin.html", files.list);
+            try writeFile(module_dir, "admin_form.html", files.form);
+            try writeFile(module_dir, "admin_row.html", files.row);
+        }
+        // Shared layout
+        if (tables.items.len > 0) {
+            const layout_files = admin_templates.renderAll(allocator, &tables.items[0]) catch return error.RenderLayout;
+            defer layout_files.deinit(allocator);
+            try writeFile(dir, "admin_layout.html", layout_files.layout);
+        }
+        std.debug.print("✅ vben-style admin HTML emitted to {s}/\n", .{out_dir});
+    }
+
     // Step 6: Emit machine-readable manifest for AI agents
     if (json_mode) {
         try emitJsonManifest(allocator, sql_path, tables.items);
@@ -1269,6 +1303,16 @@ fn emitJsonManifest(allocator: std.mem.Allocator, sql_path: []const u8, tables: 
             try buf.appendSlice(allocator, if (col.is_nullable) "true" else "false");
             try buf.appendSlice(allocator, ", \"primary_key\": ");
             try buf.appendSlice(allocator, if (col.is_primary_key) "true" else "false");
+
+            // UI metadata for admin form generation (PR 3)
+            try buf.appendSlice(allocator, ", \"ui\": { \"input\": \"");
+            try appendJsonString(allocator, &buf, uiInputForType(col.sql_type));
+            try buf.appendSlice(allocator, "\", \"label_zh\": \"");
+            try appendJsonString(allocator, &buf, col.name); // default label = column name
+            try buf.appendSlice(allocator, "\", \"required\": ");
+            try buf.appendSlice(allocator, if (col.is_nullable) "false" else "true");
+            try buf.appendSlice(allocator, " }");
+
             try buf.appendSlice(allocator, " }");
         }
         try buf.appendSlice(allocator, "\n      ]\n");
@@ -1288,6 +1332,24 @@ fn emitJsonManifest(allocator: std.mem.Allocator, sql_path: []const u8, tables: 
     // Write to stdout so AI can pipe
     var out = std.Io.File.stdout();
     try out.writeStreamingAll(io, buf.items);
+}
+
+/// Map SQL type to HTML input type for the admin form. Same
+/// heuristic as admin_templates.inputHtmlForColumn but exposed
+/// in the manifest so AI agents can read the UI contract.
+fn uiInputForType(sql_type: []const u8) []const u8 {
+    // Cheap uppercase copy
+    var upper_buf: [32]u8 = undefined;
+    const n = @min(sql_type.len, upper_buf.len);
+    for (0..n) |i| upper_buf[i] = std.ascii.toUpper(sql_type[i]);
+    const upper = upper_buf[0..n];
+
+    if (std.mem.eql(u8, upper, "INTEGER") or std.mem.eql(u8, upper, "INT")) return "number";
+    if (std.mem.eql(u8, upper, "REAL") or std.mem.eql(u8, upper, "FLOAT") or std.mem.eql(u8, upper, "DOUBLE")) return "number";
+    if (std.mem.eql(u8, upper, "BOOLEAN") or std.mem.eql(u8, upper, "BOOL")) return "checkbox";
+    if (std.mem.eql(u8, upper, "DATE")) return "date";
+    if (std.mem.eql(u8, upper, "DATETIME") or std.mem.eql(u8, upper, "TIMESTAMP")) return "datetime-local";
+    return "text";
 }
 
 /// Append a JSON-escaped string (no surrounding quotes).

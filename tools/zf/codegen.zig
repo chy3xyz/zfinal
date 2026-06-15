@@ -191,7 +191,7 @@ fn parseColumnDef(allocator: std.mem.Allocator, sql: []const u8, pos_ptr: *usize
     pos = if (sql[name_end] == '`' or sql[name_end] == '"') name_end + 1 else name_end;
     pos = skipWhitespace(sql, pos);
 
-    const type_end = std.mem.indexOfAny(u8, sql[pos..], " ,\t\n(") orelse sql.len;
+    const type_end = std.mem.indexOfAny(u8, sql[pos..], " ,\t\n(),") orelse sql.len;
     var col_type = sql[pos..@min(pos + type_end, sql.len)];
     if (type_end < sql.len and sql[pos + type_end] == '(') {
         const paren_end = std.mem.indexOfScalar(u8, sql[pos + type_end + 1 ..], ')') orelse return error.InvalidSyntax;

@@ -1,8 +1,8 @@
 const std = @import("std");
 const c = @import("c_pg");
 
-const Column = @import("codegen.zig").Column;
-const Table = @import("codegen.zig").Table;
+const Column = @import("codegen").Column;
+const Table = @import("codegen").Table;
 
 /// PostgreSQL DSN: postgres://user:pass@host:port/dbname  or  postgresql://...
 pub const Dsn = struct {

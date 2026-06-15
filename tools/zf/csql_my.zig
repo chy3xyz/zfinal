@@ -1,8 +1,8 @@
 const std = @import("std");
 const c = @import("c_mysql");
 
-const Column = @import("codegen.zig").Column;
-const Table = @import("codegen.zig").Table;
+const Column = @import("codegen").Column;
+const Table = @import("codegen").Table;
 
 /// MySQL DSN: mysql://user:pass@host:port/dbname
 pub const Dsn = struct {

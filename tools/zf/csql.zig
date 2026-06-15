@@ -1,8 +1,8 @@
 const std = @import("std");
 const c = @import("c_sqlite3");
 
-const Column = @import("codegen.zig").Column;
-const Table = @import("codegen.zig").Table;
+const Column = @import("codegen").Column;
+const Table = @import("codegen").Table;
 
 /// Extract table schemas by importing SQL into a temp SQLite DB and introspecting.
 /// Filters out INSERT/UPDATE/DELETE — only executes DDL (CREATE TABLE/INDEX).

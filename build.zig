@@ -206,6 +206,19 @@ pub fn build(b: *std.Build) void {
             .{ .name = "zf_cfg", .module = zf_opts.createModule() },
         },
     });
+    // Expose codegen as a named module so admin_templates.zig can
+    // import it as @import("codegen") instead of @import("codegen.zig").
+    {
+        const codegen_for_zf = b.createModule(.{
+            .root_source_file = b.path("tools/zf/codegen.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        codegen_for_zf.link_libc = true;
+        codegen_for_zf.linkSystemLibrary("sqlite3", .{});
+        codegen_for_zf.addImport("c_sqlite3", sqlite3_c_mod);
+        zf_mod.addImport("codegen", codegen_for_zf);
+    }
     zf_mod.link_libc = true;
     zf_mod.linkSystemLibrary("sqlite3", .{});
     if (enable_pg) zf_mod.linkSystemLibrary("pq", .{});
@@ -256,12 +269,25 @@ pub fn build(b: *std.Build) void {
         codegen_mod.linkSystemLibrary("sqlite3", .{});
         codegen_mod.addImport("c_sqlite3", sqlite3_c_mod);
 
+        const admin_templates_mod = b.createModule(.{
+            .root_source_file = b.path("tools/zf/admin_templates.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "codegen", .module = codegen_mod },
+            },
+        });
+        admin_templates_mod.link_libc = true;
+        admin_templates_mod.linkSystemLibrary("sqlite3", .{});
+        admin_templates_mod.addImport("c_sqlite3", sqlite3_c_mod);
+
         const zf_test_mod = b.createModule(.{
             .root_source_file = b.path("tools/zf/codegen_test.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "codegen", .module = codegen_mod },
+                .{ .name = "admin_templates", .module = admin_templates_mod },
             },
         });
         zf_test_mod.link_libc = true;

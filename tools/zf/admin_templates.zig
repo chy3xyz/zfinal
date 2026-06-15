@@ -14,7 +14,7 @@
 //! agent can customize behavior without touching generated boilerplate.
 
 const std = @import("std");
-const codegen = @import("codegen.zig");
+const codegen = @import("codegen");
 
 /// Generate the 4 admin HTML files for a single table.
 /// Returns owned slices the caller must free. List ends with a
