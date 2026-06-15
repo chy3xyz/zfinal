@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-06-13
+
+### Added
+- **Cross-platform MySQL/PG include paths**: build.zig now auto-detects platform and uses appropriate default paths (macOS homebrew vs Linux system paths). User-overridable via `--mysql-include <path>` and `--pg-include <path>`.
+- **Linux `install.sh`**: auto-detects MySQL/PG headers on Linux, enables `-Ddriver_mysql=true` / `-Ddriver_pg=true` when found, prints `apt install` / `yum install` instructions when headers are missing.
+
+### Fixed
+- **`-Ddriver_mysql=true` panic (Linux)**: previously hardcoded `/opt/homebrew/include` paths caused build to fail on non-macOS. Now falls back to `/usr/include/mysql` (and mariadb variant) on Linux.
+
 ## [0.9.9] - 2026-06-13
 
 ### Fixed
