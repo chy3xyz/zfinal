@@ -518,7 +518,7 @@ pub fn generateService(allocator: std.mem.Allocator, table: *const Table) ![]con
         \\/// Comptime list of columns to LIKE-search against. AI: trim
         \\/// to your business needs (e.g. only `name` and `email`).
         \\fn searchable_columns() []const []const u8 {{
-        \\{s}
+        \\    return &.{s};
         \\}}
         \\
         \\/// Find one {s} by primary key.
@@ -576,8 +576,9 @@ pub fn generateService(allocator: std.mem.Allocator, table: *const Table) ![]con
         \\// Keep functions pure (no ctx mutation) when possible.
         \\// ─────────────────────────────────────────────────────────────────
     , .{
-        name, name, name, name, name, name, name, name, name, name, name, name, name, name, name, name, name, // 17 × {s} for table.pascal_name / table.name
-        searchable_cols_text, // 1 × {searchable}
+        name, name, name, name, name, name, name, name, // 1-8
+        searchable_cols_text, // 9: searchable columns body
+        name, name, name, name, name, name, name, name, name, // 10-18
     });
 }
 

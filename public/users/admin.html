@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title}</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  // vben-style design tokens, exposed to Tailwind via theme.extend
+  tailwind.config = {{
+    theme: {{
+      extend: {{
+        colors: {{
+          'vben-primary':   '#2b85e4',
+          'vben-primary-dk':'#1e6cb8',
+          'vben-sidebar':   '#001529',
+          'vben-sidebar-h': '#000c17',
+          'vben-content':   '#f0f2f5',
+        }},
+        fontFamily: {{
+          sans: ['-apple-system','BlinkMacSystemFont','"Segoe UI"','Roboto','"PingFang SC"','"Hiragino Sans GB"','"Microsoft YaHei"','sans-serif'],
+        }},
+      }},
+    }},
+  }};
+</script>
+<script src="https://unpkg.com/htmx.org@1.9.10"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
+<style>
+  body {{ font-size: 14px; }}
+  [x-cloak] {{ display: none !important; }}
+</style>
+</head>
+<body class="bg-vben-content min-h-screen" x-data="{ sidebarCollapsed: false, theme: 'light' }">
+
+<!-- ── ai-edit-zone: topbar ──────────────────────────────────────── -->
+<!-- AI: customize topbar (logo, breadcrumbs, user menu, theme switch) -->
+<header class="h-14 bg-white shadow-sm flex items-center px-4 border-b border-gray-200 fixed top-0 left-0 right-0 z-30">
+  <button @click="sidebarCollapsed = !sidebarCollapsed" class="text-gray-600 hover:text-vben-primary mr-4">
+    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+    </svg>
+  </button>
+  <h1 class="text-lg font-semibold text-gray-800">Users 管理 - ZFinal Admin</h1>
+  <div class="ml-auto flex items-center space-x-3">
+    <button class="text-gray-500 hover:text-vben-primary text-sm">⚙ 设置</button>
+    <div class="w-8 h-8 rounded-full bg-vben-primary text-white flex items-center justify-center text-sm">U</div>
+  </div>
+</header>
+<!-- ──────────────────────────────────────────────────────────────── -->
+
+<!-- ── ai-edit-zone: sidebar ──────────────────────────────────────── -->
+<!-- AI: replace static menu with route group / permission check -->
+<aside :class="sidebarCollapsed ? 'w-16' : 'w-56'" class="fixed left-0 top-14 bottom-0 bg-vben-sidebar text-gray-300 transition-all duration-200 z-20 overflow-y-auto">
+  <nav class="py-2">
+    <a href="/" class="flex items-center px-4 py-3 hover:bg-vben-sidebar-h transition-colors" :class="!sidebarCollapsed && 'border-l-2 border-vben-primary bg-vben-sidebar-h'">
+      <span class="text-base">🏠</span>
+      <span x-show="!sidebarCollapsed" x-cloak class="ml-3 text-sm">仪表盘</span>
+    </a>
+    <a href="/users" class="flex items-center px-4 py-3 hover:bg-vben-sidebar-h transition-colors" :class="!sidebarCollapsed && 'border-l-2 border-vben-primary bg-vben-sidebar-h'">
+      <span class="text-base">📋</span>
+      <span x-show="!sidebarCollapsed" x-cloak class="ml-3 text-sm">Users</span>
+    </a>    <a href="/posts" class="flex items-center px-4 py-3 hover:bg-vben-sidebar-h transition-colors">
+      <span class="text-base">📋</span>
+      <span x-show="!sidebarCollapsed" x-cloak class="ml-3 text-sm">Posts</span>
+    </a>    <a href="/comments" class="flex items-center px-4 py-3 hover:bg-vben-sidebar-h transition-colors">
+      <span class="text-base">📋</span>
+      <span x-show="!sidebarCollapsed" x-cloak class="ml-3 text-sm">Comments</span>
+    </a>
+  </nav>
+</aside>
+<!-- ──────────────────────────────────────────────────────────────── -->
+
+<main :class="sidebarCollapsed ? 'ml-16' : 'ml-56'" class="pt-14 transition-all duration-200">
+  <div class="p-4">
+    <!-- Users 列表页 -->
+<div class="bg-white rounded shadow-sm p-4">
+
+<!-- ── ai-edit-zone: list filters ──────────────────────────────────── -->
+<!-- AI: customize search bar (debounce, autocomplete, date range, status filter) -->
+<div class="overflow-x-auto border border-gray-200 rounded"
+     x-data="{ rows: [], loading: true, total: 0, q: '',
+              loadRows() {
+                this.loading = true;
+                const url = new URL('/users/list', window.location.origin);
+                if (this.q) url.searchParams.set('q', this.q);
+                fetch(url).then(r => r.json()).then(d => {
+                  this.rows = d.data || [];
+                  this.total = d.total || 0;
+                  this.loading = false;
+                });
+              }
+             }"
+     x-init="loadRows()"
+     @search-debounced.window="loadRows()">
+
+  <!-- Search bar + add button share the same Alpine x-data above -->
+  <div class="flex flex-wrap items-center gap-2 mb-4 p-3 border-b border-gray-200">
+    <input type="text" x-model="q" placeholder="搜索 Users…"
+           @input.debounce.300ms="$dispatch('search-debounced')"
+           class="flex-1 min-w-[200px] px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-vben-primary">
+    <button @click="$dispatch('search-debounced')"
+            class="px-4 py-2 bg-vben-primary text-white rounded text-sm hover:bg-vben-primary-dk">
+      🔍 搜索 <span x-show="q" x-cloak class="ml-1 text-xs opacity-75" x-text="'「' + q + '」'"></span>
+    </button>
+    <button hx-get="/users/form/new" hx-target="#modal-content" hx-swap="innerHTML"
+            @click="window.dispatchEvent(new CustomEvent('open-modal'))"
+            class="ml-auto px-4 py-2 bg-vben-primary text-white rounded text-sm hover:bg-vben-primary-dk">
+      + 新增 Users
+    </button>
+  </div>
+<!-- ────────────────────────────────────────────────────────────────── -->
+
+  <table class="min-w-full divide-y divide-gray-200">
+    <thead class="bg-gray-50">
+<tr>
+      <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+      <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">username</th>
+      <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">email</th>
+      <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">role</th>
+      <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">created_at</th>
+      <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+
+</tr>
+    </thead>
+    <tbody id="rows" class="bg-white divide-y divide-gray-200">
+      <!-- ── ai-edit-zone: row rendering ────────────────────────────── -->
+      <!-- AI: replace this Alpine template with one column per field.
+           The data is in `row.<col_name>`; bind via x-text.
+           Example: <td x-text="row.name"></td> -->
+      <template x-for="row in rows" :key="row.id">
+        <tr class="hover:bg-gray-50">
+          <td class="px-4 py-2 text-sm text-gray-900" x-text="row.id"></td>
+          <!-- Add one <td x-text="row.<col>"></td> per column here -->
+          <td class="px-4 py-2 text-sm space-x-2 whitespace-nowrap">
+            <button class="text-vben-primary hover:underline">编辑</button>
+            <button class="text-red-600 hover:underline">删除</button>
+          </td>
+        </tr>
+      </template>
+      <tr x-show="loading"><td colspan="100" class="text-center text-gray-400 py-8">加载中…</td></tr>
+      <tr x-show="!loading && rows.length === 0"><td colspan="100" class="text-center text-gray-400 py-8">暂无数据</td></tr>
+      <!-- ──────────────────────────────────────────────────────────────── -->
+    </tbody>
+  </table>
+</div>
+
+<!-- Pagination (server-side rendered by handler) -->
+<div id="pagination" class="mt-4 flex items-center justify-between text-sm text-gray-600"
+     hx-get="/users/pagination" hx-trigger="refresh from:body" hx-swap="innerHTML">
+  <span>共 0 条</span>
+  <div class="flex space-x-1">
+    <button class="px-3 py-1 border border-gray-300 rounded hover:bg-gray-50">‹</button>
+    <button class="px-3 py-1 border border-vben-primary bg-vben-primary text-white rounded">1</button>
+    <button class="px-3 py-1 border border-gray-300 rounded hover:bg-gray-50">›</button>
+  </div>
+</div>
+</div>
+
+<!-- Modal container (filled by HTMX when /form/new is requested) -->
+<div x-data="{ open: false }" @open-modal.window="open = true" x-show="open" x-cloak
+     class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+     @keydown.escape.window="open = false">
+  <div @click.outside="open = false" class="bg-white rounded shadow-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+    <div id="modal-content">
+      <div class="p-8 text-center text-gray-400">加载表单…</div>
+    </div>
+  </div>
+</div>
+  </div>
+</main>
+</body>
+</html>

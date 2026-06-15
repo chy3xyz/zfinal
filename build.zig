@@ -150,6 +150,7 @@ pub fn build(b: *std.Build) void {
     addExample(b, zfinal_mod, "ai-blog-5min", "examples/ai-blog-5min/main.zig", "Run 5-minute AI speedrun demo (blog CRUD scaffold)");
     addExample(b, zfinal_mod, "htmx", "examples/htmx/main.zig", "Run HTMX demo");
     addExample(b, zfinal_mod, "htmx-admin", "examples/htmx-admin/main.zig", "Run vben-style admin UI demo (run `zf admin` first)");
+    addExample(b, zfinal_mod, "htmx-admin-demo", "examples/htmx-admin-demo/main.zig", "Run full-stack multi-table admin demo (3 tables, search, multi-table sidebar)");
     addExample(b, zfinal_mod, "ws", "examples/websocket/main.zig", "Run WebSocket demo");
     addExample(b, zfinal_mod, "edge", "examples/edge/main.zig", "Run edge computing demo");
     addExample(b, zfinal_mod, "auth", "examples/auth/main.zig", "Run auth demo");
