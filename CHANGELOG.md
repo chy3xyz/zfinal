@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.6] - 2026-06-13
+
+### Fixed (P0)
+- **Worker-thread MySQL connection failure**: `ConnectionPool.init()` now eagerly pre-creates ALL `max_connections` DB connections on the calling thread (typically main). Worker threads no longer trigger `DB.init` → `mysql_real_connect` in their own TLS context, avoiding the Zig 0.17 `std.Thread.spawn` aarch64-macos TLS/errno corruption bug. `acquire()` only pops from the pre-created available list.
+
 ## [0.10.5] - 2026-06-13
 
 ### Added
