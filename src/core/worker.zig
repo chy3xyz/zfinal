@@ -56,21 +56,18 @@ pub const Thread = struct {
 
 /// Higher-level: spawn using std.Thread.spawn when TLS is not an issue,
 /// Thread.spawn (pthread_create) when on aarch64-macos.
-///
-/// WARNING: std.Thread.spawn signatures differ from pthread_create.
-/// This function uses a Box pattern to bridge them.
 pub fn spawnSafe(allocator: std.mem.Allocator, comptime entry: Thread.EntryFn, arg: *anyopaque) !std.Thread {
     if (builtin.os.tag == .macos and builtin.cpu.arch.isAARCH64()) {
         const pt = try Thread.spawn(entry, arg);
         return std.Thread{ .handle = pt.handle };
     }
-    // On other platforms: wrap the C entry in a Zig-compatible
-    // closure using std.Thread.spawn.
-    return std.Thread.spawn(allocator, struct {
+    // On other platforms: wrap the C entry in a Zig-compatible closure
+    const Box = struct {
         fn run(raw: *anyopaque) void {
             _ = entry(raw);
         }
-    }.run, arg);
+    };
+    return std.Thread.spawn(allocator, Box.run, arg);
 }
 
 test "worker: spawn + join roundtrip" {

@@ -5,11 +5,10 @@ const mutex_init = @import("mutex_init.zig");
 
 /// 数据库连接池 with POSIX thread synchronization.
 ///
-/// Uses pthread_mutex_init / pthread_cond_init at runtime (not the
-/// static INITIALIZER value-copied) to avoid the aarch64-macos bug
-/// where PTHREAD_MUTEX_INITIALIZER (64-byte struct with magic bytes
-/// 0x32AAABA7 + init flags) loses flags on struct copy, causing
-/// pthread_mutex_lock to silently fail on worker threads.
+/// Heap-allocated (init returns *ConnectionPool) to avoid struct copy
+/// of pthread_mutex_t / pthread_cond_t. pthread_mutex_init /
+/// pthread_cond_init run at allocation time; the caller gets the pointer
+/// directly — no value-copy that could drop internal flags.
 pub const ConnectionPool = struct {
     connections: std.ArrayList(*DB),
     available: std.ArrayList(*DB),
@@ -21,8 +20,10 @@ pub const ConnectionPool = struct {
     current_connections: usize,
     acquire_timeout_ms: u64,
 
-    pub fn init(allocator: std.mem.Allocator, config: DBConfig, max_connections: usize) !ConnectionPool {
-        var pool = ConnectionPool{
+    pub fn init(allocator: std.mem.Allocator, config: DBConfig, max_connections: usize) !*ConnectionPool {
+        var pool = try allocator.create(ConnectionPool);
+        errdefer allocator.destroy(pool);
+        pool.* = ConnectionPool{
             .connections = std.ArrayList(*DB).empty,
             .available = std.ArrayList(*DB).empty,
             .mutex = undefined,
@@ -51,7 +52,7 @@ pub const ConnectionPool = struct {
         self.available.deinit(self.allocator);
         mutex_init.destroyMutex(&self.mutex);
         mutex_init.destroyCond(&self.cond);
-        self.* = undefined;
+        self.allocator.destroy(self);
     }
 
     pub fn acquire(self: *ConnectionPool) !*DB {
