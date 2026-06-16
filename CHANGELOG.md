@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.7] - 2026-06-13
+
+### Fixed (P0)
+- **Graceful shutdown panic**: `group.cancel(io)` panics on aarch64-macos when `handleConn` fibers have active cancelation waiters (`assert(g.token.raw == null)`). Replaced with an active-connection drain loop that waits for `active_conns` to reach zero before returning. The listener is already closed by `defer`, so no new connections arrive. Existing connections drain naturally via keep-alive timeout or `max_requests_per_conn`.
+
+### Changed
+- `shutdown.registerHandlers()` is now available for SIGTERM/SIGINT graceful shutdown (was previously commented out due to the panic).
+
 ## [0.10.6] - 2026-06-13
 
 ### Fixed (P0)
