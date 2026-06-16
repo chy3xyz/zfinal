@@ -7,7 +7,7 @@ pub fn main(init: std.process.Init) !void {
 
     // Init MySQL pool (required by generated handlers)
     const db_cfg = zfinal.DBConfig.mysql("ruoyi_vue_pro", "root", "");
-    var pool = zfinal.ConnectionPool.init(allocator, db_cfg, 8);
+    var pool = try zfinal.ConnectionPool.init(allocator, db_cfg, 8);
     defer pool.deinit();
 
     var app = zfinal.ZFinal.init(allocator);

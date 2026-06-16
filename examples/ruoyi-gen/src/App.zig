@@ -21,7 +21,7 @@ pub const App = struct {
         return .{
             .allocator = allocator,
             .zf = zf,
-            .pool = zfinal.ConnectionPool.init(allocator, db_cfg, 8),
+            .pool = try zfinal.ConnectionPool.init(allocator, db_cfg, 8),
         };
     }
 

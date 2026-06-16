@@ -130,7 +130,7 @@ pub const app_zig =
     \\        return .{
     \\            .allocator = allocator,
     \\            .zf = zf,
-    \\            .pool = zfinal.ConnectionPool.init(allocator, db_cfg, 8),
+    \\            .pool = try zfinal.ConnectionPool.init(allocator, db_cfg, 8),
     \\        };
     \\    }
     \\

@@ -1,16 +1,15 @@
 const std = @import("std");
 const DB = @import("db.zig").DB;
 const DBConfig = @import("config.zig").DBConfig;
+const mutex_init = @import("mutex_init.zig");
 
 /// 数据库连接池 with POSIX thread synchronization.
 ///
-/// Known limitation: pthread_mutex_t / pthread_cond_t are value-copied
-/// from init() via PTHREAD_MUTEX_INITIALIZER. On most platforms (macOS,
-/// Linux, glibc, musl) this is safe because the static initializer sets
-/// up a zero-initialized platform primitive whose copy is also valid.
-/// If a platform-specific issue is observed (pool.acquire silently hangs
-/// in worker threads), switch to heap-allocated mutex or use
-/// `@cImport("pthread.h")` to call pthread_mutex_init explicitly.
+/// Uses pthread_mutex_init / pthread_cond_init at runtime (not the
+/// static INITIALIZER value-copied) to avoid the aarch64-macos bug
+/// where PTHREAD_MUTEX_INITIALIZER (64-byte struct with magic bytes
+/// 0x32AAABA7 + init flags) loses flags on struct copy, causing
+/// pthread_mutex_lock to silently fail on worker threads.
 pub const ConnectionPool = struct {
     connections: std.ArrayList(*DB),
     available: std.ArrayList(*DB),
@@ -22,20 +21,22 @@ pub const ConnectionPool = struct {
     current_connections: usize,
     acquire_timeout_ms: u64,
 
-    pub fn init(allocator: std.mem.Allocator, config: DBConfig, max_connections: usize) ConnectionPool {
-        const mutex = std.c.PTHREAD_MUTEX_INITIALIZER;
-        const cond = std.c.PTHREAD_COND_INITIALIZER;
-        return ConnectionPool{
+    pub fn init(allocator: std.mem.Allocator, config: DBConfig, max_connections: usize) !ConnectionPool {
+        var pool = ConnectionPool{
             .connections = std.ArrayList(*DB).empty,
             .available = std.ArrayList(*DB).empty,
-            .mutex = mutex,
-            .cond = cond,
+            .mutex = undefined,
+            .cond = undefined,
             .config = config,
             .allocator = allocator,
             .max_connections = max_connections,
             .current_connections = 0,
             .acquire_timeout_ms = 30000,
         };
+        try mutex_init.initMutex(&pool.mutex);
+        errdefer mutex_init.destroyMutex(&pool.mutex);
+        try mutex_init.initCond(&pool.cond);
+        return pool;
     }
 
     pub fn deinit(self: *ConnectionPool) void {
@@ -48,6 +49,8 @@ pub const ConnectionPool = struct {
         }
         self.connections.deinit(self.allocator);
         self.available.deinit(self.allocator);
+        mutex_init.destroyMutex(&self.mutex);
+        mutex_init.destroyCond(&self.cond);
         self.* = undefined;
     }
 

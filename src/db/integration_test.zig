@@ -345,7 +345,7 @@ test "db: connection pool" {
     const a = std.testing.allocator;
     const ConnectionPool = @import("pool.zig").ConnectionPool;
 
-    var pool = ConnectionPool.init(a, DBConfig.sqliteMemory(), 2);
+    var pool = try ConnectionPool.init(a, DBConfig.sqliteMemory(), 2);
     defer pool.deinit();
 
     {
@@ -370,7 +370,7 @@ test "db: connection pool" {
 test "db: pool keepAlive" {
     const a = std.testing.allocator;
     const ConnectionPool = @import("pool.zig").ConnectionPool;
-    var pool = ConnectionPool.init(a, DBConfig.sqlite(":memory:"), 3);
+    var pool = try ConnectionPool.init(a, DBConfig.sqlite(":memory:"), 3);
     defer pool.deinit();
 
     const c1 = try pool.acquire();

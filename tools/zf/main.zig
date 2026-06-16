@@ -1431,7 +1431,7 @@ fn writeGeneratedFiles(allocator: std.mem.Allocator, table: *codegen.Table, modu
             \\    tokenMgr.setTTL(3600);
             \\    rateLimiter = zfinal.RateLimitHandler.init(allocator);
             \\    rateLimiter.max_requests = 100;
-            \\    pool = zfinal.ConnectionPool.init(allocator, db_config, 10);
+            \\    pool = try zfinal.ConnectionPool.init(allocator, db_config, 10);
             \\    _ = pool.acquire() catch {};
             \\}
             \\
