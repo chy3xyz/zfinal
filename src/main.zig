@@ -75,6 +75,10 @@ pub const RedisCache = @import("plugin/redis.zig").RedisCache;
 pub const CronPlugin = @import("plugin/cron.zig").CronPlugin;
 pub const MqttPlugin = @import("plugin/mqtt.zig").MqttPlugin;
 pub const AgentPlugin = @import("plugin/agent.zig").AgentPlugin;
+// WeChat plugin — requires zwechat dependency in build.zig.zon:
+//   .zwechat = .{ .path = "../zwechat" }
+// Uncomment when ready:
+// pub const WechatPlugin = @import("plugin/wechat.zig").WechatPlugin;
 pub const DidPlugin = @import("plugin/did.zig").DidPlugin;
 pub const P2pPlugin = @import("plugin/p2p.zig").P2pPlugin;
 pub const CircuitBreaker = @import("plugin/compat/stubs.zig").CircuitBreaker;
