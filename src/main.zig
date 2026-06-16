@@ -18,6 +18,7 @@ pub const HttpMethod = @import("core/router.zig").HttpMethod;
 pub const Server = @import("core/server.zig").Server;
 pub const ServerConfig = @import("core/server.zig").ServerConfig;
 pub const ThreadPool = @import("core/thread_pool.zig").ThreadPool;
+pub const Worker = @import("core/worker.zig");
 pub const Logger = @import("core/logger.zig").Logger;
 pub const LogLevel = @import("core/logger.zig").LogLevel;
 pub const LOG_LEVEL = @import("core/logger.zig").LOG_LEVEL;
