@@ -106,9 +106,27 @@ fn acceptLoopImpl(io: std.Io, server: *Server, addr: std.Io.net.IpAddress, group
 
         group.async(io, handleConn, .{ io, conn, server });
     }
-    // Graceful shutdown: cancel pending fibers, drain connections
+    // Graceful shutdown: drain pending connections.
+    // group.cancel(io) would panic on aarch64-macos when handleConn
+    // fibers have active cancelation waiters. Instead, close the
+    // listener (defer above handles that) and let connections drain
+    // naturally via keep-alive timeout or max_requests_per_conn.
     getLog().info("Shutting down server...", .{});
-    group.cancel(io);
+    var drain_ok: bool = false;
+    while (!drain_ok) {
+        // Wait for active connections to complete
+        for (0..10) |_| {
+            if (server.active_conns.load(.monotonic) == 0) {
+                drain_ok = true;
+                break;
+            }
+            io.sleep(std.Io.Duration.fromMilliseconds(100), .awake) catch break;
+        }
+        if (!drain_ok) {
+            getLog().info("Waiting for active connections to drain...", .{});
+        }
+    }
+    getLog().info("All connections drained.", .{});
 }
 
 /// Handler fiber — manages keep-alive request loop for one connection.
