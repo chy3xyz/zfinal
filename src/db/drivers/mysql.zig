@@ -5,10 +5,14 @@ const SqlParam = @import("../sql_param.zig").SqlParam;
 
 const c = @import("c_mysql");
 
+const DEFAULT_BINLOG_SERVER_ID = 0x7a65746c; // "zetl"
+
 pub const MySQLDB = struct {
     conn: ?*c.MYSQL,
     allocator: std.mem.Allocator,
     last_affected: u64 = 0,
+    rpl: ?c.MYSQL_RPL = null,
+    binlog_opened: bool = false,
 
     pub fn connect(allocator: std.mem.Allocator, config: DBConfig) !MySQLDB {
         const conn = c.mysql_init(null) orelse return error.InitFailed;
@@ -45,6 +49,7 @@ pub const MySQLDB = struct {
     }
 
     pub fn close(self: *MySQLDB) void {
+        self.binlogClose();
         if (self.conn) |cxn| {
             c.mysql_close(cxn);
             self.conn = null;
@@ -343,5 +348,46 @@ pub const MySQLDB = struct {
         }
 
         return result_set;
+    }
+
+    pub const RawBinlogEvent = struct { buffer: [*c]const u8, size: c_ulong };
+
+    /// Opens a binlog dump at `file:pos`. `file` must remain alive until binlogClose is called.
+    pub fn binlogOpen(self: *MySQLDB, file: [:0]const u8, pos: u64) !void {
+        if (self.conn == null) return error.ConnectionClosed;
+        if (self.binlog_opened) return error.BinlogAlreadyOpen;
+
+        var rpl: c.MYSQL_RPL = std.mem.zeroes(c.MYSQL_RPL);
+        rpl.file_name_length = file.len;
+        rpl.file_name = file.ptr;
+        rpl.start_position = pos;
+        rpl.server_id = DEFAULT_BINLOG_SERVER_ID;
+        if (c.mysql_binlog_open(self.conn, &rpl) != 0) {
+            std.debug.print("MySQL binlog open failed: {s}\n", .{c.mysql_error(self.conn)});
+            return error.BinlogOpenFailed;
+        }
+        self.rpl = rpl;
+        self.binlog_opened = true;
+    }
+
+    pub fn binlogFetch(self: *MySQLDB) !?RawBinlogEvent {
+        if (self.rpl == null) return error.BinlogFetchFailed;
+        const rpl = &self.rpl.?;
+        if (c.mysql_binlog_fetch(self.conn, rpl) != 0) {
+            std.debug.print("MySQL binlog fetch failed: {s}\n", .{c.mysql_error(self.conn)});
+            return error.BinlogFetchFailed;
+        }
+        if (rpl.buffer == null or rpl.size == 0) return null;
+        return RawBinlogEvent{ .buffer = rpl.buffer, .size = rpl.size };
+    }
+
+    pub fn binlogClose(self: *MySQLDB) void {
+        if (self.conn) |conn| {
+            if (self.rpl) |*rpl| {
+                c.mysql_binlog_close(conn, rpl);
+                self.rpl = null;
+            }
+        }
+        self.binlog_opened = false;
     }
 };
