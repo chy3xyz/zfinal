@@ -37,6 +37,9 @@ pub const Server = struct {
     config: ServerConfig,
     active_conns: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     err_handle: ErrorHandle = .{},
+    /// Listener socket, stored so a shutdown watchdog can close it to unblock accept().
+    listener: std.Io.net.Server = undefined,
+    listener_closed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     pub fn init(allocator: std.mem.Allocator, router: *Router, config: ServerConfig) !Server {
         return .{ .allocator = allocator, .router = router, .config = config };
@@ -80,13 +83,23 @@ pub const Server = struct {
 
 fn acceptLoopImpl(io: std.Io, server: *Server, addr: std.Io.net.IpAddress, group: *std.Io.Group) !void {
     var listener = try addr.listen(io, .{ .reuse_address = true });
-    defer listener.deinit(io);
+    server.listener = listener;
+    defer {
+        if (!server.listener_closed.load(.monotonic)) {
+            listener.deinit(io);
+        }
+    }
 
     getLog().infoFmt("Server listening on http://{s}:{d}", .{ server.config.host, server.config.port });
+
+    // Watchdog: once a shutdown signal is received, close the listener socket
+    // so the blocking accept() returns immediately with SocketNotListening.
+    group.async(io, shutdownWatcher, .{ io, server });
 
     var backoff: u64 = 1;
     while (!shutdown.isShuttingDown()) {
         const conn = listener.accept(io) catch |err| {
+            if (shutdown.isShuttingDown()) break;
             getLog().warnFmt("Accept error: {} — retrying in {d}ms", .{ err, backoff });
             io.sleep(std.Io.Duration.fromMilliseconds(@intCast(backoff)), .awake) catch {};
             backoff = @min(backoff * 2, 1000);
@@ -183,4 +196,14 @@ fn acceptLoop(io: std.Io, server: *Server, addr: std.Io.net.IpAddress, group: *s
         server.err_handle.set();
         group.cancel(io);
     };
+}
+
+fn shutdownWatcher(io: std.Io, server: *Server) std.Io.Cancelable!void {
+    while (!shutdown.isShuttingDown()) {
+        io.sleep(std.Io.Duration.fromMilliseconds(100), .awake) catch break;
+    }
+    if (shutdown.isShuttingDown() and !server.listener_closed.swap(true, .monotonic)) {
+        getLog().info("Shutdown signal received, closing listener socket to unblock accept...", .{});
+        server.listener.socket.close(io);
+    }
 }

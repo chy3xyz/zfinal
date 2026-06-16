@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.8] - 2026-06-16
+
+### Fixed (P0)
+- **SIGTERM now unblocks `accept()`**: a shutdown watchdog fiber closes the listener socket as soon as `shutdown.isShuttingDown()` becomes true, causing the blocking `accept()` to return immediately with `SocketNotListening`. Previously the server would wait for a new connection (or never exit) after receiving SIGTERM/SIGINT.
+- **`shutdown.zig` compile error on Zig 0.17**: `handleSignal` signature and `sigemptyset()` call now use `std.posix.SIG` / `std.posix.sigemptyset()` instead of the removed `c_int` / `empty_sigset` API.
+
 ## [0.10.7] - 2026-06-13
 
 ### Fixed (P0)
