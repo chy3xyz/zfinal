@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.2] - 2026-06-13
+
+### Fixed (P0)
+- **ConnectionPool cross-thread mutex (aarch64-macos)**: `PTHREAD_MUTEX_INITIALIZER` on ARM macOS is a 64-byte struct with magic bytes (`0x32AAABA7`). Struct copy via `pool.* = init()` loses init flags, causing `pthread_mutex_lock` to silently fail. Symptoms: `Lost connection to MySQL server at 'reading initial communication packet'` when worker threads acquire connections. Fix: `pthread_mutex_init` / `pthread_cond_init` called at runtime via new `src/db/mutex_init.zig` wrapper.
+
+### Assessed (no framework change needed)
+- **Bug 3**: TokenManager `exists` lock contention → already fixed in v0.9.9.
+- **Bug 4**: `DB.deinit` takes `*DB` → use `var db` (not `const`) to get mutable reference. Zig convention: deinit takes mutable self.
+- **Bug 2**: child-thread `DB.init` TLS interaction with MySQL client library → workaround is to pre-init all connections at thread entry, not in subsequent calls. Framework behavior is correct.
+
 ## [0.10.1] - 2026-06-13
 
 ### Changed
