@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.4] - 2026-06-13
+
+### Fixed (P0)
+- **ConnectionPool struct copy corrupts mutex/cond**: `ConnectionPool.init()` now returns `!*ConnectionPool` (heap-allocated) instead of `!ConnectionPool` (value). Eliminates the struct copy that drops `pthread_mutex_t`/`pthread_cond_t` internal flags on aarch64-macos. `deinit()` frees the heap allocation.
+
+### Changed
+- **`deps.zig` pool type**: `pub var pool: *zfinal.ConnectionPool` (pointer, not value). Added `getPool()` / `getTokenMgr()` / `getRateLimiter()` getter functions (already used by codegen template).
+- **`Worker.zig`**: fixed `Box` struct pattern in `spawnSafe` for type unification across calling conventions.
+
 ## [0.10.3] - 2026-06-13
 
 ### Added
