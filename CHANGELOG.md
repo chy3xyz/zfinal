@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **SIGTERM now unblocks `accept()`**: a shutdown watchdog fiber closes the listener socket as soon as `shutdown.isShuttingDown()` becomes true, causing the blocking `accept()` to return immediately with `SocketNotListening`. Previously the server would wait for a new connection (or never exit) after receiving SIGTERM/SIGINT.
 - **`shutdown.zig` compile error on Zig 0.17**: `handleSignal` signature and `sigemptyset()` call now use `std.posix.SIG` / `std.posix.sigemptyset()` instead of the removed `c_int` / `empty_sigset` API.
 
+## [0.10.8] - 2026-06-13
+
+### Added
+- **`zfinal.StaticAdmin`**: single-binary admin deployment via `@embedFile`. Embed all admin HTML files at compile time — no external files, CDN, or config needed. One binary runs anywhere (VPS, container, edge).
+- **`examples/standalone-admin/`**: runnable demo that embeds 3 admin HTML files (users/posts/comments) at build time. Build with `zig build run-standalone-admin`, deploy with `scp zig-out/bin/standalone-admin user@vps:/opt/app/`. Binary is ~5-8 MB with SQLite included.
+
+### Changed
+- **`server.zig`**: graceful shutdown replaced `group.cancel(io)` panic with active-connection drain loop. `shutdown.registerHandlers()` now works for SIGTERM/SIGINT.
+
 ## [0.10.7] - 2026-06-13
 
 ### Fixed (P0)
