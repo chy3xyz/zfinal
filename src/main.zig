@@ -16,6 +16,7 @@ pub const Router = @import("core/router.zig").Router;
 pub const Handler = @import("core/router.zig").Handler;
 pub const HttpMethod = @import("core/router.zig").HttpMethod;
 pub const Server = @import("core/server.zig").Server;
+pub const StaticAdmin = @import("core/static_admin.zig");
 pub const ServerConfig = @import("core/server.zig").ServerConfig;
 pub const ThreadPool = @import("core/thread_pool.zig").ThreadPool;
 pub const Worker = @import("core/worker.zig");
