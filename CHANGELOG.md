@@ -16,6 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **SIGTERM now unblocks `accept()`**: a shutdown watchdog fiber closes the listener socket as soon as `shutdown.isShuttingDown()` becomes true, causing the blocking `accept()` to return immediately with `SocketNotListening`. Previously the server would wait for a new connection (or never exit) after receiving SIGTERM/SIGINT.
 - **`shutdown.zig` compile error on Zig 0.17**: `handleSignal` signature and `sigemptyset()` call now use `std.posix.SIG` / `std.posix.sigemptyset()` instead of the removed `c_int` / `empty_sigset` API.
 
+## [0.11.0] - 2026-06-13
+
+### Added (AI-friendliness milestone)
+- **`zf check --heal`**: auto-patches 4 common compile errors:
+  - Stale `pool_ref`/`token_ref`/`limit_ref` → new `getPool()`/`getTokenMgr()`/`getRateLimiter()` pattern
+  - Missing getter functions in `deps.zig` (appends them)
+  - `callconv(.C)` → `callconv(.c)` (Zig 0.17 lowercase)
+  - `var` → `const` for never-mutated spawn/test returns
+  - Verified: 82 files patched on first run, 0 on second (idempotent).
+- **`zf check --ai-zones`**: reverse index of AI-editable files. Lists every `.zig` under `src/` with `// ai-edit-zone` markers or in `ext/` dir; marks `.gen.zig` files as AI-LOCKED.
+- **`examples/README.md`**: index of AI-edit zones per example. Each example documents which files AI can edit vs regenerate.
+
 ## [0.10.9] - 2026-06-13
 
 ### Added (AI friendliness)
