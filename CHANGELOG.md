@@ -16,6 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **SIGTERM now unblocks `accept()`**: a shutdown watchdog fiber closes the listener socket as soon as `shutdown.isShuttingDown()` becomes true, causing the blocking `accept()` to return immediately with `SocketNotListening`. Previously the server would wait for a new connection (or never exit) after receiving SIGTERM/SIGINT.
 - **`shutdown.zig` compile error on Zig 0.17**: `handleSignal` signature and `sigemptyset()` call now use `std.posix.SIG` / `std.posix.sigemptyset()` instead of the removed `c_int` / `empty_sigset` API.
 
+## [0.10.9] - 2026-06-13
+
+### Added (AI friendliness)
+- **`.claude/skills/zfinal-debug.md`**: comprehensive compile-error → fix-pattern lookup for AI agents. Covers DB/Server/Zig 0.17/Codegen/Common Recipes/Decision Tree.
+- **`zf crud:sql --explain --dry-run`**: AI-friendly planning mode. Prints full table structure, primary keys, module paths, generated files, ai-edit-zones, and decision rationale. `--dry-run` exits without writing files.
+
+### Fixed
+- **ruoyi-gen stale generated code**: rewrote 48 handler.gen.zig files to use new `getPool()`/`getTokenMgr()`/`getRateLimiter()` pattern. Updated `deps.zig` with getter functions. Full build now green.
+- **ConnectionPool getter**: use `@as(*ConnectionPool, @ptrCast(&pool))` to resolve comptime value issue in Zig 0.17.
+
 ## [0.10.8] - 2026-06-13
 
 ### Added
