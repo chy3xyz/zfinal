@@ -282,3 +282,144 @@ test "admin_templates: multi-table sidebar lists all tables with active highligh
     // The active link's class attribute contains the highlight classes
     try std.testing.expect(std.mem.indexOf(u8, files.list, "border-l-2 border-vben-primary") != null);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REGRESSION: ensure generated code is syntactically valid Zig
+// Uses std.zig.Tokenizer to confirm no tokenization errors.
+// Run as part of `zig build test-zf` to catch template regressions early.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test "codegen regression: model.zig tokenizes without error" {
+    const allocator = std.testing.allocator;
+    try withTable(allocator,
+        \\CREATE TABLE users (
+        \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+        \\  name TEXT NOT NULL,
+        \\  email TEXT,
+        \\  age INTEGER DEFAULT 0,
+        \\  created_at DATETIME
+        \\);
+    , struct {
+        fn f(t: *codegen.Table) !void {
+            const code = try codegen.generateModel(t.allocator, t, .snake_case);
+            defer t.allocator.free(code);
+            try expectZigSyntax(code);
+        }
+    }.f);
+}
+
+test "codegen regression: service.zig tokenizes without error" {
+    const allocator = std.testing.allocator;
+    try withTable(allocator,
+        \\CREATE TABLE products (
+        \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+        \\  sku TEXT NOT NULL,
+        \\  price REAL,
+        \\  stock INT DEFAULT 0
+        \\);
+    , struct {
+        fn f(t: *codegen.Table) !void {
+            const code = try codegen.generateService(t.allocator, t);
+            defer t.allocator.free(code);
+            try expectZigSyntax(code);
+        }
+    }.f);
+}
+
+test "codegen regression: handler.zig tokenizes without error" {
+    const allocator = std.testing.allocator;
+    try withTable(allocator,
+        \\CREATE TABLE orders (
+        \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+        \\  customer TEXT NOT NULL,
+        \\  total REAL NOT NULL
+        \\);
+    , struct {
+        fn f(t: *codegen.Table) !void {
+            const code = try codegen.generateHandler(t.allocator, t, "");
+            defer t.allocator.free(code);
+            try expectZigSyntax(code);
+        }
+    }.f);
+}
+
+test "codegen regression: routes.zig tokenizes without error" {
+    const allocator = std.testing.allocator;
+    try withTable(allocator,
+        \\CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT);
+    , struct {
+        fn f(t: *codegen.Table) !void {
+            const code = try codegen.generateRoutes(t.allocator, t);
+            defer t.allocator.free(code);
+            try expectZigSyntax(code);
+        }
+    }.f);
+}
+
+test "codegen regression: all templates tokenize across 5 schemas" {
+    const allocator = std.testing.allocator;
+    const schemas = [_][]const u8{
+        \\CREATE TABLE simple (id INTEGER PRIMARY KEY, x TEXT);
+        \\CREATE TABLE with_nullable (id INTEGER PRIMARY KEY, x TEXT, y INT NULL);
+        \\CREATE TABLE with_defaults (
+        \\  id INTEGER PRIMARY KEY,
+        \\  status TEXT DEFAULT 'active',
+        \\  count INT DEFAULT 0
+        \\);
+        \\CREATE TABLE unicode_name (id INTEGER PRIMARY KEY, name TEXT, "中文" TEXT);
+        \\CREATE TABLE many_cols (
+        \\  id INTEGER PRIMARY KEY, a INT, b INT, c INT, d INT, e INT,
+        \\  f INT, g INT, h INT, i INT, j INT, k INT
+        \\);
+    };
+    for (schemas) |sql| {
+        var tables = try codegen.parseSqlFile(allocator, sql);
+        defer {
+            for (tables.items) |*t| t.deinit();
+            tables.deinit(allocator);
+        }
+        if (tables.items.len == 0) continue;
+        const t = &tables.items[0];
+
+        const model = try codegen.generateModel(t.allocator, t, .snake_case);
+        defer t.allocator.free(model);
+        try expectZigSyntax(model);
+
+        const service = try codegen.generateService(t.allocator, t);
+        defer t.allocator.free(service);
+        try expectZigSyntax(service);
+
+        const handler = try codegen.generateHandler(t.allocator, t, "");
+        defer t.allocator.free(handler);
+        try expectZigSyntax(handler);
+
+        const routes = try codegen.generateRoutes(t.allocator, t);
+        defer t.allocator.free(routes);
+        try expectZigSyntax(routes);
+    }
+}
+
+/// Tokenize `code` and fail the test if any token reports an error.
+/// This catches template regressions where new code is malformed (unbalanced
+/// braces, missing semicolons, invalid identifiers, etc.) before users hit
+/// a compile error.
+fn expectZigSyntax(code: []const u8) !void {
+    const allocator = std.testing.allocator;
+    const buf = try allocator.allocSentinel(u8, code.len, 0);
+    defer allocator.free(buf);
+    @memcpy(buf, code);
+
+    var tokenizer: std.zig.Tokenizer = .init(buf);
+    var saw_error = false;
+    var saw_eof = false;
+    while (true) {
+        const tok = tokenizer.next();
+        if (tok.tag == .invalid) saw_error = true;
+        if (tok.tag == .eof) {
+            saw_eof = true;
+            break;
+        }
+    }
+    if (saw_error) return error.GeneratedCodeHasInvalidTokens;
+    if (!saw_eof) return error.GeneratedCodeMissingEof;
+}

@@ -1708,6 +1708,8 @@ fn handleCheck(allocator: std.mem.Allocator, heal: bool, ai_zones: bool) !void {
         patched += try healMissingGetters(allocator);
         patched += try healCallconvLowercase(allocator);
         patched += try healComptimeVar(allocator);
+        patched += try healDupeZ(allocator);
+        patched += try healBufPrintZ(allocator);
         std.debug.print("\n════════════════════════════════════════\n", .{});
         std.debug.print("Healed: {d} file(s) patched.\n", .{patched});
         if (patched == 0) std.debug.print("✅ No issues found — code already healthy.\n", .{});
@@ -2184,6 +2186,66 @@ fn healComptimeVar(allocator: std.mem.Allocator) !u32 {
             std.debug.print("  ✓ healed: {s} (var → const)\n", .{path});
             patched += 1;
         }
+    }
+    return patched;
+}
+
+/// Patch `allocator.dupeZ(T, x)` → `allocator.allocSentinel(T, x.len, 0)`.
+/// Zig 0.17 removed `dupeZ` in favor of `allocSentinel` + manual `@memcpy`.
+/// Note: this only renames the function. Users must manually add @memcpy
+/// because the original dupeZ semantics aren't directly translatable.
+fn healDupeZ(allocator: std.mem.Allocator) !u32 {
+    var patched: u32 = 0;
+    var paths: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (paths.items) |p| allocator.free(p);
+        paths.deinit(allocator);
+    }
+    try findFilesAll(allocator, "src", &paths);
+
+    for (paths.items) |path| {
+        const f = std.Io.Dir.cwd().openFile(io, path, .{}) catch continue;
+        defer f.close(io);
+        const stat = try f.stat(io);
+        if (stat.size > 200_000) continue;
+        const content = try allocator.alloc(u8, @intCast(stat.size));
+        defer allocator.free(content);
+        _ = try std.Io.File.readPositionalAll(f, io, content, 0);
+        if (std.mem.indexOf(u8, content, ".dupeZ(") == null) continue;
+        const new_content = std.mem.replaceOwned(u8, allocator, content, ".dupeZ(", ".allocSentinel(") catch continue;
+        defer allocator.free(new_content);
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = new_content });
+        std.debug.print("  ✓ healed: {s} (dupeZ → allocSentinel — manual @memcpy needed)\n", .{path});
+        patched += 1;
+    }
+    return patched;
+}
+
+/// Patch `std.fmt.bufPrintZ` → `std.fmt.bufPrint`.
+/// Zig 0.17 removed `bufPrintZ`. User must manually append `\0`.
+fn healBufPrintZ(allocator: std.mem.Allocator) !u32 {
+    var patched: u32 = 0;
+    var paths: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (paths.items) |p| allocator.free(p);
+        paths.deinit(allocator);
+    }
+    try findFilesAll(allocator, "src", &paths);
+
+    for (paths.items) |path| {
+        const f = std.Io.Dir.cwd().openFile(io, path, .{}) catch continue;
+        defer f.close(io);
+        const stat = try f.stat(io);
+        if (stat.size > 200_000) continue;
+        const content = try allocator.alloc(u8, @intCast(stat.size));
+        defer allocator.free(content);
+        _ = try std.Io.File.readPositionalAll(f, io, content, 0);
+        if (std.mem.indexOf(u8, content, "bufPrintZ") == null) continue;
+        const new_content = std.mem.replaceOwned(u8, allocator, content, "bufPrintZ", "bufPrint") catch continue;
+        defer allocator.free(new_content);
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = new_content });
+        std.debug.print("  ✓ healed: {s} (bufPrintZ → bufPrint — manual \\0 needed)\n", .{path});
+        patched += 1;
     }
     return patched;
 }
