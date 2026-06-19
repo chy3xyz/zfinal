@@ -134,18 +134,22 @@ pub fn main(init: std.process.Init) !void {
         },
         .crud_sql => {
             if (args.len < 3) {
-                std.debug.print("Usage: {s} crud:sql <sql_file> [project_name] [--force] [--json] [--admin]\n", .{args[0]});
+                std.debug.print("Usage: {s} crud:sql <sql_file> [project_name] [--force] [--json] [--admin] [--explain] [--dry-run]\n", .{args[0]});
                 std.debug.print("  project_name  Optional. Creates project dir and generates inside it.\n", .{});
                 std.debug.print("  --force       Overwrite existing files instead of generating .gen.new\n", .{});
                 std.debug.print("  --json        Emit machine-readable manifest for AI agents.\n", .{});
                 std.debug.print("  --admin       Also emit vben-style admin HTML (htmx + alpine + tailwind, CDN).\n", .{});
+                std.debug.print("  --explain     Print decision rationale for each generated file (AI-friendly).\n", .{});
+                std.debug.print("  --dry-run     Don't write files; only print what would be generated.\n", .{});
                 return;
             }
-            const project_name = if (args.len > 3 and !std.mem.eql(u8, args[3], "--force") and !std.mem.eql(u8, args[3], "--json") and !std.mem.eql(u8, args[3], "--admin")) args[3] else null;
+            const project_name = if (args.len > 3 and !std.mem.startsWith(u8, args[3], "--")) args[3] else null;
             const force = hasFlag(args, "--force");
             const json_mode = hasFlag(args, "--json");
             const admin_mode = hasFlag(args, "--admin");
-            try handleCrudFromSql(allocator, args[2], project_name, force, json_mode, admin_mode);
+            const explain_mode = hasFlag(args, "--explain");
+            const dry_run = hasFlag(args, "--dry-run");
+            try handleCrudFromSql(allocator, args[2], project_name, force, json_mode, admin_mode, explain_mode, dry_run);
         },
         .admin => {
             if (args.len < 3) {
@@ -1122,7 +1126,7 @@ fn handleCrudFromDsn(allocator: std.mem.Allocator, dsn_url: []const u8) !void {
     try generateIntegrationTestEntry(allocator, tables.items);
 }
 
-fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8, project_name: ?[]const u8, force: bool, json_mode: bool, admin_mode: bool) !void {
+fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8, project_name: ?[]const u8, force: bool, json_mode: bool, admin_mode: bool, explain_mode: bool, dry_run: bool) !void {
     // Resolve SQL path to absolute before any chdir
     var resolved_sql: []const u8 = undefined;
     if (std.fs.path.isAbsolute(sql_path)) {
@@ -1180,6 +1184,41 @@ fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8, project
 
     const method = "DB introspection";
     std.debug.print("{s}: {d} tables from {s}\n", .{ method, tables.items.len, sql_path });
+
+    // AI-friendly: --explain / --dry-run modes
+    if (explain_mode or dry_run) {
+        std.debug.print("\n──── zf plan ────\n", .{});
+        for (tables.items) |t| {
+            var pk_name: []const u8 = "id";
+            for (t.columns.items) |c| {
+                if (std.mem.eql(u8, c.name, "id") or std.mem.endsWith(u8, c.name, "_id")) {
+                    pk_name = c.name;
+                    break;
+                }
+            }
+            std.debug.print("\n📋 Table: {s}\n", .{t.name});
+            std.debug.print("   ├─ columns: {d}\n", .{t.columns.items.len});
+            for (t.columns.items, 0..) |c, i| {
+                const marker: []const u8 = if (i == t.columns.items.len - 1) "└" else "├";
+                std.debug.print("   │  {s} {s}: {s}\n", .{ marker, c.name, c.sql_type });
+            }
+            std.debug.print("   ├─ primary_key: {s}\n", .{pk_name});
+            std.debug.print("   ├─ module path: src/modules/{s}/\n", .{t.name});
+            std.debug.print("   ├─ generated: model.zig, service.zig, handler.zig, routes.zig\n", .{});
+            std.debug.print("   └─ ai-edit-zones: handler (HTTP), service (logic), model (queries)\n", .{});
+        }
+        std.debug.print("\n──── decisions ────\n", .{});
+        std.debug.print("   • handler: standard REST (GET/POST/PUT/DELETE) with CSRF + rate limit\n", .{});
+        std.debug.print("   • service: CRUD with transaction wrapper\n", .{});
+        std.debug.print("   • model: ORM-style struct with fieldMap for dynamic queries\n", .{});
+        if (admin_mode) std.debug.print("   • admin: multi-table sidebar + htmx + alpine (CDN)\n", .{});
+        if (dry_run) {
+            std.debug.print("\n[dry-run] would generate {d} modules + 1 migration + 1 manifest\n", .{tables.items.len});
+            std.debug.print("[dry-run] exiting without writing files.\n", .{});
+            return;
+        }
+        std.debug.print("\n──── continue ────\n", .{});
+    }
 
     // Step 2: Generate combined migration package
     const pkg = try codegen.generateMigrationPackage(allocator, tables.items);

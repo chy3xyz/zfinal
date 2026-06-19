@@ -3,10 +3,9 @@
 const std = @import("std");
 const zfinal = @import("zfinal");
 const service = @import("service.gen.zig");
-const pool_ref = &@import("../../../../../deps.zig").pool;
-const token_ref = &@import("../../../../../deps.zig").tokenMgr;
-const limit_ref = &@import("../../../../../deps.zig").rateLimiter;
-
+const pool = @import("../../../../../deps.zig").getPool();
+const tokenMgr = @import("../../../../../deps.zig").getTokenMgr();
+const rateLimiter = @import("../../../../../deps.zig").getRateLimiter();
 fn err(ctx: *zfinal.Context, status: std.http.Status, comptime msg: []const u8, code: i32) !void {
     ctx.res_status = status;
     try ctx.renderJson(.{ .err = msg, .code = code });
@@ -15,14 +14,14 @@ fn err(ctx: *zfinal.Context, status: std.http.Status, comptime msg: []const u8, 
 /// CSRF guard: validates csrf_token using TokenManager.
 fn csrfGuard(ctx: *zfinal.Context) !void {
     const token = try ctx.getPara("csrf_token") orelse return err(ctx, .forbidden, "Missing CSRF token", 40301);
-    if (!try token_ref.validate(token)) return err(ctx, .forbidden, "Invalid CSRF token", 40302);
+    if (!try tokenMgr.validate(token)) return err(ctx, .forbidden, "Invalid CSRF token", 40302);
 }
 
 /// List SystemSocialUserBind records with pagination + rate limiting.
 pub fn list(ctx: *zfinal.Context) !void {
-    limit_ref.handle(ctx) catch {};
-    const db = try pool_ref.acquire();
-    defer pool_ref.release(db) catch {};
+    rateLimiter.handle(ctx) catch {};
+    const db = try pool.acquire();
+    defer pool.release(db) catch {};
     const page = try ctx.getParaToIntDefault("page", 1);
     const size = try ctx.getParaToIntDefault("size", 20);
     const items = try service.paginate(db, @intCast(page), @intCast(size), ctx.allocator);
@@ -37,8 +36,8 @@ pub fn list(ctx: *zfinal.Context) !void {
 /// Show SystemSocialUserBind by ID.
 pub fn show(ctx: *zfinal.Context) !void {
     const id = try parseId(ctx);
-    const db = try pool_ref.acquire();
-    defer pool_ref.release(db) catch {};
+    const db = try pool.acquire();
+    defer pool.release(db) catch {};
     const item = try service.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
     defer item.deinit(ctx.allocator);
     try ctx.renderJson(.{ .data = item });
@@ -47,8 +46,8 @@ pub fn show(ctx: *zfinal.Context) !void {
 /// Create SystemSocialUserBind record (CSRF-protected).
 pub fn create(ctx: *zfinal.Context) !void {
     try csrfGuard(ctx);
-    const db = try pool_ref.acquire();
-    defer pool_ref.release(db) catch {};
+    const db = try pool.acquire();
+    defer pool.release(db) catch {};
     const data: service.Data = .{};
     const instance = service.create(db, data) catch |e| {
         if (e == error.ValidationError) return err(ctx, .unprocessable_entity, "Validation failed", 42201);
@@ -61,8 +60,8 @@ pub fn create(ctx: *zfinal.Context) !void {
 pub fn update(ctx: *zfinal.Context) !void {
     try csrfGuard(ctx);
     const id = try parseId(ctx);
-    const db = try pool_ref.acquire();
-    defer pool_ref.release(db) catch {};
+    const db = try pool.acquire();
+    defer pool.release(db) catch {};
     var item = try service.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
     // Validation handled by service layer
     try item.save(db);
@@ -73,8 +72,8 @@ pub fn update(ctx: *zfinal.Context) !void {
 pub fn delete(ctx: *zfinal.Context) !void {
     try csrfGuard(ctx);
     const id = try parseId(ctx);
-    const db = try pool_ref.acquire();
-    defer pool_ref.release(db) catch {};
+    const db = try pool.acquire();
+    defer pool.release(db) catch {};
     var item = try service.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
     try item.delete(db);
     try ctx.renderJson(.{ .ok = true });
@@ -84,8 +83,8 @@ pub fn delete(ctx: *zfinal.Context) !void {
 pub fn patch(ctx: *zfinal.Context) !void {
     try csrfGuard(ctx);
     const id = try parseId(ctx);
-    const db = try pool_ref.acquire();
-    defer pool_ref.release(db) catch {};
+    const db = try pool.acquire();
+    defer pool.release(db) catch {};
     var item = try service.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
     try item.save(db);
     try ctx.renderJson(.{ .ok = true });

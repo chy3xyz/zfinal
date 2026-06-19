@@ -1,6 +1,6 @@
 const std = @import("std");
 const zfinal = @import("zfinal");
-pub var pool: zfinal.ConnectionPool = undefined;
+pub var pool: *zfinal.ConnectionPool = undefined;
 pub var tokenMgr: zfinal.TokenManager = undefined;
 pub var rateLimiter: zfinal.RateLimitHandler = undefined;
 
@@ -17,4 +17,16 @@ pub const corsInterceptor = zfinal.CORSInterceptor;
 
 pub fn healthHandler(ctx: *zfinal.Context) !void {
     try ctx.renderJson(.{ .status = "ok", .uptime = "See /health" });
+}
+
+pub fn getPool() *zfinal.ConnectionPool {
+    return @as(*zfinal.ConnectionPool, @ptrCast(&pool));
+}
+
+pub fn getTokenMgr() *zfinal.TokenManager {
+    return &tokenMgr;
+}
+
+pub fn getRateLimiter() *zfinal.RateLimitHandler {
+    return &rateLimiter;
 }
