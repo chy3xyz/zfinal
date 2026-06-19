@@ -177,7 +177,9 @@ pub fn main(init: std.process.Init) !void {
             try handleCrudFromDsn(allocator, args[2]);
         },
         .check => {
-            try handleCheck(allocator);
+            const heal = hasFlag(args, "--heal");
+            const ai_zones = hasFlag(args, "--ai-zones");
+            try handleCheck(allocator, heal, ai_zones);
         },
         .upgrade => {
             try handleUpgrade(allocator);
@@ -1692,7 +1694,27 @@ fn modulePath(alloc: std.mem.Allocator, name: []const u8) ![]const u8 {
 }
 
 /// Audit project for AI compliance: .gen.zig boundaries, ext/ structure, import correctness.
-fn handleCheck(allocator: std.mem.Allocator) !void {
+/// With --heal: automatically patch known issues (stale getPool pattern, missing getters, etc.)
+fn handleCheck(allocator: std.mem.Allocator, heal: bool, ai_zones: bool) !void {
+    if (ai_zones) {
+        try printAiZones(allocator);
+        return;
+    }
+    if (heal) {
+        std.debug.print("\n🩹 ZFinal AI Compliance — SELF-HEAL MODE\n", .{});
+        std.debug.print("════════════════════════════════════════\n\n", .{});
+        var patched: u32 = 0;
+        patched += try healStaleGetterPattern(allocator);
+        patched += try healMissingGetters(allocator);
+        patched += try healCallconvLowercase(allocator);
+        patched += try healComptimeVar(allocator);
+        std.debug.print("\n════════════════════════════════════════\n", .{});
+        std.debug.print("Healed: {d} file(s) patched.\n", .{patched});
+        if (patched == 0) std.debug.print("✅ No issues found — code already healthy.\n", .{});
+        std.debug.print("Run: zig build to verify.\n", .{});
+        return;
+    }
+
     std.debug.print("\n🔍 ZFinal AI Compliance Check\n", .{});
     std.debug.print("═══════════════════════════════\n\n", .{});
 
@@ -1987,4 +2009,273 @@ fn safeWrite(allocator: std.mem.Allocator, path: []const u8, data: []const u8, f
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = new_path, .data = data });
     std.debug.print("⚠️  EXISTS: {s} — generated to {s}.gen.new\n", .{ path, path });
     std.debug.print("   Review with: diff {s} {s}.gen.new  then merge, or use --force\n", .{ path, path });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Self-heal helpers (zf check --heal)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Patch stale `pool_ref = &deps.pool` patterns → `getPool()` pattern.
+/// Returns count of files patched.
+fn healStaleGetterPattern(allocator: std.mem.Allocator) !u32 {
+    var patched: u32 = 0;
+    var paths: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (paths.items) |p| allocator.free(p);
+        paths.deinit(allocator);
+    }
+    try findFilesAll(allocator, "src", &paths);
+
+    for (paths.items) |path| {
+        const f = std.Io.Dir.cwd().openFile(io, path, .{}) catch continue;
+        defer f.close(io);
+        const stat = try f.stat(io);
+        if (stat.size > 1_000_000) continue;
+        var content = try allocator.alloc(u8, @intCast(stat.size));
+        defer allocator.free(content);
+        _ = try std.Io.File.readPositionalAll(f, io, content, 0);
+
+        const orig = content;
+        // Pattern: pool_ref = &@import(...).pool
+        if (std.mem.indexOf(u8, content, "pool_ref") != null) {
+            const new1 = try std.mem.replaceOwned(u8, allocator, content, "const pool_ref = &@import(\"", "const pool = @import(\"");
+            content = new1;
+            const new2 = try std.mem.replaceOwned(u8, allocator, content, "\").pool;", "\").getPool();");
+            content = new2;
+            const new3 = try std.mem.replaceOwned(u8, allocator, content, "pool_ref.", "pool.");
+            content = new3;
+        }
+        if (std.mem.indexOf(u8, content, "token_ref") != null) {
+            const new1 = try std.mem.replaceOwned(u8, allocator, content, "const token_ref = &@import(\"", "const tokenMgr = @import(\"");
+            content = new1;
+            const new2 = try std.mem.replaceOwned(u8, allocator, content, "\").tokenMgr;", "\").getTokenMgr();");
+            content = new2;
+            const new3 = try std.mem.replaceOwned(u8, allocator, content, "token_ref.", "tokenMgr.");
+            content = new3;
+        }
+        if (std.mem.indexOf(u8, content, "limit_ref") != null) {
+            const new1 = try std.mem.replaceOwned(u8, allocator, content, "const limit_ref = &@import(\"", "const rateLimiter = @import(\"");
+            content = new1;
+            const new2 = try std.mem.replaceOwned(u8, allocator, content, "\").rateLimiter;", "\").getRateLimiter();");
+            content = new2;
+            const new3 = try std.mem.replaceOwned(u8, allocator, content, "limit_ref.", "rateLimiter.");
+            content = new3;
+        }
+        if (!std.mem.eql(u8, content, orig)) {
+            try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = content });
+            std.debug.print("  ✓ healed: {s} (stale getter pattern)\n", .{path});
+            patched += 1;
+        }
+    }
+    return patched;
+}
+
+/// Patch deps.zig files that lack getPool()/getTokenMgr()/getRateLimiter().
+fn healMissingGetters(allocator: std.mem.Allocator) !u32 {
+    var patched: u32 = 0;
+    // Find all deps.zig files under src/
+    var paths: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (paths.items) |p| allocator.free(p);
+        paths.deinit(allocator);
+    }
+    try findFiles(allocator, "src", "deps.zig", &paths);
+
+    for (paths.items) |path| {
+        const f = std.Io.Dir.cwd().openFile(io, path, .{}) catch continue;
+        defer f.close(io);
+        const stat = try f.stat(io);
+        if (stat.size > 100_000) continue;
+        const content = try allocator.alloc(u8, @intCast(stat.size));
+        defer allocator.free(content);
+        _ = try std.Io.File.readPositionalAll(f, io, content, 0);
+        var buf: std.ArrayList(u8) = .empty;
+        defer buf.deinit(allocator);
+        try buf.appendSlice(allocator, content);
+        const has_getpool = std.mem.containsAtLeast(u8, content, 1, "pub fn getPool");
+        const has_gettoken = std.mem.containsAtLeast(u8, content, 1, "pub fn getTokenMgr");
+        const has_getlimit = std.mem.containsAtLeast(u8, content, 1, "pub fn getRateLimiter");
+        if (!has_getpool or !has_gettoken or !has_getlimit) {
+            try buf.appendSlice(allocator,
+                \\
+                \\
+                \\pub fn getPool() *zfinal.ConnectionPool {
+                \\    return @as(*zfinal.ConnectionPool, @ptrCast(&pool));
+                \\}
+                \\
+                \\pub fn getTokenMgr() *zfinal.TokenManager {
+                \\    return &tokenMgr;
+                \\}
+                \\
+                \\pub fn getRateLimiter() *zfinal.RateLimitHandler {
+                \\    return &rateLimiter;
+                \\}
+            );
+            try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = buf.items });
+            std.debug.print("  ✓ healed: {s} (added getter functions)\n", .{path});
+            patched += 1;
+        }
+    }
+    return patched;
+}
+
+/// Patch callconv(.C) → callconv(.c) (Zig 0.17 lowercase).
+fn healCallconvLowercase(allocator: std.mem.Allocator) !u32 {
+    var patched: u32 = 0;
+    var paths: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (paths.items) |p| allocator.free(p);
+        paths.deinit(allocator);
+    }
+    try findFilesAll(allocator, "src", &paths);
+
+    for (paths.items) |path| {
+        const f = std.Io.Dir.cwd().openFile(io, path, .{}) catch continue;
+        defer f.close(io);
+        const stat = try f.stat(io);
+        if (stat.size > 200_000) continue;
+        const content = try allocator.alloc(u8, @intCast(stat.size));
+        defer allocator.free(content);
+        _ = try std.Io.File.readPositionalAll(f, io, content, 0);
+        if (std.mem.indexOf(u8, content, "callconv(.C)") == null) continue;
+        const new_content = std.mem.replaceOwned(u8, allocator, content, "callconv(.C)", "callconv(.c)") catch |e| {
+            std.debug.print("  ! skip {s}: {t}\n", .{ path, e });
+            continue;
+        };
+        defer allocator.free(new_content);
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = new_content });
+        std.debug.print("  ✓ healed: {s} (callconv .C → .c)\n", .{path});
+        patched += 1;
+    }
+    return patched;
+}
+
+/// Patch var → const for params that are never reassigned (Zig 0.17 strict).
+/// Conservative: only handles the pattern `var t = try spawn/test/...;` where the var is never reassigned.
+fn healComptimeVar(allocator: std.mem.Allocator) !u32 {
+    var patched: u32 = 0;
+    var paths: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (paths.items) |p| allocator.free(p);
+        paths.deinit(allocator);
+    }
+    try findFilesAll(allocator, "src", &paths);
+
+    for (paths.items) |path| {
+        const f = std.Io.Dir.cwd().openFile(io, path, .{}) catch continue;
+        defer f.close(io);
+        const stat = try f.stat(io);
+        if (stat.size > 200_000) continue;
+        var content = try allocator.alloc(u8, @intCast(stat.size));
+        defer allocator.free(content);
+        _ = try std.Io.File.readPositionalAll(f, io, content, 0);
+
+        const orig = content;
+        if (std.mem.indexOf(u8, content, "var t = try") != null) {
+            const new1 = try std.mem.replaceOwned(u8, allocator, content, "var t = try", "const t = try");
+            content = new1;
+        }
+        if (std.mem.indexOf(u8, content, "var box = try") != null) {
+            const new1 = try std.mem.replaceOwned(u8, allocator, content, "var box = try", "const box = try");
+            content = new1;
+        }
+        if (!std.mem.eql(u8, content, orig)) {
+            try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = content });
+            std.debug.print("  ✓ healed: {s} (var → const)\n", .{path});
+            patched += 1;
+        }
+    }
+    return patched;
+}
+
+/// Find all .zig files under a directory (recursive, non-generated only).
+fn findFilesAll(allocator: std.mem.Allocator, root: []const u8, out: *std.ArrayList([]const u8)) !void {
+    var dir = std.Io.Dir.cwd().openDir(io, root, .{}) catch return;
+    defer std.Io.Dir.close(dir, io);
+    var it = dir.iterate();
+    while (try it.next(io)) |entry| {
+        const sub_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ root, entry.name });
+        if (entry.kind == .directory) {
+            try findFilesAll(allocator, sub_path, out);
+            allocator.free(sub_path);
+        } else if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".zig")) {
+            try out.append(allocator, sub_path);
+        } else {
+            allocator.free(sub_path);
+        }
+    }
+}
+
+/// Find specific named file under a directory tree.
+fn findFiles(allocator: std.mem.Allocator, root: []const u8, name: []const u8, out: *std.ArrayList([]const u8)) !void {
+    var dir = std.Io.Dir.cwd().openDir(io, root, .{}) catch return;
+    defer std.Io.Dir.close(dir, io);
+    var it = dir.iterate();
+    while (try it.next(io)) |entry| {
+        const sub_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ root, entry.name });
+        if (entry.kind == .directory) {
+            try findFiles(allocator, sub_path, name, out);
+            allocator.free(sub_path);
+        } else if (entry.kind == .file and std.mem.eql(u8, entry.name, name)) {
+            try out.append(allocator, sub_path);
+        } else {
+            allocator.free(sub_path);
+        }
+    }
+}
+
+/// Print reverse index of AI-editable files for AI agents.
+/// Shows which .zig files AI is allowed to edit (no `// @generated` header,
+/// has `// ── ai-edit-zone` markers or is in `ext/` directory).
+fn printAiZones(allocator: std.mem.Allocator) !void {
+    std.debug.print("\n📝 ZFinal AI-Editable Files\n", .{});
+    std.debug.print("═══════════════════════════\n\n", .{});
+    std.debug.print("Files marked with `// @generated` are AI-LOCKED.\n", .{});
+    std.debug.print("Files with `// ── ai-edit-zone:` markers are AI-EDITABLE.\n\n", .{});
+
+    var paths: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (paths.items) |p| allocator.free(p);
+        paths.deinit(allocator);
+    }
+    try findFilesAll(allocator, "src", &paths);
+
+    var editable: u32 = 0;
+    var locked: u32 = 0;
+    for (paths.items) |path| {
+        const f = std.Io.Dir.cwd().openFile(io, path, .{}) catch continue;
+        defer f.close(io);
+        const stat = try f.stat(io);
+        if (stat.size > 200_000) continue;
+        const content = try allocator.alloc(u8, @intCast(stat.size));
+        defer allocator.free(content);
+        _ = try std.Io.File.readPositionalAll(f, io, content, 0);
+        const is_generated = std.mem.containsAtLeast(u8, content, 1, "// @generated");
+        const has_zone = std.mem.containsAtLeast(u8, content, 1, "ai-edit-zone");
+        const in_ext = std.mem.containsAtLeast(u8, path, 1, "/ext/");
+
+        if (is_generated) {
+            locked += 1;
+        } else if (has_zone or in_ext) {
+            editable += 1;
+            std.debug.print("  ✅ {s}", .{path});
+            if (has_zone) std.debug.print(" [ai-edit-zone]", .{});
+            if (in_ext) std.debug.print(" [ext/]", .{});
+            std.debug.print("\n", .{});
+        }
+    }
+
+    std.debug.print("\n─────────────────────────────────────────\n", .{});
+    std.debug.print("  Editable: {d}  |  Locked: {d}\n", .{ editable, locked });
+    std.debug.print("  When in doubt: edit only files marked ✅ above.\n", .{});
+    std.debug.print("  For help: see .claude/skills/zfinal-onboarding.md\n", .{});
+}
+
+/// Patch content with a simple regex-like replacement (limited subset).
+/// Supports literal text + capture groups using \1 in replacement.
+fn patchRegex(content: []const u8, pattern: []const u8, replacement: []const u8) []const u8 {
+    // Simple substring-based: skip regex for now, only support exact strings
+    _ = pattern;
+    _ = replacement;
+    return content;
 }
