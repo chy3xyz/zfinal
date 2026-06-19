@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **SIGTERM now unblocks `accept()`**: a shutdown watchdog fiber closes the listener socket as soon as `shutdown.isShuttingDown()` becomes true, causing the blocking `accept()` to return immediately with `SocketNotListening`. Previously the server would wait for a new connection (or never exit) after receiving SIGTERM/SIGINT.
 - **`shutdown.zig` compile error on Zig 0.17**: `handleSignal` signature and `sigemptyset()` call now use `std.posix.SIG` / `std.posix.sigemptyset()` instead of the removed `c_int` / `empty_sigset` API.
 
+## [0.11.1] - 2026-06-13
+
+### Added
+- **Codegen regression tests**: 5 new tests using `std.zig.Tokenizer` to verify generated model/service/handler/routes are syntactically valid Zig. Includes a meta-test that runs all 4 generators across 5 schemas (simple, nullable, defaults, unicode, many columns). Total codegen tests: 17 (all pass).
+- **`zf check --heal` expanded**: 6 patterns now (was 4) — added `allocator.dupeZ` → `allocSentinel` and `std.fmt.bufPrintZ` → `bufPrint` patches.
+- **`.claude/skills/zfinal-evolve.md`**: AI playbook for evolving the ZFinal framework — SemVer decision tree, release checklist, AGENTS.md update triggers, deprecation workflow, cross-cutting refactor checklist, skill maintenance, anti-patterns, templates.
+
 ## [0.11.0] - 2026-06-13
 
 ### Added (AI-friendliness milestone)
