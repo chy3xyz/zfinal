@@ -46,16 +46,19 @@ pub const PostgresDB = struct {
     }
 
     pub fn ping(self: *PostgresDB) bool {
-        if (self.conn == null) return false;
-        return c.PQstatus(self.conn) == c.CONNECTION_OK;
+        const cxn = self.conn orelse return false;
+        // Defensive: verify pointer isn't a poisoned debug-allocator fill
+        if (@intFromPtr(cxn) >= 0xaaaaaaaaaaaaaaaa) return false;
+        return c.PQstatus(cxn) == c.CONNECTION_OK;
     }
 
     pub fn exec(self: *PostgresDB, sql: [:0]const u8) !void {
-        const res = c.PQexec(self.conn, sql.ptr);
+        const cxn = self.conn orelse return error.ConnectionFailed;
+        const res = c.PQexec(cxn, sql.ptr);
         defer c.PQclear(res);
 
         if (c.PQresultStatus(res) != c.PGRES_COMMAND_OK) {
-            const msg = c.PQerrorMessage(self.conn);
+            const msg = c.PQerrorMessage(cxn);
             std.debug.print("PostgreSQL exec failed: {s}\n", .{msg});
             return error.ExecFailed;
         }
@@ -65,11 +68,12 @@ pub const PostgresDB = struct {
     }
 
     pub fn execParams(self: *PostgresDB, sql: [:0]const u8, params: []const SqlParam) !void {
+        const cxn = self.conn orelse return error.ConnectionFailed;
         const bind = try buildParams(self.allocator, params);
         defer freeParams(self.allocator, bind);
 
         const res = c.PQexecParams(
-            self.conn,
+            cxn,
             sql.ptr,
             @intCast(params.len),
             null,
@@ -81,7 +85,7 @@ pub const PostgresDB = struct {
         defer c.PQclear(res);
 
         if (c.PQresultStatus(res) != c.PGRES_COMMAND_OK) {
-            const msg = c.PQerrorMessage(self.conn);
+            const msg = c.PQerrorMessage(cxn);
             std.debug.print("PostgreSQL execParams failed: {s}\n", .{msg});
             return error.ExecFailed;
         }
@@ -95,11 +99,12 @@ pub const PostgresDB = struct {
     }
 
     pub fn queryParams(self: *PostgresDB, sql: [:0]const u8, params: []const SqlParam) !ResultSet {
+        const cxn = self.conn orelse return error.ConnectionFailed;
         const bind = try buildParams(self.allocator, params);
         defer freeParams(self.allocator, bind);
 
         const res = c.PQexecParams(
-            self.conn,
+            cxn,
             sql.ptr,
             @intCast(params.len),
             null,
@@ -111,7 +116,7 @@ pub const PostgresDB = struct {
         defer c.PQclear(res);
 
         if (c.PQresultStatus(res) != c.PGRES_TUPLES_OK) {
-            const msg = c.PQerrorMessage(self.conn);
+            const msg = c.PQerrorMessage(cxn);
             std.debug.print("PostgreSQL query failed: {s}\n", .{msg});
             return error.QueryFailed;
         }

@@ -57,16 +57,18 @@ pub const MySQLDB = struct {
     }
 
     pub fn ping(self: *MySQLDB) bool {
-        if (self.conn == null) return false;
-        return c.mysql_ping(self.conn) == 0;
+        const cxn = self.conn orelse return false;
+        if (@intFromPtr(cxn) >= 0xaaaaaaaaaaaaaaaa) return false;
+        return c.mysql_ping(cxn) == 0;
     }
 
     pub fn exec(self: *MySQLDB, sql: [:0]const u8) !void {
-        if (c.mysql_query(self.conn, sql.ptr) != 0) {
-            std.debug.print("MySQL exec failed: {s}\n", .{c.mysql_error(self.conn)});
+        const cxn = self.conn orelse return error.ConnectionFailed;
+        if (c.mysql_query(cxn, sql.ptr) != 0) {
+            std.debug.print("MySQL exec failed: {s}\n", .{c.mysql_error(cxn)});
             return error.ExecFailed;
         }
-        self.last_affected = c.mysql_affected_rows(self.conn);
+        self.last_affected = c.mysql_affected_rows(cxn);
     }
 
     pub fn execParams(self: *MySQLDB, sql: [:0]const u8, params: []const SqlParam) !void {
