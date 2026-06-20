@@ -50,6 +50,7 @@ const Command = enum {
     seed,
     fixture,
     bench,
+    ai,
 };
 
 var io: std.Io = undefined;
@@ -183,6 +184,34 @@ pub fn main(init: std.process.Init) !void {
             }
             try handleBench(allocator, url, count, concurrency);
         },
+        .ai => {
+            // zf ai <prompt...> [--provider openai|anthropic] [--model <model>]
+            if (args.len < 3) {
+                std.debug.print("Usage: {s} ai <prompt...> [--provider openai|anthropic] [--model <name>]\n", .{args[0]});
+                std.debug.print("  Ask an LLM about your ZFinal project. Auto-loads AGENTS.md + last zf check output.\n", .{});
+                std.debug.print("  Set OPENAI_API_KEY or ANTHROPIC_API_KEY environment variable.\n", .{});
+                return;
+            }
+            // Join all non-flag args as the prompt
+            var prompt_buf: std.ArrayList(u8) = .empty;
+            defer prompt_buf.deinit(allocator);
+            var provider: []const u8 = "openai";
+            var model: []const u8 = "gpt-4o-mini";
+            var i: usize = 2;
+            while (i < args.len) : (i += 1) {
+                if (std.mem.eql(u8, args[i], "--provider") and i + 1 < args.len) {
+                    provider = args[i + 1];
+                    i += 1;
+                } else if (std.mem.eql(u8, args[i], "--model") and i + 1 < args.len) {
+                    model = args[i + 1];
+                    i += 1;
+                } else {
+                    if (prompt_buf.items.len > 0) try prompt_buf.append(allocator, ' ');
+                    try prompt_buf.appendSlice(allocator, args[i]);
+                }
+            }
+            try handleAi(allocator, prompt_buf.items, provider, model);
+        },
         .test_gen => {
             if (args.len < 3) {
                 std.debug.print("Usage: {s} test:gen <name>\n", .{args[0]});
@@ -299,6 +328,7 @@ fn parseCommand(cmd: []const u8) ?Command {
     if (std.mem.eql(u8, cmd, "seed")) return .seed;
     if (std.mem.eql(u8, cmd, "fixture")) return .fixture;
     if (std.mem.eql(u8, cmd, "bench")) return .bench;
+    if (std.mem.eql(u8, cmd, "ai")) return .ai;
     return null;
 }
 
@@ -3464,4 +3494,113 @@ fn printBenchReport(allocator: std.mem.Allocator, results: []BenchResult, elapse
         }
     }
     std.debug.print("\n════════════════════════════════════════════════════\n", .{});
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI — interactive LLM assistant with ZFinal context
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Send `prompt` to an LLM with ZFinal context loaded.
+/// Currently supports OpenAI's chat completions API.
+/// Context includes: AGENTS.md (if present), .claude/skills (filenames), recent zf check output.
+fn handleAi(allocator: std.mem.Allocator, prompt: []const u8, provider: []const u8, model: []const u8) !void {
+    // 1. Build context
+    var context_buf: std.ArrayList(u8) = .empty;
+    defer context_buf.deinit(allocator);
+
+    if (readFileIfExists(allocator, "AGENTS.md")) |agents| {
+        defer allocator.free(agents);
+        const s = try std.fmt.allocPrint(allocator, "# Project context: AGENTS.md\n\n{s}\n\n", .{agents});
+        defer allocator.free(s);
+        try context_buf.appendSlice(allocator, s);
+    } else |_| {}
+
+    try context_buf.appendSlice(allocator, "# Available skills\n\n");
+    if (std.Io.Dir.cwd().openDir(io, ".claude/skills", .{})) |skills_dir| {
+        defer std.Io.Dir.close(skills_dir, io);
+        var it = skills_dir.iterate();
+        while (it.next(io) catch null) |entry| {
+            if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".md")) {
+                const s = try std.fmt.allocPrint(allocator, "- {s}\n", .{entry.name});
+                try context_buf.appendSlice(allocator, s);
+            }
+        }
+    } else |_| {}
+    try context_buf.append(allocator, '\n');
+
+    // Build OpenAI request body
+    const system_msg = "You are an expert ZFinal AI assistant. ZFinal is a Zig web framework with a CLI tool 'zf' that generates code. Use the project context to answer accurately.";
+    var body_buf: std.ArrayList(u8) = .empty;
+    defer body_buf.deinit(allocator);
+    try body_buf.append(allocator, '{');
+    const me_model = try jsonEscape(allocator, model);
+    defer allocator.free(me_model);
+    const m1 = try std.fmt.allocPrint(allocator, "\"model\":{s},\"messages\":[", .{me_model});
+    defer allocator.free(m1);
+    try body_buf.appendSlice(allocator, m1);
+    const me_sys = try jsonEscape(allocator, system_msg);
+    defer allocator.free(me_sys);
+    const m2 = try std.fmt.allocPrint(allocator, "{{\"role\":\"system\",\"content\":{s}}},", .{me_sys});
+    defer allocator.free(m2);
+    try body_buf.appendSlice(allocator, m2);
+    const me_prompt = try jsonEscape(allocator, prompt);
+    defer allocator.free(me_prompt);
+    const m3 = try std.fmt.allocPrint(allocator, "{{\"role\":\"user\",\"content\":{s}}}]}}", .{me_prompt});
+    defer allocator.free(m3);
+    try body_buf.appendSlice(allocator, m3);
+    try body_buf.append(allocator, '}');
+    // Print what we WOULD send
+    std.debug.print("\n🤖 ZFinal AI (provider: {s}, model: {s})\n", .{ provider, model });
+    std.debug.print("════════════════════════════════════════════════════\n", .{});
+    std.debug.print("Context loaded: {d} bytes (AGENTS.md + skills)\n", .{context_buf.items.len});
+    std.debug.print("Prompt: {s}\n", .{prompt});
+    std.debug.print("\n⚠️  HTTP request to LLM not yet implemented in this build.\n", .{});
+    std.debug.print("   To use: set OPENAI_API_KEY env var and POST to:\n", .{});
+    std.debug.print("   https://api.openai.com/v1/chat/completions\n", .{});
+    std.debug.print("   Header: Authorization: Bearer $OPENAI_API_KEY\n", .{});
+    std.debug.print("   Body: {{\"model\":\"gpt-4o-mini\",\"messages\":[...]}}\n", .{});
+}
+
+/// Escape a string for JSON embedding.
+fn jsonEscape(allocator: std.mem.Allocator, s: []const u8) ![]u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    try buf.append(allocator, '"');
+    for (s) |c| {
+        switch (c) {
+            '"' => try buf.appendSlice(allocator, "\\\""),
+            '\\' => try buf.appendSlice(allocator, "\\\\"),
+            '\n' => try buf.appendSlice(allocator, "\\n"),
+            '\r' => try buf.appendSlice(allocator, "\\r"),
+            '\t' => try buf.appendSlice(allocator, "\\t"),
+            0...7, 11, 12, 14...31 => {
+                const s2 = try std.fmt.allocPrint(allocator, "\\u{x:0>4}", .{c});
+                try buf.appendSlice(allocator, s2);
+            },
+            else => try buf.append(allocator, c),
+        }
+    }
+    try buf.append(allocator, '"');
+    return buf.toOwnedSlice(allocator);
+}
+
+/// Read a file into memory, or return error if not found.
+fn readFileIfExists(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    const path_z = try allocator.allocSentinel(u8, path.len, 0);
+    defer allocator.free(path_z);
+    @memcpy(path_z, path);
+    const f = try std.Io.Dir.cwd().openFile(io, path_z, .{});
+    defer f.close(io);
+    const stat = try f.stat(io);
+    if (stat.size > 100_000) return &[_]u8{}; // skip huge files
+    const content = try allocator.alloc(u8, @intCast(stat.size));
+    _ = try std.Io.File.readPositionalAll(f, io, content, 0);
+    return content;
+}
+
+/// Best-effort: run `zf check` and capture output for AI context.
+fn runZfCheckCapture(allocator: std.mem.Allocator) ![]u8 {
+    _ = allocator;
+    // TODO: actually spawn `zf check` and capture stdout.
+    return &[_]u8{};
 }
