@@ -18,6 +18,9 @@ const framework_skill_names = [_][]const u8{
 };
 const sqlite_c = @import("c_sqlite3");
 
+// External libc getenv for env var access (Zig 0.17 std doesn't expose it).
+extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
+
 // Workaround: Zig 0.17 SQLITE_TRANSIENT alignment check fails on aarch64.
 // Force a properly-aligned sentinel: pointer with low 4 bytes = 0xFFFFFF.
 // SQLite treats any non-zero non-static destructor as "copy the buffer".
@@ -3503,21 +3506,35 @@ fn printBenchReport(allocator: std.mem.Allocator, results: []BenchResult, elapse
 /// Send `prompt` to an LLM with ZFinal context loaded.
 /// Currently supports OpenAI's chat completions API.
 /// Context includes: AGENTS.md (if present), .claude/skills (filenames), recent zf check output.
+/// Send prompt to OpenAI-compatible LLM with ZFinal context loaded.
+/// Loads AGENTS.md + .claude/skills/, builds request, POSTs via std.http.Client,
+/// parses response, prints the assistant message.
 fn handleAi(allocator: std.mem.Allocator, prompt: []const u8, provider: []const u8, model: []const u8) !void {
-    // 1. Build context
+    // 1. Read API key from environment
+    const api_key_ptr = getenv("OPENAI_API_KEY");
+    const api_key: []const u8 = if (api_key_ptr) |p| std.mem.sliceTo(p, 0) else {
+        std.debug.print("✗ OPENAI_API_KEY not set.\n", .{});
+        std.debug.print("  export OPENAI_API_KEY=sk-...\n", .{});
+        return;
+    };
+    if (api_key.len == 0) {
+        std.debug.print("✗ OPENAI_API_KEY is empty.\n", .{});
+        return;
+    }
+
+    // 2. Build context (AGENTS.md + skills listing)
     var context_buf: std.ArrayList(u8) = .empty;
     defer context_buf.deinit(allocator);
 
     if (readFileIfExists(allocator, "AGENTS.md")) |agents| {
         defer allocator.free(agents);
-        const s = try std.fmt.allocPrint(allocator, "# Project context: AGENTS.md\n\n{s}\n\n", .{agents});
-        defer allocator.free(s);
-        try context_buf.appendSlice(allocator, s);
+        try context_buf.appendSlice(allocator, "\n# Project: AGENTS.md\n\n");
+        try context_buf.appendSlice(allocator, agents);
     } else |_| {}
 
-    try context_buf.appendSlice(allocator, "# Available skills\n\n");
     if (std.Io.Dir.cwd().openDir(io, ".claude/skills", .{})) |skills_dir| {
         defer std.Io.Dir.close(skills_dir, io);
+        try context_buf.appendSlice(allocator, "\n# Available skills\n");
         var it = skills_dir.iterate();
         while (it.next(io) catch null) |entry| {
             if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".md")) {
@@ -3526,39 +3543,127 @@ fn handleAi(allocator: std.mem.Allocator, prompt: []const u8, provider: []const 
             }
         }
     } else |_| {}
-    try context_buf.append(allocator, '\n');
 
-    // Build OpenAI request body
-    const system_msg = "You are an expert ZFinal AI assistant. ZFinal is a Zig web framework with a CLI tool 'zf' that generates code. Use the project context to answer accurately.";
+    // 3. Build full user message: context + question
+    var user_msg: std.ArrayList(u8) = .empty;
+    defer user_msg.deinit(allocator);
+    try user_msg.appendSlice(allocator, prompt);
+    if (context_buf.items.len > 0) {
+        try user_msg.appendSlice(allocator, "\n\n---\n# Project context:\n");
+        try user_msg.appendSlice(allocator, context_buf.items);
+    }
+
+    // 4. Build JSON request body
+    const system_msg = "You are an expert ZFinal AI assistant. ZFinal is a Zig web framework with a CLI tool 'zf' that generates code. Use the project context to answer accurately. Be concise.";
+
     var body_buf: std.ArrayList(u8) = .empty;
     defer body_buf.deinit(allocator);
-    try body_buf.append(allocator, '{');
-    const me_model = try jsonEscape(allocator, model);
-    defer allocator.free(me_model);
-    const m1 = try std.fmt.allocPrint(allocator, "\"model\":{s},\"messages\":[", .{me_model});
-    defer allocator.free(m1);
-    try body_buf.appendSlice(allocator, m1);
-    const me_sys = try jsonEscape(allocator, system_msg);
-    defer allocator.free(me_sys);
-    const m2 = try std.fmt.allocPrint(allocator, "{{\"role\":\"system\",\"content\":{s}}},", .{me_sys});
-    defer allocator.free(m2);
-    try body_buf.appendSlice(allocator, m2);
-    const me_prompt = try jsonEscape(allocator, prompt);
-    defer allocator.free(me_prompt);
-    const m3 = try std.fmt.allocPrint(allocator, "{{\"role\":\"user\",\"content\":{s}}}]}}", .{me_prompt});
-    defer allocator.free(m3);
-    try body_buf.appendSlice(allocator, m3);
-    try body_buf.append(allocator, '}');
-    // Print what we WOULD send
-    std.debug.print("\n🤖 ZFinal AI (provider: {s}, model: {s})\n", .{ provider, model });
+    try body_buf.appendSlice(allocator, "{\"model\":\"");
+    try body_buf.appendSlice(allocator, model);
+    try body_buf.appendSlice(allocator, "\",\"messages\":[");
+    const sys_escaped = try jsonEscape(allocator, system_msg);
+    defer allocator.free(sys_escaped);
+    try body_buf.appendSlice(allocator, "{\"role\":\"system\",\"content\":");
+    try body_buf.appendSlice(allocator, sys_escaped);
+    try body_buf.appendSlice(allocator, "},");
+    const user_escaped = try jsonEscape(allocator, user_msg.items);
+    defer allocator.free(user_escaped);
+    try body_buf.appendSlice(allocator, "{\"role\":\"user\",\"content\":");
+    try body_buf.appendSlice(allocator, user_escaped);
+    try body_buf.appendSlice(allocator, "}]}");
+
+    // 5. Build Authorization header
+    const auth_header = try std.fmt.allocPrint(allocator, "Authorization: Bearer {s}", .{api_key});
+    defer allocator.free(auth_header);
+
+    std.debug.print("\n🤖 ZFinal AI ({s}/{s}) — {d} bytes context\n", .{ provider, model, context_buf.items.len });
     std.debug.print("════════════════════════════════════════════════════\n", .{});
-    std.debug.print("Context loaded: {d} bytes (AGENTS.md + skills)\n", .{context_buf.items.len});
-    std.debug.print("Prompt: {s}\n", .{prompt});
-    std.debug.print("\n⚠️  HTTP request to LLM not yet implemented in this build.\n", .{});
-    std.debug.print("   To use: set OPENAI_API_KEY env var and POST to:\n", .{});
-    std.debug.print("   https://api.openai.com/v1/chat/completions\n", .{});
-    std.debug.print("   Header: Authorization: Bearer $OPENAI_API_KEY\n", .{});
-    std.debug.print("   Body: {{\"model\":\"gpt-4o-mini\",\"messages\":[...]}}\n", .{});
+
+    // 6. HTTP POST via std.http.Client
+    var client: std.http.Client = .{
+        .allocator = allocator,
+        .io = io,
+    };
+    defer client.deinit();
+
+    const url = "https://api.openai.com/v1/chat/completions";
+
+    // Allocate a buffer for response body
+    var response_buf = try allocator.alloc(u8, 1024 * 1024);
+    defer allocator.free(response_buf);
+    const response_writer = std.Io.Writer.fixed(response_buf);
+
+    const result = client.fetch(.{
+        .location = .{ .url = url },
+        .method = .POST,
+        .extra_headers = &[_]std.http.Header{
+            .{ .name = "content-type", .value = "application/json" },
+            .{ .name = "authorization", .value = auth_header },
+        },
+        .payload = body_buf.items,
+        .response_writer = @constCast(&response_writer),
+    }) catch |err| {
+        std.debug.print("✗ HTTP request failed: {t}\n", .{err});
+        std.debug.print("  (offline? check OPENAI_API_KEY)\n", .{});
+        return;
+    };
+
+    std.debug.print("HTTP {d} ", .{@intFromEnum(result.status)});
+    if (@intFromEnum(result.status) >= 200 and @intFromEnum(result.status) < 300) {
+        std.debug.print("✓\n\n", .{});
+    } else {
+        std.debug.print("✗ (error)\n", .{});
+    }
+
+    // 7. Extract assistant message from response JSON.
+    if (response_writer.end == 0) {
+        std.debug.print("(no response body)\n", .{});
+        return;
+    }
+    const body_str = response_buf[0..response_writer.end];
+    if (extractAssistantContent(allocator, body_str)) |content| {
+        defer allocator.free(content);
+        std.debug.print("{s}\n", .{content});
+    } else |_| {
+        std.debug.print("(could not parse assistant content from response)\n", .{});
+        std.debug.print("--- Raw response ---\n{s}\n", .{body_str});
+    }
+}
+
+/// Extract "content": "..." value from OpenAI chat completion response.
+/// Naive parser — finds first "content":" or "content": " and reads to next unescaped quote.
+fn extractAssistantContent(allocator: std.mem.Allocator, json: []const u8) ![]u8 {
+    const needle = "\"content\":";
+    const idx = std.mem.indexOf(u8, json, needle) orelse return &[_]u8{};
+    var pos: usize = idx + needle.len;
+    while (pos < json.len and (json[pos] == ' ' or json[pos] == '\t' or json[pos] == '\n')) : (pos += 1) {}
+    if (pos >= json.len or json[pos] != '"') return &[_]u8{};
+    pos += 1;
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+    while (pos < json.len) {
+        const c = json[pos];
+        if (c == '\\' and pos + 1 < json.len) {
+            const next = json[pos + 1];
+            switch (next) {
+                'n' => try out.append(allocator, '\n'),
+                't' => try out.append(allocator, '\t'),
+                'r' => try out.append(allocator, '\r'),
+                '"' => try out.append(allocator, '"'),
+                '\\' => try out.append(allocator, '\\'),
+                '/' => try out.append(allocator, '/'),
+                else => try out.append(allocator, next),
+            }
+            pos += 2;
+        } else if (c == '"') {
+            break;
+        } else {
+            try out.append(allocator, c);
+            pos += 1;
+        }
+    }
+    return out.toOwnedSlice(allocator);
 }
 
 /// Escape a string for JSON embedding.
