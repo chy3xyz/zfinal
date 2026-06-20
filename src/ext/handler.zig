@@ -1,6 +1,7 @@
 const std = @import("std");
 const io_instance = @import("../io_instance.zig");
 const zfinal = @import("../main.zig");
+const mutex_init = @import("../db/mutex_init.zig");
 
 /// CORS Handler - 跨域资源共享
 pub const CorsHandler = struct {
@@ -147,8 +148,8 @@ pub const RateLimitHandler = struct {
         else
             "unknown";
 
-        _ = std.c.pthread_mutex_lock(&self.mutex);
-        defer _ = std.c.pthread_mutex_unlock(&self.mutex);
+        mutex_init.lockMut(&self.mutex);
+        defer mutex_init.unlockMut(&self.mutex);
 
         var ts: std.c.timespec = undefined;
         _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);

@@ -50,3 +50,31 @@ pub fn initCond(cond: *std.c.pthread_cond_t) !void {
 pub fn destroyCond(cond: *std.c.pthread_cond_t) void {
     _ = pthread.pthread_cond_destroy(cond);
 }
+
+/// Lock a pthread_mutex. Panics on failure because EINVAL/EDEADLK
+/// indicate a serious runtime bug (corrupted mutex, self-deadlock).
+pub fn lockMut(mutex: *std.c.pthread_mutex_t) void {
+    const rc = std.c.pthread_mutex_lock(mutex);
+    if (rc != .SUCCESS) {
+        std.debug.print("pthread_mutex_lock failed: {t}\n", .{rc});
+        @panic("pthread_mutex_lock: mutex corrupted or deadlock detected");
+    }
+}
+
+/// Unlock a pthread_mutex. Panics on failure.
+pub fn unlockMut(mutex: *std.c.pthread_mutex_t) void {
+    const rc = std.c.pthread_mutex_unlock(mutex);
+    if (rc != .SUCCESS) {
+        std.debug.print("pthread_mutex_unlock failed: {t}\n", .{rc});
+        @panic("pthread_mutex_unlock: mutex corrupted or not held by caller");
+    }
+}
+
+/// Signal a pthread_cond. Logs on failure but doesn't panic (benign
+/// race condition — too many signals or destroyed condvar).
+pub fn signalCond(cond: *std.c.pthread_cond_t) void {
+    const rc = std.c.pthread_cond_signal(cond);
+    if (rc != .SUCCESS) {
+        std.debug.print("pthread_cond_signal: {t}\n", .{rc});
+    }
+}

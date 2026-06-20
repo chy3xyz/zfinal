@@ -45,12 +45,18 @@ pub const Thread = struct {
 
     /// Wait for the thread to finish.
     pub fn join(self: *Thread) void {
-        _ = std.c.pthread_join(self.handle, null);
+        const rc = std.c.pthread_join(self.handle, null);
+        if (rc != .SUCCESS) {
+            std.debug.print("pthread_join failed: {t}\n", .{rc});
+        }
     }
 
     /// Detach the thread (fire-and-forget).
     pub fn detach(self: *Thread) void {
-        _ = std.c.pthread_detach(self.handle);
+        const rc = std.c.pthread_detach(self.handle);
+        if (rc != .SUCCESS) {
+            std.debug.print("pthread_detach failed: {t}\n", .{rc});
+        }
     }
 };
 

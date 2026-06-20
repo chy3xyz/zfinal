@@ -54,8 +54,8 @@ pub const ConnectionPool = struct {
     }
 
     pub fn deinit(self: *ConnectionPool) void {
-        _ = std.c.pthread_mutex_lock(&self.mutex);
-        defer _ = std.c.pthread_mutex_unlock(&self.mutex);
+        mutex_init.lockMut(&self.mutex);
+        defer mutex_init.unlockMut(&self.mutex);
 
         for (self.connections.items) |conn| {
             conn.deinit();
@@ -69,8 +69,8 @@ pub const ConnectionPool = struct {
     }
 
     pub fn acquire(self: *ConnectionPool) !*DB {
-        _ = std.c.pthread_mutex_lock(&self.mutex);
-        defer _ = std.c.pthread_mutex_unlock(&self.mutex);
+        mutex_init.lockMut(&self.mutex);
+        defer mutex_init.unlockMut(&self.mutex);
 
         var now_ts: std.c.timespec = undefined;
         _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &now_ts);
@@ -118,16 +118,16 @@ pub const ConnectionPool = struct {
     }
 
     pub fn release(self: *ConnectionPool, conn: *DB) !void {
-        _ = std.c.pthread_mutex_lock(&self.mutex);
-        defer _ = std.c.pthread_mutex_unlock(&self.mutex);
+        mutex_init.lockMut(&self.mutex);
+        defer mutex_init.unlockMut(&self.mutex);
 
         try self.available.append(self.allocator, conn);
-        _ = std.c.pthread_cond_signal(&self.cond);
+        mutex_init.signalCond(&self.cond);
     }
 
     pub fn keepAlive(self: *ConnectionPool) void {
-        _ = std.c.pthread_mutex_lock(&self.mutex);
-        defer _ = std.c.pthread_mutex_unlock(&self.mutex);
+        mutex_init.lockMut(&self.mutex);
+        defer mutex_init.unlockMut(&self.mutex);
 
         var i: usize = 0;
         while (i < self.available.items.len) {
