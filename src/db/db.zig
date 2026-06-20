@@ -160,6 +160,24 @@ pub fn init(allocator: std.mem.Allocator, config: DBConfig) !*DB {
         }
     }
 
+    /// Begin a transaction (BEGIN / START TRANSACTION).
+    pub fn begin(self: *DB) !void {
+        try self.guard();
+        try self.exec("BEGIN");
+    }
+
+    /// Commit the current transaction (COMMIT).
+    pub fn commit(self: *DB) !void {
+        try self.guard();
+        try self.exec("COMMIT");
+    }
+
+    /// Roll back the current transaction (ROLLBACK).
+    pub fn rollback(self: *DB) !void {
+        try self.guard();
+        try self.exec("ROLLBACK");
+    }
+
     pub fn lastInsertId(self: *DB) !i64 {
         return switch (self.driver) {
             .postgres => |*d| d.lastInsertId(),
