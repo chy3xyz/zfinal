@@ -69,6 +69,8 @@ pub const DB = struct {
     /// Set to false when the connection is closed/destroyed.
     /// Checked in ping() to prevent use-after-destroy in pooled connections.
     valid: bool = true,
+    /// Acquire/release guard: true while conn is checked out from pool.
+    checked_out: bool = false,
 
     pub const RawBinlogEvent = MySQLDB.RawBinlogEvent;
 
@@ -111,7 +113,26 @@ pub fn init(allocator: std.mem.Allocator, config: DBConfig) !*DB {
         };
     }
 
+    /// Mark the connection as checked out from the pool.
+    /// Caller: pool.acquire().
+    pub fn checkOut(self: *DB) void {
+        self.checked_out = true;
+    }
+
+    /// Mark the connection as returned to the pool.
+    /// Caller: pool.release().
+    pub fn checkIn(self: *DB) void {
+        self.checked_out = false;
+    }
+
+    /// Enforce that the connection is checked out before use.
+    /// Panics in debug mode (safety check); returns error in release.
+    fn guard(self: *DB) !void {
+        if (!self.checked_out) return error.CheckedOut;
+    }
+
     pub fn exec(self: *DB, sql: [:0]const u8) !void {
+        try self.guard();
         switch (self.driver) {
             .postgres => |*d| try d.exec(sql),
             .mysql => |*d| try d.exec(sql),
@@ -120,6 +141,7 @@ pub fn init(allocator: std.mem.Allocator, config: DBConfig) !*DB {
     }
 
     pub fn execParams(self: *DB, sql: [:0]const u8, params: []const SqlParam) !void {
+        try self.guard();
         switch (self.driver) {
             .postgres => |*d| try d.execParams(sql, params),
             .mysql => |*d| try d.execParams(sql, params),
@@ -165,6 +187,7 @@ pub fn init(allocator: std.mem.Allocator, config: DBConfig) !*DB {
     }
 
     pub fn query(self: *DB, sql: [:0]const u8) !ResultSet {
+        try self.guard();
         return switch (self.driver) {
             .postgres => |*d| d.query(sql),
             .mysql => |*d| d.query(sql),
@@ -173,6 +196,7 @@ pub fn init(allocator: std.mem.Allocator, config: DBConfig) !*DB {
     }
 
     pub fn queryParams(self: *DB, sql: [:0]const u8, params: []const SqlParam) !ResultSet {
+        try self.guard();
         return switch (self.driver) {
             .postgres => |*d| d.queryParams(sql, params),
             .mysql => |*d| d.queryParams(sql, params),

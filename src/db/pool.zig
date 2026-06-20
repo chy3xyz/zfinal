@@ -79,7 +79,10 @@ pub const ConnectionPool = struct {
         while (true) {
             while (self.available.items.len > 0) {
                 const conn = self.available.pop().?;
-                if (conn.ping()) return conn;
+                if (conn.ping()) {
+                    conn.checkOut();
+                    return conn;
+                }
                 conn.deinit();
                 self.allocator.destroy(conn);
                 for (self.connections.items, 0..) |item, i| {
@@ -97,6 +100,7 @@ pub const ConnectionPool = struct {
                 const conn = try DB.init(self.allocator, self.config);
                 try self.connections.append(self.allocator, conn);
                 self.current_connections += 1;
+                conn.checkOut();
                 return conn;
             }
 
@@ -118,6 +122,7 @@ pub const ConnectionPool = struct {
     }
 
     pub fn release(self: *ConnectionPool, conn: *DB) !void {
+        conn.checkIn(); // mark as available BEFORE putting back in pool
         mutex_init.lockMut(&self.mutex);
         defer mutex_init.unlockMut(&self.mutex);
 
