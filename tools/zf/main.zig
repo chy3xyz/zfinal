@@ -47,6 +47,7 @@ const Command = enum {
     upgrade,
     life,
     admin,
+    seed,
 };
 
 var io: std.Io = undefined;
@@ -119,6 +120,14 @@ pub fn main(init: std.process.Init) !void {
                 return;
             }
             try handleMigrate(allocator, args[2], if (args.len > 3) args[3] else "");
+        },
+        .seed => {
+            if (args.len < 3) {
+                std.debug.print("Usage: {s} seed <action> [name]\n", .{args[0]});
+                std.debug.print("Actions: new <name>, run, list\n", .{});
+                return;
+            }
+            try handleSeed(allocator, args[2], if (args.len > 3) args[3] else "");
         },
         .test_gen => {
             if (args.len < 3) {
@@ -233,6 +242,7 @@ fn parseCommand(cmd: []const u8) ?Command {
     if (std.mem.eql(u8, cmd, "check")) return .check;
     if (std.mem.eql(u8, cmd, "upgrade")) return .upgrade;
     if (std.mem.eql(u8, cmd, "life")) return .life;
+    if (std.mem.eql(u8, cmd, "seed")) return .seed;
     return null;
 }
 
@@ -855,6 +865,252 @@ fn migrateStatus(allocator: std.mem.Allocator) !void {
 
     try ensureMigrationsTable(db);
     try printMigrationStatus(allocator, db, "migrations");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SEED — populate database with initial/fixture data
+// Complements `zf migrate`. Migrations create schema; seeds fill it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Dispatch seed subcommands: new, run, list.
+fn handleSeed(allocator: std.mem.Allocator, action: []const u8, name: []const u8) !void {
+    if (std.mem.eql(u8, action, "new")) {
+        if (name.len == 0) {
+            std.debug.print("Error: seed name is required\n", .{});
+            return;
+        }
+        try seedNew(allocator, name);
+    } else if (std.mem.eql(u8, action, "run") or std.mem.eql(u8, action, "up")) {
+        try seedRun(allocator);
+    } else if (std.mem.eql(u8, action, "list")) {
+        try seedList(allocator);
+    } else if (std.mem.eql(u8, action, "reset")) {
+        try seedReset(allocator);
+    } else {
+        std.debug.print("Unknown seed action: {s}\n", .{action});
+        std.debug.print("Available: new <name>, run/up, list, reset\n", .{});
+    }
+}
+
+/// Create a new seed file with timestamp prefix.
+fn seedNew(allocator: std.mem.Allocator, name: []const u8) !void {
+    const seeds_dir = "seeds";
+    std.Io.Dir.cwd().createDirPath(io, seeds_dir) catch |err| {
+        if (err != error.PathAlreadyExists) return err;
+    };
+
+    const timestamp = std.Io.Timestamp.now(io, .real).toSeconds();
+    const filename = try std.fmt.allocPrint(allocator, "{s}/{d}_{s}.sql", .{ seeds_dir, timestamp, name });
+    defer allocator.free(filename);
+
+    const content =
+        \\-- Seed: {s}
+        \\-- Created at: {d}
+        \\
+        \\-- Idempotent: use INSERT OR IGNORE so re-running is safe.
+        \\-- Edit the INSERT statements below to match your schema.
+        \\
+        \\-- Example: insert 3 rows into your table.
+        \\-- Replace 'my_table' and columns with your actual schema.
+        \\
+        \\INSERT OR IGNORE INTO users (id, name, email) VALUES
+        \\  (1, 'admin', 'admin@example.com'),
+        \\  (2, 'alice', 'alice@example.com'),
+        \\  (3, 'bob', 'bob@example.com');
+    ;
+    const file_content = try std.fmt.allocPrint(allocator, content, .{ name, timestamp });
+    defer allocator.free(file_content);
+
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = filename, .data = file_content });
+    std.debug.print("✅ Created seed: {s}\n", .{filename});
+    std.debug.print("   Run: zf seed run\n", .{});
+}
+
+/// Apply all pending seeds.
+fn seedRun(allocator: std.mem.Allocator) !void {
+    const db_path = "zf.db";
+    var db: ?*sqlite_c.sqlite3 = null;
+    const rc = sqlite_c.sqlite3_open(db_path.ptr, &db);
+    if (rc != sqlite_c.SQLITE_OK) {
+        std.debug.print("Failed to open database: {s}\n", .{db_path});
+        return;
+    }
+    defer _ = sqlite_c.sqlite3_close(db);
+
+    try ensureSeedsTable(db);
+    try applySeeds(allocator, db, "seeds");
+}
+
+/// Show applied + pending seeds.
+fn seedList(allocator: std.mem.Allocator) !void {
+    const db_path = "zf.db";
+    var db: ?*sqlite_c.sqlite3 = null;
+    const rc = sqlite_c.sqlite3_open(db_path.ptr, &db);
+    if (rc != sqlite_c.SQLITE_OK) {
+        std.debug.print("Failed to open database: {s}\n", .{db_path});
+        return;
+    }
+    defer _ = sqlite_c.sqlite3_close(db);
+
+    try ensureSeedsTable(db);
+    try printSeedStatus(allocator, db, "seeds");
+}
+
+/// Reset the seeds tracking table — allows re-running all seeds.
+fn seedReset(allocator: std.mem.Allocator) !void {
+    const db_path = "zf.db";
+    var db: ?*sqlite_c.sqlite3 = null;
+    const rc = sqlite_c.sqlite3_open(db_path.ptr, &db);
+    if (rc != sqlite_c.SQLITE_OK) {
+        std.debug.print("Failed to open database: {s}\n", .{db_path});
+        return;
+    }
+    defer _ = sqlite_c.sqlite3_close(db);
+    _ = allocator;
+    const drop_sql = "DELETE FROM _zfinal_seeds;";
+    if (sqlite_c.sqlite3_exec(db, drop_sql.ptr, null, null, null) == sqlite_c.SQLITE_OK) {
+        std.debug.print("✓ Seeds tracking reset. Run `zf seed run` to re-apply.\n", .{});
+    } else {
+        const e = sqlite_c.sqlite3_errmsg(db);
+        std.debug.print("✗ Reset failed: {s}\n", .{if (e) |s| std.mem.sliceTo(s, 0) else "(unknown)"});
+    }
+}
+
+/// Create _zfinal_seeds tracking table.
+fn ensureSeedsTable(db: ?*sqlite_c.sqlite3) !void {
+    const sql =
+        \\CREATE TABLE IF NOT EXISTS _zfinal_seeds (
+        \\  name TEXT PRIMARY KEY,
+        \\  filename TEXT NOT NULL,
+        \\  applied_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        \\  checksum INTEGER NOT NULL
+        \\);
+    ;
+    var err_msg: [*c]u8 = null;
+    if (sqlite_c.sqlite3_exec(db, sql.ptr, null, null, &err_msg) != sqlite_c.SQLITE_OK) {
+        std.debug.print("ensureSeedsTable error\n", .{});
+        return error.SeedInitFailed;
+    }
+}
+
+/// Apply pending seeds in `dir` (sorted by filename = timestamp prefix).
+fn applySeeds(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, dir: []const u8) !void {
+    var d = std.Io.Dir.cwd().openDir(io, dir, .{}) catch {
+        std.debug.print("⚠️  seeds dir not found: {s}\n", .{dir});
+        return;
+    };
+    defer std.Io.Dir.close(d, io);
+
+    var paths: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (paths.items) |p| allocator.free(p);
+        paths.deinit(allocator);
+    }
+    var it = d.iterate();
+    while (try it.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".sql")) continue;
+        const p = try allocator.alloc(u8, dir.len + 1 + entry.name.len);
+        @memcpy(p[0..dir.len], dir);
+        p[dir.len] = '/';
+        @memcpy(p[dir.len + 1 ..], entry.name);
+        try paths.append(allocator, p);
+    }
+    std.mem.sort([]const u8, paths.items, {}, lessThanPath);
+
+    var applied_count: u32 = 0;
+    for (paths.items) |path| {
+        const name = std.fs.path.basename(path);
+        const name_no_ext = if (std.mem.endsWith(u8, name, ".sql")) name[0 .. name.len - 4] else name;
+        if (try seedApplied(allocator, db, name_no_ext)) {
+            std.debug.print("  ⏭  skip {s} (already applied)\n", .{name_no_ext});
+            continue;
+        }
+        const content = try readMigrationFile(allocator, path);
+        defer allocator.free(content);
+        const sql_z = try allocator.allocSentinel(u8, content.len, 0);
+        defer allocator.free(sql_z);
+        @memcpy(sql_z, content);
+        std.debug.print("  → seeding {s}\n", .{name_no_ext});
+        var err_msg: [*c]u8 = null;
+        if (sqlite_c.sqlite3_exec(db, sql_z.ptr, null, null, &err_msg) != sqlite_c.SQLITE_OK) {
+            const e: [*c]const u8 = err_msg orelse "(no message)";
+            std.debug.print("  ✗ failed: {s} — {s}\n", .{ name_no_ext, e });
+            return error.SeedApplyFailed;
+        }
+        const checksum = std.hash.crc.Crc32.hash(content);
+        const record_sql =
+            \\INSERT INTO _zfinal_seeds (name, filename, checksum)
+            \\VALUES (?, ?, ?);
+        ;
+        var stmt: ?*sqlite_c.sqlite3_stmt = null;
+        if (sqlite_c.sqlite3_prepare_v2(db, record_sql.ptr, -1, &stmt, null) == sqlite_c.SQLITE_OK) {
+            _ = sqlite_c.sqlite3_bind_text(stmt, 1, name_no_ext.ptr, @intCast(name_no_ext.len), null);
+            _ = sqlite_c.sqlite3_bind_text(stmt, 2, name.ptr, @intCast(name.len), null);
+            _ = sqlite_c.sqlite3_bind_int64(stmt, 3, @intCast(checksum));
+            _ = sqlite_c.sqlite3_step(stmt);
+            _ = sqlite_c.sqlite3_finalize(stmt);
+        }
+        std.debug.print("  ✓ seeded {s}\n", .{name_no_ext});
+        applied_count += 1;
+    }
+    std.debug.print("\nApplied: {d} | Skipped: {d} | Total: {d}\n", .{ applied_count, paths.items.len - applied_count, paths.items.len });
+}
+
+/// Check if a seed name has already been applied.
+fn seedApplied(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, name: []const u8) !bool {
+    var buf: [256]u8 = undefined;
+    if (name.len > buf.len) return false;
+    @memcpy(buf[0..name.len], name);
+    buf[name.len] = 0;
+    _ = allocator;
+    const sql = "SELECT 1 FROM _zfinal_seeds WHERE name = ?;";
+    var stmt: ?*sqlite_c.sqlite3_stmt = null;
+    if (sqlite_c.sqlite3_prepare_v2(db, sql.ptr, -1, &stmt, null) != sqlite_c.SQLITE_OK) return false;
+    defer _ = sqlite_c.sqlite3_finalize(stmt);
+    _ = sqlite_c.sqlite3_bind_text(stmt, 1, &buf, @intCast(name.len), null);
+    return sqlite_c.sqlite3_step(stmt) == sqlite_c.SQLITE_ROW;
+}
+
+/// Show applied (✓) and pending (○) seeds.
+fn printSeedStatus(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, dir: []const u8) !void {
+    std.debug.print("\n── Seeds Status ──\n", .{});
+    var d = std.Io.Dir.cwd().openDir(io, dir, .{}) catch {
+        std.debug.print("⚠️  seeds dir not found: {s}\n", .{dir});
+        return;
+    };
+    defer std.Io.Dir.close(d, io);
+
+    var paths: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (paths.items) |p| allocator.free(p);
+        paths.deinit(allocator);
+    }
+    var it = d.iterate();
+    while (try it.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".sql")) continue;
+        const p = try allocator.alloc(u8, dir.len + 1 + entry.name.len);
+        @memcpy(p[0..dir.len], dir);
+        p[dir.len] = '/';
+        @memcpy(p[dir.len + 1 ..], entry.name);
+        try paths.append(allocator, p);
+    }
+    std.mem.sort([]const u8, paths.items, {}, lessThanPath);
+
+    var pending: u32 = 0;
+    for (paths.items) |path| {
+        const name = std.fs.path.basename(path);
+        const name_no_ext = if (std.mem.endsWith(u8, name, ".sql")) name[0 .. name.len - 4] else name;
+        if (try seedApplied(allocator, db, name_no_ext)) {
+            std.debug.print("  ✓ {s}\n", .{name_no_ext});
+        } else {
+            std.debug.print("  ○ {s}\n", .{name_no_ext});
+            pending += 1;
+        }
+    }
+    std.debug.print("\nTotal: {d} | Pending: {d}\n", .{ paths.items.len, pending });
+    if (pending > 0) std.debug.print("Run `zf seed run` to apply.\n", .{});
 }
 
 /// Create the _zfinal_migrations tracking table if missing.
