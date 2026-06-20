@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.7] - 2026-06-13
+
+### Fixed (P0)
+- **Segfault at 0xaaaaaaaaaaaaaaaa in conn.ping()**: `DB.init()` now returns `*DB` (heap-allocated) instead of `DB` (value). The Driver union (MySQLDB/PostgresDB/SQLiteDB) has platform-specific internal state that doesn't survive struct copy on aarch64-macos with Zig 0.17's debug allocator (0xaa fill pattern → freed memory read). ConnectionPool no longer copies DB structs — it stores the heap pointer directly. Added `DB.destroy()` for convenient deinit+free.
+
 ## [0.12.6] - 2026-06-13
 
 ### Added
