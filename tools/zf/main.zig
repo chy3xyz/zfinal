@@ -18,6 +18,15 @@ const framework_skill_names = [_][]const u8{
 };
 const sqlite_c = @import("c_sqlite3");
 
+// Workaround: Zig 0.17 SQLITE_TRANSIENT alignment check fails on aarch64.
+// Force a properly-aligned sentinel: pointer with low 4 bytes = 0xFFFFFF.
+// SQLite treats any non-zero non-static destructor as "copy the buffer".
+const TRANSIENT_PTR: usize = 0xFFFFFFFF;
+const SQLITE_TRANSIENT_FN: ?*const fn (?*anyopaque) callconv(.c) void = blk: {
+    const p = @as(?*const fn (?*anyopaque) callconv(.c) void, @ptrFromInt(TRANSIENT_PTR));
+    break :blk p;
+};
+
 const Command = enum {
     new,
     generate,
@@ -790,15 +799,311 @@ fn handleMigrate(allocator: std.mem.Allocator, action: []const u8, name: []const
 
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = filename, .data = file_content });
         std.debug.print("✅ Created migration: {s}\n", .{filename});
-    } else if (std.mem.eql(u8, action, "run")) {
-        std.debug.print("Running migrations...\n", .{});
-        // TODO: Implement actual migration runner
-        std.debug.print("⚠️  Migration runner not yet implemented in CLI.\n", .{});
-        std.debug.print("Please use 'zig build migrate' if available or run SQL files manually.\n", .{});
+    } else if (std.mem.eql(u8, action, "run") or std.mem.eql(u8, action, "up")) {
+        try migrateRun(allocator);
+    } else if (std.mem.eql(u8, action, "down")) {
+        try migrateDown(allocator);
+    } else if (std.mem.eql(u8, action, "status")) {
+        try migrateStatus(allocator);
     } else {
         std.debug.print("Unknown migration action: {s}\n", .{action});
-        std.debug.print("Available actions: new, run\n", .{});
+        std.debug.print("Available actions: new, run/up, down, status\n", .{});
     }
+}
+
+/// Apply all pending migrations. Default DB path: ./zf.db (override with
+/// env var ZFINAL_DB or --db flag if supported later).
+fn migrateRun(allocator: std.mem.Allocator) !void {
+    const db_path = "zf.db";
+    var db: ?*sqlite_c.sqlite3 = null;
+    const rc = sqlite_c.sqlite3_open(db_path.ptr, &db);
+    if (rc != sqlite_c.SQLITE_OK) {
+        std.debug.print("Failed to open database: {s}\n", .{db_path});
+        return;
+    }
+    defer _ = sqlite_c.sqlite3_close(db);
+
+    try ensureMigrationsTable(db);
+    try applyMigrations(allocator, db, "migrations", false);
+}
+
+/// Revert the most recent migration.
+fn migrateDown(allocator: std.mem.Allocator) !void {
+    const db_path = "zf.db";
+    var db: ?*sqlite_c.sqlite3 = null;
+    const rc = sqlite_c.sqlite3_open(db_path.ptr, &db);
+    if (rc != sqlite_c.SQLITE_OK) {
+        std.debug.print("Failed to open database: {s}\n", .{db_path});
+        return;
+    }
+    defer _ = sqlite_c.sqlite3_close(db);
+
+    try ensureMigrationsTable(db);
+    try applyMigrations(allocator, db, "migrations", true);
+}
+
+/// Print applied + pending migrations.
+fn migrateStatus(allocator: std.mem.Allocator) !void {
+    const db_path = "zf.db";
+    var db: ?*sqlite_c.sqlite3 = null;
+    const rc = sqlite_c.sqlite3_open(db_path.ptr, &db);
+    if (rc != sqlite_c.SQLITE_OK) {
+        std.debug.print("Failed to open database: {s}\n", .{db_path});
+        return;
+    }
+    defer _ = sqlite_c.sqlite3_close(db);
+
+    try ensureMigrationsTable(db);
+    try printMigrationStatus(allocator, db, "migrations");
+}
+
+/// Create the _zfinal_migrations tracking table if missing.
+fn ensureMigrationsTable(db: ?*sqlite_c.sqlite3) !void {
+    const sql =
+        \\CREATE TABLE IF NOT EXISTS _zfinal_migrations (
+        \\  version TEXT PRIMARY KEY,
+        \\  filename TEXT NOT NULL,
+        \\  applied_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        \\  checksum INTEGER NOT NULL
+        \\);
+    ;
+    var err_msg: [*c]u8 = null;
+    const rc = sqlite_c.sqlite3_exec(db, sql.ptr, null, null, &err_msg);
+    if (rc != sqlite_c.SQLITE_OK) {
+        const e: [*c]const u8 = err_msg orelse "(no message)";
+        std.debug.print("ensureMigrationsTable error: {s}\n", .{e});
+        return error.MigrationInitFailed;
+    }
+}
+
+/// Apply or revert all migrations in `dir` (sorted by timestamp prefix).
+fn applyMigrations(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, dir: []const u8, revert: bool) !void {
+    var d = std.Io.Dir.cwd().openDir(io, dir, .{}) catch {
+        std.debug.print("⚠️  migrations dir not found: {s}\n", .{dir});
+        return;
+    };
+    defer std.Io.Dir.close(d, io);
+
+    var paths: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (paths.items) |p| allocator.free(p);
+        paths.deinit(allocator);
+    }
+    var it = d.iterate();
+    while (try it.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".sql")) continue;
+        const p = try allocator.alloc(u8, dir.len + 1 + entry.name.len);
+        @memcpy(p[0..dir.len], dir);
+        p[dir.len] = '/';
+        @memcpy(p[dir.len + 1 ..], entry.name);
+        try paths.append(allocator, p);
+    }
+    std.mem.sort([]const u8, paths.items, {}, lessThanPath);
+
+    if (!revert) {
+        for (paths.items) |path| {
+            const version = std.fs.path.basename(path);
+            const version_trimmed = if (std.mem.endsWith(u8, version, ".sql"))
+                version[0 .. version.len - 4]
+            else
+                version;
+            const applied = try migrationApplied(allocator, db, version_trimmed);
+            if (applied) continue;
+            // Extract only the UP section (avoid executing DROP on first run)
+            const up_sql = try extractSection(allocator, version, .up);
+            defer allocator.free(up_sql);
+            if (up_sql.len == 0) {
+                std.debug.print("  ! no UP section in {s}\n", .{version_trimmed});
+                continue;
+            }
+            const sql_z = try allocator.allocSentinel(u8, up_sql.len, 0);
+            defer allocator.free(sql_z);
+            @memcpy(sql_z, up_sql);
+            std.debug.print("  → applying {s}\n", .{version_trimmed});
+            var err_msg: [*c]u8 = null;
+            const exec_rc = sqlite_c.sqlite3_exec(db, sql_z.ptr, null, null, &err_msg);
+            if (exec_rc != sqlite_c.SQLITE_OK) {
+                const e: [*c]const u8 = err_msg orelse "(no message)";
+                std.debug.print("  ✗ failed: {s} — {s}\n", .{ version_trimmed, e });
+                return error.MigrationApplyFailed;
+            }
+            const checksum = std.hash.crc.Crc32.hash(up_sql);
+            const record_sql =
+                \\INSERT INTO _zfinal_migrations (version, filename, checksum)
+                \\VALUES (?, ?, ?);
+            ;
+            var stmt: ?*sqlite_c.sqlite3_stmt = null;
+            if (sqlite_c.sqlite3_prepare_v2(db, record_sql.ptr, -1, &stmt, null) == sqlite_c.SQLITE_OK) {
+                _ = sqlite_c.sqlite3_bind_text(stmt, 1, version_trimmed.ptr, @intCast(version_trimmed.len), null);
+                _ = sqlite_c.sqlite3_bind_text(stmt, 2, version.ptr, @intCast(version.len), null);
+                _ = sqlite_c.sqlite3_bind_int64(stmt, 3, @intCast(checksum));
+                _ = sqlite_c.sqlite3_step(stmt);
+                _ = sqlite_c.sqlite3_finalize(stmt);
+            }
+            std.debug.print("  ✓ applied  {s}\n", .{version_trimmed});
+        }
+    } else {
+        // Revert: find latest applied, execute its Down section.
+        const latest = (try findLatestApplied(allocator, db)) orelse {
+            std.debug.print("No migrations applied yet.\n", .{});
+            return;
+        };
+        defer allocator.free(latest._owned);
+        const down_sql = try extractSection(allocator, latest.filename, .down);
+        defer allocator.free(down_sql);
+        if (down_sql.len == 0) {
+            std.debug.print("  ! no DOWN section in {s} — manual revert required\n", .{latest.filename});
+            return;
+        }
+        const down_z = try allocator.allocSentinel(u8, down_sql.len, 0);
+        defer allocator.free(down_z);
+        @memcpy(down_z, down_sql);
+        std.debug.print("  ← reverting {s}\n", .{latest.version});
+        if (sqlite_c.sqlite3_exec(db, down_z.ptr, null, null, null) != sqlite_c.SQLITE_OK) {
+            const err = sqlite_c.sqlite3_errmsg(db);
+            std.debug.print("  ✗ revert failed: {s}\n", .{if (err) |e| std.mem.sliceTo(e, 0) else "(no message)"});
+            return error.MigrationRevertFailed;
+        }
+        const del_sql = "DELETE FROM _zfinal_migrations WHERE version = ?;";
+        var stmt: ?*sqlite_c.sqlite3_stmt = null;
+        if (sqlite_c.sqlite3_prepare_v2(db, del_sql.ptr, -1, &stmt, null) == sqlite_c.SQLITE_OK) {
+            _ = sqlite_c.sqlite3_bind_text(stmt, 1, latest.version.ptr, @intCast(latest.version.len), null);
+            _ = sqlite_c.sqlite3_step(stmt);
+            _ = sqlite_c.sqlite3_finalize(stmt);
+        }
+        std.debug.print("  ✓ reverted {s}\n", .{latest.version});
+    }
+}
+
+/// Show applied (✓) and pending (○) migrations.
+fn printMigrationStatus(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, dir: []const u8) !void {
+    var d = std.Io.Dir.cwd().openDir(io, dir, .{}) catch {
+        std.debug.print("⚠️  migrations dir not found: {s}\n", .{dir});
+        return;
+    };
+    defer std.Io.Dir.close(d, io);
+
+    std.debug.print("\n── Migrations Status ──\n", .{});
+
+    var paths: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (paths.items) |p| allocator.free(p);
+        paths.deinit(allocator);
+    }
+    var it = d.iterate();
+    while (try it.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".sql")) continue;
+        const p = try allocator.alloc(u8, dir.len + 1 + entry.name.len);
+        @memcpy(p[0..dir.len], dir);
+        p[dir.len] = '/';
+        @memcpy(p[dir.len + 1 ..], entry.name);
+        try paths.append(allocator, p);
+    }
+    std.mem.sort([]const u8, paths.items, {}, lessThanPath);
+
+    var pending: u32 = 0;
+    for (paths.items) |path| {
+        const version = std.fs.path.basename(path);
+        const version_trimmed = if (std.mem.endsWith(u8, version, ".sql"))
+            version[0 .. version.len - 4]
+        else
+            version;
+        const applied = try migrationApplied(allocator, db, version_trimmed);
+        if (applied) {
+            std.debug.print("  ✓ {s}\n", .{version_trimmed});
+        } else {
+            std.debug.print("  ○ {s}\n", .{version_trimmed});
+            pending += 1;
+        }
+    }
+    std.debug.print("\nTotal: {d} | Pending: {d}\n", .{ paths.items.len, pending });
+    if (pending > 0) std.debug.print("Run `zf migrate up` to apply.\n", .{});
+}
+
+/// Check if a migration version is already applied.
+fn migrationApplied(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, version: []const u8) !bool {
+    _ = allocator;
+    // Use a sentinel-terminated copy of version for safe bind_text.
+    var buf: [256]u8 = undefined;
+    if (version.len > buf.len) return false;
+    @memcpy(buf[0..version.len], version);
+    buf[version.len] = 0;
+    const sql = "SELECT 1 FROM _zfinal_migrations WHERE version = ?;";
+    var stmt: ?*sqlite_c.sqlite3_stmt = null;
+    if (sqlite_c.sqlite3_prepare_v2(db, sql.ptr, -1, &stmt, null) != sqlite_c.SQLITE_OK) return false;
+    defer _ = sqlite_c.sqlite3_finalize(stmt);
+    _ = sqlite_c.sqlite3_bind_text(stmt, 1, &buf, @intCast(version.len), null);
+    return sqlite_c.sqlite3_step(stmt) == sqlite_c.SQLITE_ROW;
+}
+
+const AppliedMigration = struct { version: []const u8, filename: []const u8, _owned: []u8 };
+
+/// Find the most recently applied migration (latest version).
+/// Caller must free `result._owned` after use.
+fn findLatestApplied(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3) !?AppliedMigration {
+    const sql = "SELECT version, filename FROM _zfinal_migrations ORDER BY applied_at DESC LIMIT 1;";
+    var stmt: ?*sqlite_c.sqlite3_stmt = null;
+    if (sqlite_c.sqlite3_prepare_v2(db, sql.ptr, -1, &stmt, null) != sqlite_c.SQLITE_OK) return null;
+    defer _ = sqlite_c.sqlite3_finalize(stmt);
+    if (sqlite_c.sqlite3_step(stmt) != sqlite_c.SQLITE_ROW) return null;
+    const version_src = sqlite_c.sqlite3_column_text(stmt, 0) orelse return null;
+    const filename_src = sqlite_c.sqlite3_column_text(stmt, 1) orelse return null;
+    const version_slice = std.mem.sliceTo(version_src, 0);
+    const filename_slice = std.mem.sliceTo(filename_src, 0);
+    const version_len: usize = version_slice.len;
+    const filename_len: usize = filename_slice.len;
+    const owned = try allocator.alloc(u8, version_len + filename_len + 1);
+    @memcpy(owned[0..version_len], version_src[0..version_len]);
+    @memcpy(owned[version_len..version_len + filename_len], filename_src[0..filename_len]);
+    owned[version_len + filename_len] = 0;
+    return .{
+        .version = owned[0..version_len],
+        .filename = owned[version_len..][0..filename_len],
+        ._owned = owned,
+    };
+}
+
+const Section = enum { up, down };
+
+/// Extract the "-- Up" or "-- Down" section from a migration file.
+fn extractSection(allocator: std.mem.Allocator, filename: []const u8, section: Section) ![]u8 {
+    const path = try std.fmt.allocPrint(allocator, "migrations/{s}", .{filename});
+    defer allocator.free(path);
+    const content = readMigrationFile(allocator, path) catch {
+        return &[_]u8{};
+    };
+    defer allocator.free(content);
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    var in_section = false;
+    var lines = std.mem.splitScalar(u8, content, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (std.mem.startsWith(u8, trimmed, "-- Up")) {
+            in_section = section == .up;
+            continue;
+        }
+        if (std.mem.startsWith(u8, trimmed, "-- Down")) {
+            in_section = section == .down;
+            continue;
+        }
+        if (in_section and !std.mem.startsWith(u8, trimmed, "-- ")) {
+            try buf.appendSlice(allocator, line);
+            try buf.append(allocator, '\n');
+        }
+    }
+    return buf.toOwnedSlice(allocator);
+}
+
+fn readMigrationFile(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    // (delegates to existing readFileAlloc)
+    return readFileAlloc(allocator, path);
+}
+
+fn lessThanPath(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.lessThan(u8, a, b);
 }
 
 fn generateTest(allocator: std.mem.Allocator, name: []const u8) !void {
