@@ -43,9 +43,8 @@ pub const ConnectionPool = struct {
         // Zig 0.17 std.Thread.spawn TLS/errno corruption breaks MySQL on
         // aarch64-macos.
         for (0..max_connections) |_| {
-            const conn = try allocator.create(DB);
-            errdefer allocator.destroy(conn);
-            conn.* = try DB.init(allocator, config);
+            const conn = try DB.init(allocator, config);
+            errdefer conn.deinit();
             try pool.connections.append(allocator, conn);
             try pool.available.append(allocator, conn);
             pool.current_connections += 1;
@@ -95,9 +94,7 @@ pub const ConnectionPool = struct {
             if (self.current_connections < self.max_connections) {
                 // Should never reach here: all connections pre-created in init().
                 // Fallback for edge cases (e.g. all connections died and were removed).
-                const conn = try self.allocator.create(DB);
-                errdefer self.allocator.destroy(conn);
-                conn.* = try DB.init(self.allocator, self.config);
+                const conn = try DB.init(self.allocator, self.config);
                 try self.connections.append(self.allocator, conn);
                 self.current_connections += 1;
                 return conn;

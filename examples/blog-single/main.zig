@@ -293,10 +293,10 @@ pub fn main() !void {
     // 初始化数据库
     const config = zfinal.DBConfig.sqlite("blog.db");
     var db = try zfinal.DB.init(allocator, config);
-    defer db.deinit();
+    defer db.destroy();
 
     // 创建表
-    try initDatabase(&db);
+    try initDatabase(db);
 
     // 创建应用
     var app = zfinal.ZFinal.init(allocator);

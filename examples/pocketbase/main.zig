@@ -16,11 +16,11 @@ pub fn main(init: std.process.Init) !void {
 
     // Initialize Global DB
     var db = try zfinal.DB.init(allocator, db_config);
-    errdefer db.deinit();
+    errdefer db.destroy();
 
     // Initialize global state
     State.global_state = State.State{
-        .db = &db,
+        .db = db,
         .allocator = allocator,
     };
     defer State.global_state = null;

@@ -77,7 +77,7 @@ fn expectRow(result: anytype) ?*const @import("result.zig").Row {
 test "db: CRUD on SQLite" {
     const a = std.testing.allocator;
     var db = try DB.init(a, DBConfig.sqliteMemory());
-    defer db.deinit();
+    defer db.destroy();
 
     const create_sql: [:0]const u8 = "CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, count INT)";
     _ = try db.exec(create_sql);
@@ -139,7 +139,7 @@ test "db: CRUD on SQLite" {
 test "db: parameter types on SQLite" {
     const a = std.testing.allocator;
     var db = try DB.init(a, DBConfig.sqliteMemory());
-    defer db.deinit();
+    defer db.destroy();
 
     _ = try db.exec("CREATE TABLE params (a INT, b REAL, c TEXT, d BLOB)");
 
@@ -170,7 +170,7 @@ test "db: parameter types on SQLite" {
 test "db: SQL injection prevention on SQLite" {
     const a = std.testing.allocator;
     var db = try DB.init(a, DBConfig.sqliteMemory());
-    defer db.deinit();
+    defer db.destroy();
 
     _ = try db.exec("CREATE TABLE safe (data TEXT)");
 
@@ -191,7 +191,7 @@ test "db: SQL injection prevention on SQLite" {
 test "db: transactions on SQLite" {
     const a = std.testing.allocator;
     var db = try DB.init(a, DBConfig.sqliteMemory());
-    defer db.deinit();
+    defer db.destroy();
 
     _ = try db.exec("CREATE TABLE txn (val TEXT)");
     _ = try db.exec("BEGIN");
@@ -211,7 +211,7 @@ test "db: transactions on SQLite" {
 test "db: constraint violation on SQLite" {
     const a = std.testing.allocator;
     var db = try DB.init(a, DBConfig.sqliteMemory());
-    defer db.deinit();
+    defer db.destroy();
 
     _ = try db.exec("CREATE TABLE err_test (code TEXT UNIQUE NOT NULL)");
     _ = try db.execParams("INSERT INTO err_test VALUES (?)", &.{SqlParam{ .text = "unique_val" }});
@@ -228,7 +228,7 @@ test "db: constraint violation on SQLite" {
 test "db: UniqueViolation surfaces table+column for AI" {
     const a = std.testing.allocator;
     var db = try DB.init(a, DBConfig.sqliteMemory());
-    defer db.deinit();
+    defer db.destroy();
 
     _ = try db.exec("CREATE TABLE ai_err (email TEXT UNIQUE NOT NULL)");
     _ = try db.execParams("INSERT INTO ai_err VALUES (?)", &.{SqlParam{ .text = "a@x.com" }});
@@ -241,7 +241,7 @@ test "db: UniqueViolation surfaces table+column for AI" {
 test "db: unicode round-trip on SQLite" {
     const a = std.testing.allocator;
     var db = try DB.init(a, DBConfig.sqliteMemory());
-    defer db.deinit();
+    defer db.destroy();
 
     _ = try db.exec("CREATE TABLE uni (data TEXT)");
     const texts = [_][]const u8{ "你好世界", "🎉🎊🎈", "Привет мир", "O'Brien \"quoted\" \\backslash\\" };
@@ -261,7 +261,7 @@ test "db: unicode round-trip on SQLite" {
 test "db: large data on SQLite" {
     const a = std.testing.allocator;
     var db = try DB.init(a, DBConfig.sqliteMemory());
-    defer db.deinit();
+    defer db.destroy();
 
     _ = try db.exec("CREATE TABLE large (data TEXT)");
 
@@ -283,7 +283,7 @@ test "db: large data on SQLite" {
 test "db: bulk insert on SQLite" {
     const a = std.testing.allocator;
     var db = try DB.init(a, DBConfig.sqliteMemory());
-    defer db.deinit();
+    defer db.destroy();
 
     _ = try db.exec("CREATE TABLE bulk (id INTEGER PRIMARY KEY, val TEXT)");
     _ = try db.exec("BEGIN");
@@ -304,7 +304,7 @@ test "db: bulk insert on SQLite" {
 test "db: CRUD on PostgreSQL" {
     const a = std.testing.allocator;
     var db = (try tryOpenPG(a)) orelse return;
-    defer db.deinit();
+    defer db.destroy();
 
     _ = db.exec("DROP TABLE IF EXISTS cross_crud") catch {};
     _ = try db.exec("CREATE TABLE cross_crud (id SERIAL PRIMARY KEY, name TEXT NOT NULL, num INT)");
@@ -324,7 +324,7 @@ test "db: CRUD on PostgreSQL" {
 test "db: CRUD on MySQL" {
     const a = std.testing.allocator;
     var db = (try tryOpenMY(a)) orelse return;
-    defer db.deinit();
+    defer db.destroy();
 
     _ = db.exec("DROP TABLE IF EXISTS cross_crud") catch {};
     _ = try db.exec("CREATE TABLE cross_crud (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255) NOT NULL, num INT)");
@@ -390,14 +390,14 @@ test "db: pool keepAlive" {
 test "db: ping after connect" {
     const a = std.testing.allocator;
     var db = try DB.init(a, DBConfig.sqliteMemory());
-    defer db.deinit();
+    defer db.destroy();
     try std.testing.expect(db.ping());
 }
 
 test "db: affected rows" {
     const a = std.testing.allocator;
     var db = try DB.init(a, DBConfig.sqliteMemory());
-    defer db.deinit();
+    defer db.destroy();
     _ = try db.exec("CREATE TABLE aff (val TEXT)");
     _ = try db.execParams("INSERT INTO aff VALUES (?)", &.{SqlParam{ .text = "a" }});
     _ = try db.execParams("INSERT INTO aff VALUES (?)", &.{SqlParam{ .text = "b" }});
@@ -408,7 +408,7 @@ test "db: affected rows" {
 test "db: column metadata" {
     const a = std.testing.allocator;
     var db = try DB.init(a, DBConfig.sqliteMemory());
-    defer db.deinit();
+    defer db.destroy();
     _ = try db.exec("CREATE TABLE meta (id INTEGER PRIMARY KEY, name TEXT, age INT)");
     _ = try db.execParams("INSERT INTO meta (name, age) VALUES (?, ?)", &.{ SqlParam{ .text = "test" }, SqlParam{ .int = 25 } });
     var r = try db.query("SELECT id, name, age FROM meta");

@@ -69,13 +69,19 @@ pub const DB = struct {
 
     pub const RawBinlogEvent = MySQLDB.RawBinlogEvent;
 
-    pub fn init(allocator: std.mem.Allocator, config: DBConfig) !DB {
+    /// Allocate and initialize a DB on the heap. Returns *DB to avoid struct copy
+/// of driver internals (the Driver union may contain platform-specific handles
+/// that don't survive by-value copy with Zig 0.17's debug allocator fill).
+pub fn init(allocator: std.mem.Allocator, config: DBConfig) !*DB {
+        const db = try allocator.create(DB);
+        errdefer allocator.destroy(db);
         const driver = switch (config.db_type) {
             .sqlite => Driver{ .sqlite = try SQLiteDB.open(allocator, config) },
             .postgres => Driver{ .postgres = try PostgresDB.connect(allocator, config) },
             .mysql => Driver{ .mysql = try MySQLDB.connect(allocator, config) },
         };
-        return .{ .driver = driver, .allocator = allocator };
+        db.* = .{ .driver = driver, .allocator = allocator };
+        return db;
     }
 
     pub fn deinit(self: *DB) void {
@@ -84,6 +90,12 @@ pub const DB = struct {
             .mysql => |*d| d.close(),
             .sqlite => |*d| d.close(),
         }
+    }
+
+    /// Close the connection and free the heap allocation.
+    pub fn destroy(self: *DB) void {
+        self.deinit();
+        self.allocator.destroy(self);
     }
 
     pub fn ping(self: *DB) bool {

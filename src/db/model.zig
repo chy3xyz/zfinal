@@ -292,7 +292,7 @@ test "model with custom pk" {
 test "model: insert and findById" {
     const a = std.testing.allocator;
     var db = try DB.init(a, DBConfig.sqliteMemory());
-    defer db.deinit();
+    defer db.destroy();
     _ = try db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INT)");
     const User = struct { id: i64, name: []const u8, age: i64 };
     const UserModel = Model(User, "users");
@@ -308,7 +308,7 @@ test "model: insert and findById" {
 test "model: findAll" {
     const a = std.testing.allocator;
     var db = try DB.init(a, DBConfig.sqliteMemory());
-    defer db.deinit();
+    defer db.destroy();
     _ = try db.exec("CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT)");
     const Item = struct { id: i64, title: []const u8 };
     const ItemModel = Model(Item, "items");
@@ -329,7 +329,7 @@ test "model: findAll" {
 test "model: update and delete" {
     const a = std.testing.allocator;
     var db = try DB.init(a, DBConfig.sqliteMemory());
-    defer db.deinit();
+    defer db.destroy();
     _ = try db.exec("CREATE TABLE stuff (id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT)");
     const Stuff = struct { id: i64, label: []const u8 };
     const StuffModel = Model(Stuff, "stuff");
