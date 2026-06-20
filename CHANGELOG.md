@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-06-13
+
+### Added
+- **`zf new` bundles AI skills**: when running from the zfinal repo root, `zf new <project>` copies all 7 framework AI skills (onboarding, ai-playbook, framework, health, evolution, debug, evolve) plus zfinal-app.md summary into the new project's `.claude/skills/`. AI agents working on the new project have full context from day one.
+- **`zf new` generates GitHub Actions workflow**: new projects get `.github/workflows/test.yml` that runs `zig build` + `zig build test` + `zf check` + `zf check --heal` on every push/PR. Catches regressions before merge.
+- **Source-path discovery**: `zf new` walks up to 5 parent directories to find the framework skills source. Works when zf is run from the zfinal repo root.
+
+## [0.11.1] - 2026-06-13
+
 ## [0.10.9] - 2026-06-16
 
 ### Added
