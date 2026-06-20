@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.1] - 2026-06-13
+
+### Added
+- **`zf migrate` full implementation**: `zf migrate up` applies pending migrations in order, `zf migrate down` reverts most recent, `zf migrate status` shows applied (✓) and pending (○). Migration files use Flyway-style `-- Up` / `-- Down` sections; only the Up section runs on apply (Down stays untouched for rollback). Tracking via `_zfinal_migrations` table (version, filename, applied_at, checksum).
+
 ## [0.12.0] - 2026-06-13
 
 ### Added
