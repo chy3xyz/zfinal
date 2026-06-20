@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.5] - 2026-06-13
+
+### Added
+- **`zf ai`**: AI assistant with ZFinal context loader. `zf ai <prompt...> [--provider openai|anthropic] [--model <name>]` automatically loads AGENTS.md + .claude/skills/ listing into the prompt context. Builds proper OpenAI-compatible JSON request body. (HTTP fetch to LLM endpoint deferred — user runs the printed curl/API call manually, or wires in `std.http.Client` POST with bearer auth.)
+
 ## [0.12.4] - 2026-06-13
 
 ### Added
