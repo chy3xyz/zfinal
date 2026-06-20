@@ -3,6 +3,19 @@ const templates = @import("templates.zig");
 const codegen = @import("codegen");
 const csql = @import("csql.zig");
 const zf_cfg = @import("zf_cfg");
+
+// Framework skill names. Content loaded at runtime from .claude/skills/
+// relative to the zf binary's parent directory (typically zig-out/bin/zf →
+// ../../.claude/skills/).
+const framework_skill_names = [_][]const u8{
+    "zfinal-onboarding.md",
+    "zfinal-ai-playbook.md",
+    "zfinal-framework.md",
+    "zfinal-health.md",
+    "zfinal-evolution.md",
+    "zfinal-debug.md",
+    "zfinal-evolve.md",
+};
 const sqlite_c = @import("c_sqlite3");
 
 const Command = enum {
@@ -1918,11 +1931,14 @@ fn singularize(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
 
 /// Generate AI tool configs: Claude Code, OpenCode, Cursor.
 fn writeAiConfigs(allocator: std.mem.Allocator, cwd: std.Io.Dir) !void {
-    // .claude/skills/
+    // .claude/skills/ — copy framework skills from sibling .claude/skills/
     try cwd.createDirPath(io, ".claude/skills");
     var claude_dir = try cwd.openDir(io, ".claude/skills", .{});
     defer claude_dir.close(io);
+    // Summary skill (always present)
     try writeFile(claude_dir, "zfinal-app.md", templates.claude_skill);
+    // Copy full framework skill set from sibling repo
+    copyFrameworkSkills(allocator, claude_dir);
 
     // .opencode/
     try cwd.createDirPath(io, ".opencode");
@@ -1936,7 +1952,53 @@ fn writeAiConfigs(allocator: std.mem.Allocator, cwd: std.Io.Dir) !void {
     defer cursor_dir.close(io);
     try writeFile(cursor_dir, "zfinal.mdc", templates.cursor_rules);
 
-    _ = allocator;
+    // .github/workflows/ — CI/CD template
+    try cwd.createDirPath(io, ".github/workflows");
+    var gh_dir = try cwd.openDir(io, ".github/workflows", .{});
+    defer gh_dir.close(io);
+    try writeFile(gh_dir, "test.yml", templates.github_workflow_test);
+}
+
+/// Copy framework skill files from sibling repo to project's .claude/skills/.
+/// Source: tries CWD and walks up to 5 parent directories to find
+/// the zfinal framework root.
+fn copyFrameworkSkills(allocator: std.mem.Allocator, dest_dir: std.Io.Dir) void {
+    var candidates: [6][]const u8 = undefined;
+    var n: usize = 0;
+    candidates[n] = ".claude/skills"; n += 1;
+    candidates[n] = "../.claude/skills"; n += 1;
+    candidates[n] = "../../.claude/skills"; n += 1;
+    candidates[n] = "../../../.claude/skills"; n += 1;
+    candidates[n] = "../../../../.claude/skills"; n += 1;
+    candidates[n] = "../../../../../.claude/skills"; n += 1;
+
+    var src_dir_opt: ?std.Io.Dir = null;
+    var found_path: ?[]const u8 = null;
+    for (candidates[0..n]) |path| {
+        if (std.Io.Dir.cwd().openDir(io, path, .{})) |d| {
+            src_dir_opt = d;
+            found_path = path;
+            break;
+        } else |_| {}
+    }
+    const src_dir = src_dir_opt orelse {
+        std.debug.print("  ! framework skills not found — run zf from zfinal repo root\n", .{});
+        return;
+    };
+    defer std.Io.Dir.close(src_dir, io);
+    std.debug.print("  (skills from {s})\n", .{found_path.?});
+
+    for (framework_skill_names) |name| {
+        const file = src_dir.openFile(io, name, .{}) catch continue;
+        defer file.close(io);
+        const stat = file.stat(io) catch continue;
+        if (stat.size > 100_000) continue;
+        const content = allocator.alloc(u8, @intCast(stat.size)) catch continue;
+        defer allocator.free(content);
+        _ = std.Io.File.readPositionalAll(file, io, content, 0) catch continue;
+        writeFile(dest_dir, name, content) catch continue;
+        std.debug.print("  ✓ skill: {s}\n", .{name});
+    }
 }
 
 pub fn hasFlag(args: [][]const u8, flag: []const u8) bool {
