@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.3] - 2026-06-13
+
+### Added
+- **`zf fixture`**: generate fake test data. `zf fixture <table> [--count N] [--run] [--format sql|json]`. Infers schema from `sqlite_master`, generates realistic data via name-based generators (name→User N, email→userN@…, status→active/pending/…, created_at→DATETIME('now'), price→10.50) + type-based fallbacks (INT/REAL/TEXT/BLOB). Auto-skips AUTOINCREMENT PK. Verified inserting 5 rows into a `users` table.
+
 ## [0.12.2] - 2026-06-13
 
 ### Added
