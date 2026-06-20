@@ -1,3 +1,8 @@
+## [0.13.2] - 2026-06-13
+
+### Fixed (P0)
+- **12-borrow crash**: DB.magic sentinel (0xDBDBDBDB) + pre-alloc ArrayList capacity. Eliminates reallocation that frees old buffer and may corrupt adjacent DB structs via Zig 0.17 debug allocator 0xaa fill.
+
 ## [0.13.1] - 2026-06-13
 
 ### Fixed (P0)
