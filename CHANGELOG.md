@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.8] - 2026-06-13
+
+### Fixed (P0)
+- **PostgresDB.ping() use-after-finish segfault**: explicit `self.conn orelse` unwrap + 0xaa poison guard in PostgresDB and MySQLDB ping/exec/query. Zig 0.17's auto-unwrap of `?*c.PGconn` to `*PGconn` silently passes poisoned pointers to C functions. Now explicitly checks for null and 0xaaaaaaaaaaaaaaaa fill pattern before every C call.
+
 ## [0.12.7] - 2026-06-13
 
 ### Fixed (P0)
