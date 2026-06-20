@@ -48,6 +48,7 @@ const Command = enum {
     life,
     admin,
     seed,
+    fixture,
 };
 
 var io: std.Io = undefined;
@@ -128,6 +129,34 @@ pub fn main(init: std.process.Init) !void {
                 return;
             }
             try handleSeed(allocator, args[2], if (args.len > 3) args[3] else "");
+        },
+        .fixture => {
+            // zf fixture <table> [--count N] [--run] [--format sql|json]
+            if (args.len < 3) {
+                std.debug.print("Usage: {s} fixture <table> [--count N] [--run] [--format sql|json]\n", .{args[0]});
+                std.debug.print("  Generate fake data for a table based on its schema.\n", .{});
+                std.debug.print("  --count N    Number of rows (default: 100)\n", .{});
+                std.debug.print("  --run        Insert into database (default: print SQL)\n", .{});
+                std.debug.print("  --format X   Output format: sql (default), json\n", .{});
+                return;
+            }
+            const table = args[2];
+            var count: usize = 100;
+            var run_db = false;
+            var format: []const u8 = "sql";
+            var i: usize = 3;
+            while (i < args.len) : (i += 1) {
+                if (std.mem.eql(u8, args[i], "--count") and i + 1 < args.len) {
+                    count = std.fmt.parseInt(usize, args[i + 1], 10) catch 100;
+                    i += 1;
+                } else if (std.mem.eql(u8, args[i], "--run")) {
+                    run_db = true;
+                } else if (std.mem.eql(u8, args[i], "--format") and i + 1 < args.len) {
+                    format = args[i + 1];
+                    i += 1;
+                }
+            }
+            try handleFixture(allocator, table, count, run_db, format);
         },
         .test_gen => {
             if (args.len < 3) {
@@ -243,6 +272,7 @@ fn parseCommand(cmd: []const u8) ?Command {
     if (std.mem.eql(u8, cmd, "upgrade")) return .upgrade;
     if (std.mem.eql(u8, cmd, "life")) return .life;
     if (std.mem.eql(u8, cmd, "seed")) return .seed;
+    if (std.mem.eql(u8, cmd, "fixture")) return .fixture;
     return null;
 }
 
@@ -2963,4 +2993,260 @@ fn patchRegex(content: []const u8, pattern: []const u8, replacement: []const u8)
     _ = pattern;
     _ = replacement;
     return content;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FIXTURE — generate fake data for testing
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TableColumn = struct {
+    name: []const u8,
+    type: []const u8,
+    pk: bool,
+};
+
+/// Generate fake data for a table.
+fn handleFixture(allocator: std.mem.Allocator, table: []const u8, count: usize, run_db: bool, format: []const u8) !void {
+    var db: ?*sqlite_c.sqlite3 = null;
+    const db_path = "zf.db";
+    const rc = sqlite_c.sqlite3_open(db_path.ptr, &db);
+    if (rc != sqlite_c.SQLITE_OK) {
+        std.debug.print("Failed to open database: {s}\n", .{db_path});
+        return;
+    }
+    defer _ = sqlite_c.sqlite3_close(db);
+
+    const cols = try readTableSchema(allocator, db, table) orelse {
+        std.debug.print("Table '{s}' not found in {s}\n", .{ table, db_path });
+        std.debug.print("Available tables:\n", .{});
+        try listTables(allocator, db);
+        return;
+    };
+    defer {
+        for (cols) |c| {
+            allocator.free(c.name);
+            allocator.free(c.type);
+        }
+        allocator.free(cols);
+    }
+
+    if (std.mem.eql(u8, format, "json")) {
+        try generateFixtureJson(allocator, table, cols, count);
+    } else {
+        try generateFixtureSql(allocator, db, table, cols, count, run_db);
+    }
+}
+
+/// Read column schema for a table from sqlite_master + pragma table_info.
+/// Returns null if table doesn't exist or has no columns.
+fn readTableSchema(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, table: []const u8) !?[]TableColumn {
+    const cols = try readTableColumns(allocator, db, table);
+    if (cols.len == 0) {
+        for (cols) |c| {
+            allocator.free(c.name);
+            allocator.free(c.type);
+        }
+        allocator.free(cols);
+        return null;
+    }
+    return cols;
+}
+
+fn readTableColumns(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, table: []const u8) ![]TableColumn {
+    // PRAGMA table_info('table') returns cid|name|type|notnull|dflt|pk
+    const pragma = "PRAGMA table_info(";
+    var sql_buf: std.ArrayList(u8) = .empty;
+    defer sql_buf.deinit(allocator);
+    try sql_buf.appendSlice(allocator, pragma);
+    try sql_buf.append(allocator, '\'');
+    try sql_buf.appendSlice(allocator, table);
+    try sql_buf.appendSlice(allocator, "\');");
+
+    var stmt: ?*sqlite_c.sqlite3_stmt = null;
+    if (sqlite_c.sqlite3_prepare_v2(db, sql_buf.items.ptr, -1, &stmt, null) != sqlite_c.SQLITE_OK) {
+        return &[_]TableColumn{};
+    }
+    defer _ = sqlite_c.sqlite3_finalize(stmt);
+
+    var cols: std.ArrayList(TableColumn) = .empty;
+    defer cols.deinit(allocator);
+    while (sqlite_c.sqlite3_step(stmt) == sqlite_c.SQLITE_ROW) {
+        const name_src = sqlite_c.sqlite3_column_text(stmt, 1) orelse continue;
+        const type_src = sqlite_c.sqlite3_column_text(stmt, 2);
+        const type_str = if (type_src) |t| std.mem.sliceTo(t, 0) else "";
+        const pk = sqlite_c.sqlite3_column_int(stmt, 5);
+        const name = try allocator.dupe(u8, std.mem.sliceTo(name_src, 0));
+        const ctype = try allocator.dupe(u8, type_str);
+        try cols.append(allocator, .{ .name = name, .type = ctype, .pk = pk != 0 });
+    }
+    if (cols.items.len == 0) return &[_]TableColumn{};
+    return cols.toOwnedSlice(allocator);
+}
+
+fn listTables(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3) !void {
+    const sql = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_zfinal_%' ORDER BY name;";
+    var stmt: ?*sqlite_c.sqlite3_stmt = null;
+    if (sqlite_c.sqlite3_prepare_v2(db, sql.ptr, -1, &stmt, null) != sqlite_c.SQLITE_OK) return;
+    defer _ = sqlite_c.sqlite3_finalize(stmt);
+    while (sqlite_c.sqlite3_step(stmt) == sqlite_c.SQLITE_ROW) {
+        const name = sqlite_c.sqlite3_column_text(stmt, 0) orelse continue;
+        std.debug.print("  • {s}\n", .{std.mem.sliceTo(name, 0)});
+    }
+    _ = allocator;
+}
+
+/// Generate SQL INSERT statements and either print or execute them.
+fn generateFixtureSql(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, table: []const u8, cols: []TableColumn, count: usize, run_db: bool) !void {
+    var prng: u64 = 42;
+    var output: std.ArrayList(u8) = .empty;
+    defer output.deinit(allocator);
+
+    try output.appendSlice(allocator, "-- Generated by zf fixture\n");
+
+    for (0..count) |row_idx| {
+        var stmt_buf: std.ArrayList(u8) = .empty;
+        defer stmt_buf.deinit(allocator);
+        try stmt_buf.appendSlice(allocator, "INSERT INTO ");
+    try stmt_buf.appendSlice(allocator, table);
+    try stmt_buf.appendSlice(allocator, " (");
+        var first = true;
+        for (cols) |c| {
+            if (c.pk and std.mem.eql(u8, c.type, "INTEGER")) continue; // auto-increment PK
+            if (!first) try stmt_buf.append(allocator, ',');
+            try stmt_buf.appendSlice(allocator, c.name);
+            first = false;
+        }
+        try stmt_buf.appendSlice(allocator, ") VALUES (");
+
+        first = true;
+        for (cols) |c| {
+            if (c.pk and std.mem.eql(u8, c.type, "INTEGER")) continue;
+            if (!first) try stmt_buf.append(allocator, ',');
+            const value = try generateValue(allocator, c.name, c.type, row_idx, &prng);
+            defer allocator.free(value);
+            try stmt_buf.appendSlice(allocator, value);
+            first = false;
+        }
+        try stmt_buf.append(allocator, ')');
+        try stmt_buf.append(allocator, ';');
+        try stmt_buf.append(allocator, '\n');
+
+        if (run_db) {
+            const sql_z = try allocator.allocSentinel(u8, stmt_buf.items.len, 0);
+            defer allocator.free(sql_z);
+            @memcpy(sql_z, stmt_buf.items);
+            if (sqlite_c.sqlite3_exec(db, sql_z.ptr, null, null, null) != sqlite_c.SQLITE_OK) {
+                const e = sqlite_c.sqlite3_errmsg(db);
+                std.debug.print("✗ row {d} failed: {s}\n", .{ row_idx, if (e) |s| std.mem.sliceTo(s, 0) else "?" });
+                return error.FixtureInsertFailed;
+            }
+        } else {
+            try output.appendSlice(allocator, stmt_buf.items);
+        }
+    }
+
+    if (!run_db) {
+        std.debug.print("{s}", .{output.items});
+        std.debug.print("-- {d} INSERT statements generated. Use --run to execute.\n", .{count});
+    } else {
+        std.debug.print("✓ {d} rows inserted into {s}\n", .{ count, table });
+    }
+}
+
+/// Generate JSON array with fake data.
+fn generateFixtureJson(allocator: std.mem.Allocator, table: []const u8, cols: []TableColumn, count: usize) !void {
+    var prng: u64 = 42;
+    var output: std.ArrayList(u8) = .empty;
+    defer output.deinit(allocator);
+    try output.appendSlice(allocator, "[\n");
+
+    for (0..count) |row_idx| {
+        try output.appendSlice(allocator, "  {");
+        var first = true;
+        for (cols) |c| {
+            if (!first) try output.append(allocator, ',');
+            try output.appendSlice(allocator, "\"");
+        try output.appendSlice(allocator, c.name);
+        try output.appendSlice(allocator, "\":");
+            const value = try generateValue(allocator, c.name, c.type, row_idx, &prng);
+            defer allocator.free(value);
+            try output.appendSlice(allocator, value);
+            first = false;
+        }
+        try output.appendSlice(allocator, "}");
+        if (row_idx + 1 < count) try output.append(allocator, ',');
+        try output.append(allocator, '\n');
+    }
+    try output.appendSlice(allocator, "]\n");
+    _ = table;
+    std.debug.print("{s}", .{output.items});
+}
+
+/// Generate a fake value based on column name/type. Returns SQL literal or JSON value.
+fn generateValue(allocator: std.mem.Allocator, col_name: []const u8, col_type: []const u8, row_idx: usize, prng: *u64) ![]u8 {
+    const lower_name = try allocator.alloc(u8, col_name.len);
+    defer allocator.free(lower_name);
+    for (lower_name, 0..) |*c, i| c.* = std.ascii.toLower(col_name[i]);
+
+    const is_int = std.mem.indexOf(u8, col_type, "INT") != null or std.mem.eql(u8, col_type, "INTEGER");
+    const is_real = std.mem.indexOf(u8, col_type, "REAL") != null or std.mem.indexOf(u8, col_type, "DOUBLE") != null;
+    const is_text = std.mem.indexOf(u8, col_type, "TEXT") != null or std.mem.indexOf(u8, col_type, "VARCHAR") != null;
+    const is_blob = std.mem.indexOf(u8, col_type, "BLOB") != null;
+
+    // Name-based generators
+    if (std.mem.indexOf(u8, lower_name, "name") != null) {
+        const n = row_idx + 1;
+        return std.fmt.allocPrint(allocator, "'User {d}'", .{n});
+    }
+    if (std.mem.indexOf(u8, lower_name, "email") != null) {
+        return std.fmt.allocPrint(allocator, "'user{d}@example.com'", .{row_idx + 1});
+    }
+    if (std.mem.indexOf(u8, lower_name, "phone") != null) {
+        const r = nextU64(prng);
+        return std.fmt.allocPrint(allocator, "'+1-555-{d:0>4}'", .{@as(u32, @intCast(r % 10000))});
+    }
+    if (std.mem.indexOf(u8, lower_name, "uuid") != null or std.mem.indexOf(u8, lower_name, "guid") != null) {
+        const r = nextU64(prng);
+        return std.fmt.allocPrint(allocator, "'{x:0>8}-{x:0>4}-{x:0>4}-{x:0>4}-{x:0>12}'", .{ r, r >> 16, r >> 32, r >> 48, r });
+    }
+    if (std.mem.indexOf(u8, lower_name, "title") != null) {
+        return std.fmt.allocPrint(allocator, "'Post #{d}'", .{row_idx + 1});
+    }
+    if (std.mem.indexOf(u8, lower_name, "body") != null or std.mem.indexOf(u8, lower_name, "content") != null or std.mem.indexOf(u8, lower_name, "description") != null) {
+        return std.fmt.allocPrint(allocator, "'Lorem ipsum dolor sit amet, row {d}.'", .{row_idx + 1});
+    }
+    if (std.mem.indexOf(u8, lower_name, "status") != null) {
+        const statuses = [_][]const u8{ "'active'", "'pending'", "'closed'", "'archived'" };
+        return allocator.dupe(u8, statuses[row_idx % statuses.len]);
+    }
+    if (std.mem.indexOf(u8, lower_name, "created") != null or std.mem.indexOf(u8, lower_name, "updated") != null) {
+        return allocator.dupe(u8, "DATETIME('now')");
+    }
+    if (std.mem.indexOf(u8, lower_name, "active") != null or std.mem.indexOf(u8, lower_name, "enabled") != null) {
+        return allocator.dupe(u8, if (row_idx % 2 == 0) "1" else "0");
+    }
+    if (std.mem.indexOf(u8, lower_name, "price") != null or std.mem.indexOf(u8, lower_name, "amount") != null) {
+        return std.fmt.allocPrint(allocator, "{d}.{d:0>2}", .{ row_idx + 10, @as(u32, @intCast(row_idx * 7 % 100)) });
+    }
+
+    // Type-based fallback
+    if (is_int) {
+        return std.fmt.allocPrint(allocator, "{d}", .{row_idx + 1});
+    }
+    if (is_real) {
+        return std.fmt.allocPrint(allocator, "{d}.5", .{row_idx + 1});
+    }
+    if (is_blob) {
+        return allocator.dupe(u8, "X''");
+    }
+    if (is_text) {
+        return std.fmt.allocPrint(allocator, "'text_{d}'", .{row_idx + 1});
+    }
+    return std.fmt.allocPrint(allocator, "'val_{d}'", .{row_idx + 1});
+}
+
+/// Simple LCG PRNG for deterministic fixtures.
+fn nextU64(state: *u64) u64 {
+    state.* = state.* *% 6364136223846793005 +% 1442695040888963407;
+    return state.*;
 }
