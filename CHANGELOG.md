@@ -1,3 +1,8 @@
+## [0.13.3] - 2026-06-13
+
+### Fixed
+- **DB.begin/commit/rollback missing**: pool.transaction() called non-existent methods. Now implemented: each runs the corresponding SQL statement via exec, with checked_out guard.
+
 ## [0.13.2] - 2026-06-13
 
 ### Fixed (P0)
