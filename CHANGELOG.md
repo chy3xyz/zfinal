@@ -5,7 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.12.9] - 2026-06-13
+## [0.13.0] - 2026-06-13
+
+### Fixed (P0)
+- **Pool race in high concurrency (burst 10+)**: three improvements:
+  1. `mutex_init.broadcastCond` wakes ALL waiters after `keepAlive` destroys dead connections (was signal — only one)
+  2. `DB.valid` flag — set false on `deinit()`, checked in `ping()`, prevents use-after-destroy when conn still referenced
+  3. `DB.ping()` checks `self.valid` before dispatching to driver
+
+### Changed
+- **Minor version bump** to 0.13.0 — `DB` struct gains `valid: bool` field (public API change)
 
 ### Fixed (P0)
 - **pthread_mutex_lock silently discarded**: all `_ = std.c.pthread_mutex_lock`/`unlock` replaced with `mutex_init.lockMut`/`unlockMut` wrappers that panic on EINVAL (corrupted mutex) and EDEADLK (self-deadlock). Previously, lock failures on macOS aarch64 were silently ignored, causing pool race conditions. Also added `signalCond` wrapper with warning log, and checked `pthread_join`/`pthread_detach` return values in worker.zig.
