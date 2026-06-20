@@ -23,9 +23,19 @@ pub const ConnectionPool = struct {
     pub fn init(allocator: std.mem.Allocator, config: DBConfig, max_connections: usize) !*ConnectionPool {
         var pool = try allocator.create(ConnectionPool);
         errdefer allocator.destroy(pool);
+
+        // Pre-allocate ArrayList capacity to avoid reallocation during operation.
+        // Reallocation frees the old buffer (0xaa fill), and with Zig 0.17's
+        // debug allocator, a nearby DB struct might be inadvertently corrupted
+        // if the freed buffer overlaps or is on the same page.
+        var connections = std.ArrayList(*DB).empty;
+        try connections.ensureTotalCapacity(allocator, max_connections);
+        var available = std.ArrayList(*DB).empty;
+        try available.ensureTotalCapacity(allocator, max_connections);
+
         pool.* = ConnectionPool{
-            .connections = std.ArrayList(*DB).empty,
-            .available = std.ArrayList(*DB).empty,
+            .connections = connections,
+            .available = available,
             .mutex = undefined,
             .cond = undefined,
             .config = config,
@@ -39,9 +49,6 @@ pub const ConnectionPool = struct {
         try mutex_init.initCond(&pool.cond);
 
         // Pre-create all connections on the calling thread (typically main).
-        // This avoids mysql_real_connect running in a worker thread where
-        // Zig 0.17 std.Thread.spawn TLS/errno corruption breaks MySQL on
-        // aarch64-macos.
         for (0..max_connections) |_| {
             const conn = try DB.init(allocator, config);
             errdefer conn.deinit();

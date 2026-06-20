@@ -64,6 +64,10 @@ pub const Driver = union(DBType) {
 };
 
 pub const DB = struct {
+    /// Magic sentinel for heap corruption detection. Must be 0xDBDBDBDB.
+    /// Checked in guard() before any operation. If corrupted, the struct
+    /// was double-freed or the heap was overwritten by an adjacent allocation.
+    magic: u32 = 0xDBDBDBDB,
     driver: Driver,
     allocator: std.mem.Allocator,
     /// Set to false when the connection is closed/destroyed.
@@ -105,6 +109,10 @@ pub fn init(allocator: std.mem.Allocator, config: DBConfig) !*DB {
     }
 
     pub fn ping(self: *DB) bool {
+        if (self.magic != 0xDBDBDBDB) {
+            std.debug.print("DB.magic corrupted on ping: 0x{x}\n", .{self.magic});
+            return false;
+        }
         if (!self.valid) return false;
         return switch (self.driver) {
             .postgres => |*d| d.ping(),
@@ -125,9 +133,12 @@ pub fn init(allocator: std.mem.Allocator, config: DBConfig) !*DB {
         self.checked_out = false;
     }
 
-    /// Enforce that the connection is checked out before use.
-    /// Panics in debug mode (safety check); returns error in release.
+    /// Enforce that the connection is checked out + not heap-corrupted.
     fn guard(self: *DB) !void {
+        if (self.magic != 0xDBDBDBDB) {
+            std.debug.print("DB.magic corrupted: 0x{x}\n", .{self.magic});
+            @panic("DB heap corruption detected (magic mismatch)");
+        }
         if (!self.checked_out) return error.CheckedOut;
     }
 
