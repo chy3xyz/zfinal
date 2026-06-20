@@ -66,6 +66,9 @@ pub const Driver = union(DBType) {
 pub const DB = struct {
     driver: Driver,
     allocator: std.mem.Allocator,
+    /// Set to false when the connection is closed/destroyed.
+    /// Checked in ping() to prevent use-after-destroy in pooled connections.
+    valid: bool = true,
 
     pub const RawBinlogEvent = MySQLDB.RawBinlogEvent;
 
@@ -85,6 +88,7 @@ pub fn init(allocator: std.mem.Allocator, config: DBConfig) !*DB {
     }
 
     pub fn deinit(self: *DB) void {
+        self.valid = false;
         switch (self.driver) {
             .postgres => |*d| d.close(),
             .mysql => |*d| d.close(),
@@ -99,6 +103,7 @@ pub fn init(allocator: std.mem.Allocator, config: DBConfig) !*DB {
     }
 
     pub fn ping(self: *DB) bool {
+        if (!self.valid) return false;
         return switch (self.driver) {
             .postgres => |*d| d.ping(),
             .mysql => |*d| d.ping(),

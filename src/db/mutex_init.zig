@@ -78,3 +78,12 @@ pub fn signalCond(cond: *std.c.pthread_cond_t) void {
         std.debug.print("pthread_cond_signal: {t}\n", .{rc});
     }
 }
+
+/// Broadcast a pthread_cond — wakes ALL waiters. Use when multiple
+/// connections become available at once (e.g. deinit, keepAlive).
+pub fn broadcastCond(cond: *std.c.pthread_cond_t) void {
+    const rc = std.c.pthread_cond_broadcast(cond);
+    if (rc != .SUCCESS) {
+        std.debug.print("pthread_cond_broadcast: {t}\n", .{rc});
+    }
+}

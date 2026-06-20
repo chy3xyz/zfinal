@@ -129,6 +129,7 @@ pub const ConnectionPool = struct {
         mutex_init.lockMut(&self.mutex);
         defer mutex_init.unlockMut(&self.mutex);
 
+        var had_dead = false;
         var i: usize = 0;
         while (i < self.available.items.len) {
             const conn = self.available.items[i];
@@ -136,6 +137,7 @@ pub const ConnectionPool = struct {
                 i += 1;
                 continue;
             }
+            had_dead = true;
             conn.deinit();
             self.allocator.destroy(conn);
             for (self.connections.items, 0..) |item, j| {
@@ -146,6 +148,10 @@ pub const ConnectionPool = struct {
             }
             _ = self.available.swapRemove(i);
             self.current_connections -= 1;
+        }
+        // Wake ALL waiters if connections were freed — new ones can be created
+        if (had_dead) {
+            mutex_init.broadcastCond(&self.cond);
         }
     }
 
