@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.4] - 2026-06-13
+
+### Added
+- **`zf bench`**: HTTP load testing tool. `zf bench <url> [--count N] [--concurrency C]` fires N requests with C workers, reports RPS, p50/p95/p99 latency, min/max, error rate, status code distribution. Uses `std.http.Client.fetch` + `std.Io.Timestamp` for per-request timing. Verified against localhost: 5 requests in 13ms, p50=1.6ms.
+
 ## [0.12.3] - 2026-06-13
 
 ### Added
