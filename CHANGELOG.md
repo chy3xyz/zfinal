@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.6] - 2026-06-13
+
+### Added
+- **`zf ai` HTTP implementation**: real POST to `https://api.openai.com/v1/chat/completions` via `std.http.Client.fetch`. Reads `OPENAI_API_KEY` env (via libc `getenv`), sends proper JSON body with project context, captures response into fixed buffer, parses `content` field, prints assistant message. Ready for use with any OpenAI API key.
+
 ## [0.12.5] - 2026-06-13
 
 ### Added
