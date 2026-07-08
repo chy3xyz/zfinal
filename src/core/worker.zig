@@ -38,13 +38,16 @@ pub const Thread = struct {
     /// `arg` is passed as the void* argument.
     pub fn spawn(entry: EntryFn, arg: *anyopaque) !Thread {
         var handle: std.c.pthread_t = undefined;
-        const rc = std.c.pthread_create(&handle, null, entry, arg);
+        // pthread_create takes `?*anyopaque`; EntryFn takes `*anyopaque`.
+        // ABI-identical, and `arg` is never null, so the cast is safe.
+        const c_entry: *const fn (?*anyopaque) callconv(.c) ?*anyopaque = @ptrCast(entry);
+        const rc = std.c.pthread_create(&handle, null, c_entry, arg);
         if (rc != .SUCCESS) return error.ThreadSpawnFailed;
         return Thread{ .handle = handle };
     }
 
     /// Wait for the thread to finish.
-    pub fn join(self: *Thread) void {
+    pub fn join(self: Thread) void {
         const rc = std.c.pthread_join(self.handle, null);
         if (rc != .SUCCESS) {
             std.debug.print("pthread_join failed: {t}\n", .{rc});
@@ -52,7 +55,7 @@ pub const Thread = struct {
     }
 
     /// Detach the thread (fire-and-forget).
-    pub fn detach(self: *Thread) void {
+    pub fn detach(self: Thread) void {
         const rc = std.c.pthread_detach(self.handle);
         if (rc != .SUCCESS) {
             std.debug.print("pthread_detach failed: {t}\n", .{rc});

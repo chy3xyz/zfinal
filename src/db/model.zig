@@ -3,6 +3,7 @@ const DB = @import("db.zig").DB;
 const DBConfig = @import("config.zig").DBConfig;
 const ResultSet = @import("result.zig").ResultSet;
 const SqlParam = @import("sql_param.zig").SqlParam;
+const logger = @import("../core/logger.zig");
 
 /// Active Record base for models with parameterized queries.
 /// Uses comptime field iteration — works with any table schema.
@@ -210,7 +211,11 @@ pub fn ModelWithPK(comptime T: type, comptime table_name: []const u8, comptime p
         /// Batch insert — wraps multiple saves in a single transaction for 10-50x throughput.
         pub fn insertBatch(db: *DB, instances: []Instance) !void {
             try db.exec("BEGIN");
-            errdefer db.exec("ROLLBACK") catch |e| @panic(@errorName(e));
+            // A failed rollback must not kill the process — log it and let
+            // the original error propagate to the caller.
+            errdefer db.exec("ROLLBACK") catch |e| {
+                logger.getLogger().errFmt("insertBatch rollback failed: {t}", .{e});
+            };
             for (instances) |*inst| try inst.insert(db);
             try db.exec("COMMIT");
         }
@@ -297,9 +302,9 @@ test "model: insert and findById" {
     const User = struct { id: i64, name: []const u8, age: i64 };
     const UserModel = Model(User, "users");
     var inst = UserModel.Instance{ .id = null, .data = .{ .id = 0, .name = "Alice", .age = 30 } };
-    try inst.insert(&db);
+    try inst.insert(db);
     try std.testing.expect(inst.id != null);
-    const found = try UserModel.findById(&db, inst.id.?, a);
+    const found = try UserModel.findById(db, inst.id.?, a);
     defer if (found) |f| f.deinit(a);
     try std.testing.expect(found != null);
     try std.testing.expectEqualStrings("Alice", found.?.data.name);
@@ -315,10 +320,10 @@ test "model: findAll" {
     var item1 = ItemModel.Instance{ .id = null, .data = .{ .id = 0, .title = "a" } };
     var item2 = ItemModel.Instance{ .id = null, .data = .{ .id = 0, .title = "b" } };
     var item3 = ItemModel.Instance{ .id = null, .data = .{ .id = 0, .title = "c" } };
-    try item1.insert(&db);
-    try item2.insert(&db);
-    try item3.insert(&db);
-    const all = try ItemModel.findAll(&db, a);
+    try item1.insert(db);
+    try item2.insert(db);
+    try item3.insert(db);
+    const all = try ItemModel.findAll(db, a);
     defer {
         for (all) |*it| it.deinit(a);
         a.free(all);
@@ -334,12 +339,12 @@ test "model: update and delete" {
     const Stuff = struct { id: i64, label: []const u8 };
     const StuffModel = Model(Stuff, "stuff");
     var inst = StuffModel.Instance{ .id = null, .data = .{ .id = 0, .label = "old" } };
-    try inst.insert(&db);
+    try inst.insert(db);
     inst.data.label = "new";
-    try inst.update(&db, inst.id.?);
-    const updated = try StuffModel.findById(&db, inst.id.?, a);
+    try inst.update(db, inst.id.?);
+    const updated = try StuffModel.findById(db, inst.id.?, a);
     defer if (updated) |u| u.deinit(a);
     try std.testing.expectEqualStrings("new", updated.?.data.label);
-    try StuffModel.deleteById(&db, inst.id.?);
-    try std.testing.expect((try StuffModel.findById(&db, inst.id.?, a)) == null);
+    try StuffModel.deleteById(db, inst.id.?);
+    try std.testing.expect((try StuffModel.findById(db, inst.id.?, a)) == null);
 }

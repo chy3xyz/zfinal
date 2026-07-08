@@ -2,6 +2,7 @@ const std = @import("std");
 const DB = @import("db.zig").DB;
 const DBConfig = @import("config.zig").DBConfig;
 const mutex_init = @import("mutex_init.zig");
+const logger = @import("../core/logger.zig");
 
 /// 数据库连接池 with POSIX thread synchronization.
 ///
@@ -52,6 +53,7 @@ pub const ConnectionPool = struct {
         for (0..max_connections) |_| {
             const conn = try DB.init(allocator, config);
             errdefer conn.deinit();
+            conn.checkIn(); // pooled conns start as "not checked out"
             try pool.connections.append(allocator, conn);
             try pool.available.append(allocator, conn);
             pool.current_connections += 1;
@@ -62,14 +64,16 @@ pub const ConnectionPool = struct {
 
     pub fn deinit(self: *ConnectionPool) void {
         mutex_init.lockMut(&self.mutex);
-        defer mutex_init.unlockMut(&self.mutex);
-
         for (self.connections.items) |conn| {
             conn.deinit();
             self.allocator.destroy(conn);
         }
         self.connections.deinit(self.allocator);
         self.available.deinit(self.allocator);
+        // POSIX requires the mutex to be unlocked before destruction —
+        // a `defer unlock` here would fire after destroyMutex/destroy(self)
+        // and unlock freed memory.
+        mutex_init.unlockMut(&self.mutex);
         mutex_init.destroyMutex(&self.mutex);
         mutex_init.destroyCond(&self.cond);
         self.allocator.destroy(self);
@@ -172,7 +176,12 @@ pub const ConnectionPool = struct {
         defer self.release(conn) catch {};
 
         try conn.begin();
-        errdefer conn.rollback() catch |e| @panic(@errorName(e));
+        // A failed rollback must not kill the process: the original error
+        // still propagates, and the connection is dropped by the pool's
+        // dead-connection sweep on release.
+        errdefer conn.rollback() catch |e| {
+            logger.getLogger().errFmt("pool.transaction rollback failed: {t}", .{e});
+        };
 
         try @call(.auto, func, .{conn} ++ args);
         try conn.commit();

@@ -73,15 +73,18 @@ pub const DB = struct {
     /// Set to false when the connection is closed/destroyed.
     /// Checked in ping() to prevent use-after-destroy in pooled connections.
     valid: bool = true,
-    /// Acquire/release guard: true while conn is checked out from pool.
-    checked_out: bool = false,
+    /// Acquire/release guard. Standalone connections (direct DB.init) are
+    /// owned by their creator from birth, so this defaults to true.
+    /// ConnectionPool flips it: checkIn() on release / pool insertion,
+    /// checkOut() on acquire — catching use-after-release of pooled conns.
+    checked_out: bool = true,
 
     pub const RawBinlogEvent = MySQLDB.RawBinlogEvent;
 
     /// Allocate and initialize a DB on the heap. Returns *DB to avoid struct copy
-/// of driver internals (the Driver union may contain platform-specific handles
-/// that don't survive by-value copy with Zig 0.17's debug allocator fill).
-pub fn init(allocator: std.mem.Allocator, config: DBConfig) !*DB {
+    /// of driver internals (the Driver union may contain platform-specific handles
+    /// that don't survive by-value copy with Zig 0.17's debug allocator fill).
+    pub fn init(allocator: std.mem.Allocator, config: DBConfig) !*DB {
         const db = try allocator.create(DB);
         errdefer allocator.destroy(db);
         const driver = switch (config.db_type) {
