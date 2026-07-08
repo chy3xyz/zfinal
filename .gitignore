@@ -72,3 +72,6 @@ zig-pkg/
 
 # Generated files
 generated/
+
+# Cursor IDE config (local only)
+.cursor/
