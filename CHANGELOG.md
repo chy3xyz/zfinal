@@ -1,3 +1,19 @@
+## [0.13.4] - 2026-07-08
+
+### Fixed (P0)
+- **redis.zig broken syntax**: orphaned duplicate `exists()` body after `subscribe()` made the file unparseable. Also fixed `exists()`/`publish()` RESP integer comparison — `parseResp` strips the `:` prefix, so comparing against `":1"` never matched.
+- **Test suite could not compile since v0.13.2**: model.zig tests passed `**DB` where `*DB` expected (missed when `DB.init` moved to heap return); worker.zig `pthread_create` entry-fn signature mismatch on Zig 0.17 (`*anyopaque` vs `?*anyopaque`). Baseline restored: 146 passed, 2 skipped, 0 failed.
+- **ConnectionPool.deinit unlock-after-destroy**: `defer unlockMut` fired after `destroyMutex` + `destroy(self)`, unlocking a freed mutex → panic → hung process. Mutex now explicitly unlocked before destruction.
+- **checked_out guard broke standalone connections**: direct `DB.init` conns failed every operation with `error.CheckedOut`. Default is now `true` (creator owns the conn); the pool flips it via `checkIn()` on pool insertion/release, preserving use-after-release detection for pooled conns.
+
+### Changed
+- **No more @panic on rollback/mutex paths**: transaction rollback failures (pool.zig, model.zig insertBatch) log via the structured logger and propagate the original error; mutex locks in session/thread_pool/websocket-manager use `lockUncancelable` instead of `catch @panic`.
+- **Silent `catch {}` now logged**: server 503-write and 500-render failures, websocket ping/pong/close frame write failures.
+- **Removed debug prints**: `REGISTER GET/POST` output on every route registration.
+
+### CI
+- **Zig version aligned with build.zig.zon**: 0.14.0 → 0.17.0-dev.813+2153f8143 (via mlugg/setup-zig). Added `zig build test-zf` codegen regression step; fmt check now covers benchmark/ and build.zig.
+
 ## [0.13.3] - 2026-06-13
 
 ### Fixed
