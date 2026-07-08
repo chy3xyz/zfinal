@@ -65,7 +65,7 @@ pub const WebSocketManager = struct {
 
     /// 移除连接
     pub fn removeConnection(self: *WebSocketManager, ws: *WebSocket) void {
-        self.mutex.lock(io_instance.io) catch @panic("ws: mutex lock failed");
+        self.mutex.lockUncancelable(io_instance.io);
         defer self.mutex.unlock(io_instance.io);
 
         for (self.connections.items, 0..) |conn, i| {

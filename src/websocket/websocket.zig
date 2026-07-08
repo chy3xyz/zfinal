@@ -1,5 +1,6 @@
 const std = @import("std");
 const io_instance = @import("../io_instance.zig");
+const logger = @import("../core/logger.zig");
 
 /// WebSocket 操作码
 pub const OpCode = enum(u8) {
@@ -155,14 +156,18 @@ pub const WebSocket = struct {
         try self.writeFrame(.binary, data);
     }
 
-    /// 发送 Ping (best-effort, errors silently ignored)
+    /// 发送 Ping (best-effort, failures logged at debug level)
     pub fn sendPing(self: *WebSocket, data: []const u8) void {
-        self.writeFrame(.ping, data) catch {};
+        self.writeFrame(.ping, data) catch |err| {
+            logger.getLogger().debugFmt("ws: ping write failed: {t}", .{err});
+        };
     }
 
-    /// 发送 Pong (best-effort, errors silently ignored)
+    /// 发送 Pong (best-effort, failures logged at debug level)
     pub fn sendPong(self: *WebSocket, data: []const u8) void {
-        self.writeFrame(.pong, data) catch {};
+        self.writeFrame(.pong, data) catch |err| {
+            logger.getLogger().debugFmt("ws: pong write failed: {t}", .{err});
+        };
     }
 
     /// Send a large message as fragmented frames (chunked at ~4KB boundaries).
@@ -194,7 +199,9 @@ pub const WebSocket = struct {
         std.mem.writeInt(u16, buf[0..2], code, .big);
         const len = @min(reason.len, buf.len - 2);
         @memcpy(buf[2..][0..len], reason[0..len]);
-        self.writeFrame(.close, buf[0 .. 2 + len]) catch {};
+        self.writeFrame(.close, buf[0 .. 2 + len]) catch |err| {
+            logger.getLogger().debugFmt("ws: close frame write failed: {t}", .{err});
+        };
     }
 
     /// 接收消息. Returns Frame on success. Caller must frame.deinit().

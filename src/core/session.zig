@@ -71,7 +71,7 @@ pub const SessionStore = struct {
 
     /// Get session by ID
     pub fn getSession(self: *SessionStore, session_id: []const u8) ?*Session {
-        self.mutex.lock(io_instance.io) catch @panic("session: mutex lock failed");
+        self.mutex.lockUncancelable(io_instance.io);
         defer self.mutex.unlock(io_instance.io);
 
         if (self.sessions.getPtr(session_id)) |session| {
@@ -120,7 +120,7 @@ pub const SessionStore = struct {
 
     /// Remove attribute from session (thread-safe)
     pub fn removeAttr(self: *SessionStore, session_id: []const u8, key: []const u8) void {
-        self.mutex.lock(io_instance.io) catch @panic("session: mutex lock failed");
+        self.mutex.lockUncancelable(io_instance.io);
         defer self.mutex.unlock(io_instance.io);
 
         if (self.sessions.getPtr(session_id)) |session| {
@@ -134,7 +134,7 @@ pub const SessionStore = struct {
 
     /// Destroy session
     pub fn destroySession(self: *SessionStore, session_id: []const u8) void {
-        self.mutex.lock(io_instance.io) catch @panic("session: mutex lock failed");
+        self.mutex.lockUncancelable(io_instance.io);
         defer self.mutex.unlock(io_instance.io);
 
         if (self.sessions.fetchRemove(session_id)) |entry| {

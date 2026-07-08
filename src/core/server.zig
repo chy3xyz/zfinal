@@ -112,7 +112,9 @@ fn acceptLoopImpl(io: std.Io, server: *Server, addr: std.Io.net.IpAddress, group
             const body = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 19\r\nConnection: close\r\n\r\nService Unavailable";
             var wbuf: [256]u8 = undefined;
             var writer = conn.writer(io, &wbuf);
-            _ = writer.interface.writeAll(body) catch {};
+            _ = writer.interface.writeAll(body) catch |err| {
+                getLog().debugFmt("Failed to write 503 response: {t}", .{err});
+            };
             conn.close(io);
             continue;
         }
@@ -176,7 +178,9 @@ fn dispatch(request: *http.Server.Request, server: *Server) !void {
     server.router.execute(path, method, &ctx) catch |err| {
         getLog().errFmt("Handler error: {} for {s} {s}", .{ err, @tagName(request.head.method), target });
         ctx.res_status = .internal_server_error;
-        ctx.renderText("Internal Server Error") catch {};
+        ctx.renderText("Internal Server Error") catch |render_err| {
+            getLog().warnFmt("Failed to render 500 response: {t}", .{render_err});
+        };
     };
 
     // TODO(zig-0.17): Force Connection: close to work around http.Server
