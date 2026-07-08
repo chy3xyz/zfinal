@@ -1401,7 +1401,7 @@ fn findLatestApplied(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3) !?App
     const filename_len: usize = filename_slice.len;
     const owned = try allocator.alloc(u8, version_len + filename_len + 1);
     @memcpy(owned[0..version_len], version_src[0..version_len]);
-    @memcpy(owned[version_len..version_len + filename_len], filename_src[0..filename_len]);
+    @memcpy(owned[version_len .. version_len + filename_len], filename_src[0..filename_len]);
     owned[version_len + filename_len] = 0;
     return .{
         .version = owned[0..version_len],
@@ -2615,12 +2615,18 @@ fn writeAiConfigs(allocator: std.mem.Allocator, cwd: std.Io.Dir) !void {
 fn copyFrameworkSkills(allocator: std.mem.Allocator, dest_dir: std.Io.Dir) void {
     var candidates: [6][]const u8 = undefined;
     var n: usize = 0;
-    candidates[n] = ".claude/skills"; n += 1;
-    candidates[n] = "../.claude/skills"; n += 1;
-    candidates[n] = "../../.claude/skills"; n += 1;
-    candidates[n] = "../../../.claude/skills"; n += 1;
-    candidates[n] = "../../../../.claude/skills"; n += 1;
-    candidates[n] = "../../../../../.claude/skills"; n += 1;
+    candidates[n] = ".claude/skills";
+    n += 1;
+    candidates[n] = "../.claude/skills";
+    n += 1;
+    candidates[n] = "../../.claude/skills";
+    n += 1;
+    candidates[n] = "../../../.claude/skills";
+    n += 1;
+    candidates[n] = "../../../../.claude/skills";
+    n += 1;
+    candidates[n] = "../../../../../.claude/skills";
+    n += 1;
 
     var src_dir_opt: ?std.Io.Dir = null;
     var found_path: ?[]const u8 = null;
@@ -3166,8 +3172,8 @@ fn generateFixtureSql(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, tabl
         var stmt_buf: std.ArrayList(u8) = .empty;
         defer stmt_buf.deinit(allocator);
         try stmt_buf.appendSlice(allocator, "INSERT INTO ");
-    try stmt_buf.appendSlice(allocator, table);
-    try stmt_buf.appendSlice(allocator, " (");
+        try stmt_buf.appendSlice(allocator, table);
+        try stmt_buf.appendSlice(allocator, " (");
         var first = true;
         for (cols) |c| {
             if (c.pk and std.mem.eql(u8, c.type, "INTEGER")) continue; // auto-increment PK
@@ -3225,8 +3231,8 @@ fn generateFixtureJson(allocator: std.mem.Allocator, table: []const u8, cols: []
         for (cols) |c| {
             if (!first) try output.append(allocator, ',');
             try output.appendSlice(allocator, "\"");
-        try output.appendSlice(allocator, c.name);
-        try output.appendSlice(allocator, "\":");
+            try output.appendSlice(allocator, c.name);
+            try output.appendSlice(allocator, "\":");
             const value = try generateValue(allocator, c.name, c.type, row_idx, &prng);
             defer allocator.free(value);
             try output.appendSlice(allocator, value);
@@ -3420,8 +3426,7 @@ fn runBenchWorker(w: BenchWorker) void {
         };
         _ = @atomicRmw(usize, w.completed, .Add, 1, .seq_cst);
     }
-    }
-
+}
 
 const BenchRequestResult = struct {
     status: u16,

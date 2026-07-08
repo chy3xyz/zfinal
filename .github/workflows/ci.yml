@@ -13,13 +13,14 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-        zig-version: ['0.14.0']
+        # Must match minimum_zig_version in build.zig.zon.
+        zig-version: ['0.17.0-dev.813+2153f8143']
     
     steps:
     - uses: actions/checkout@v4
     
     - name: Setup Zig
-      uses: goto-bus-stop/setup-zig@v2
+      uses: mlugg/setup-zig@v2
       with:
         version: ${{ matrix.zig-version }}
     
@@ -40,6 +41,9 @@ jobs:
     - name: Run tests
       run: zig build test
     
+    - name: Run codegen regression tests
+      run: zig build test-zf
+    
     - name: Build CLI tool
       run: zig build install
     
@@ -57,9 +61,9 @@ jobs:
     - uses: actions/checkout@v4
     
     - name: Setup Zig
-      uses: goto-bus-stop/setup-zig@v2
+      uses: mlugg/setup-zig@v2
       with:
-        version: '0.14.0'
+        version: '0.17.0-dev.813+2153f8143'
     
     - name: Check formatting
-      run: zig fmt --check src/ tools/ examples/
+      run: zig fmt --check src/ tools/ examples/ benchmark/ build.zig
