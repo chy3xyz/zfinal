@@ -147,9 +147,28 @@ pub const RedisClient = struct {
         const result = try self.command(&.{ "EXISTS", key });
         if (result) |r| {
             defer self.allocator.free(r);
+            // parseResp strips the ':' prefix from RESP integers.
             return std.mem.eql(u8, r, "1");
         }
         return false;
+    }
+
+    /// PUBLISH channel message. Returns the number of subscribers
+    /// that received the message.
+    pub fn publish(self: *Self, channel: []const u8, message: []const u8) !i64 {
+        const result = try self.command(&.{ "PUBLISH", channel, message });
+        if (result) |r| {
+            defer self.allocator.free(r);
+            // parseResp strips the ':' prefix from RESP integers.
+            return std.fmt.parseInt(i64, r, 10) catch 0;
+        }
+        return 0;
+    }
+
+    /// SUBSCRIBE channel. Enters pub/sub mode; subsequent reads
+    /// will receive messages on subscribed channels.
+    pub fn subscribe(self: *Self, channel: []const u8) !void {
+        _ = try self.command(&.{ "SUBSCRIBE", channel });
     }
 
     /// EXPIRE key seconds.
