@@ -55,6 +55,9 @@ Runnable demo in [`examples/ai-blog-5min/`](../examples/ai-blog-5min/ZF_GEN.md).
 | Run / fix tests or health checks | [`.claude/skills/zfinal-health.md`](../.claude/skills/zfinal-health.md) |
 | Build a complete app from scratch | [`.claude/skills/zfinal-app.md`](../.claude/skills/zfinal-app.md) |
 | Add a module to the framework | [`.claude/skills/zfinal-framework.md`](../.claude/skills/zfinal-framework.md) |
+| Follow architecture best practices | [architecture_best_practices.md](architecture_best_practices.md) |
+| Scale to millions of users (ops topology) | [scale_to_millions.md](scale_to_millions.md) |
+| Progressive code architecture L0→L3 | [progressive_architecture.md](progressive_architecture.md) |
 | Understand Zig 0.17, memory safety, etc. | [`.claude/skills/zfinal-evolution.md`](../.claude/skills/zfinal-evolution.md) |
 | See a 5-minute walkthrough | [ai-quickstart.md](ai-quickstart.md) |
 | Run a live demo | `zig build run-ai-blog-5min` |
@@ -63,6 +66,11 @@ Runnable demo in [`examples/ai-blog-5min/`](../examples/ai-blog-5min/ZF_GEN.md).
 
 | You want to… | Read |
 |--------------|------|
+| Architecture best practices (layers, plugins, AI boundaries) | [architecture_best_practices.md](architecture_best_practices.md) |
+| Scale-out for millions of users | [scale_to_millions.md](scale_to_millions.md) |
+| Progressive app architecture (L0→L3) | [progressive_architecture.md](progressive_architecture.md) |
+| RobustMQ / Kafka messaging | [robustmq.md](robustmq.md) |
+| NATS messaging | [nats.md](nats.md) |
 | Understand the framework's design | [core_concepts.md](core_concepts.md) |
 | Set up a project from scratch | [getting_started.md](getting_started.md) |
 | Use the database / ORM | [database.md](database.md) |

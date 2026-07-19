@@ -7,8 +7,9 @@ const params = @import("params.zig");
 ///
 /// Created per-request by Server. Call `deinit()` after use.
 ///
-/// All per-request allocations go through an ArenaAllocator — zero
-/// per-allocation cleanup needed. `deinit()` frees everything at once.
+/// All per-request allocations go through `allocator` (parent allocator —
+/// Arena was removed for Zig 0.17 threaded-IO safety). Handlers MUST free
+/// what they allocate. Call `deinit()` after the response is sent.
 pub const Context = struct {
     req: *std.http.Server.Request,
     allocator: std.mem.Allocator,
@@ -34,7 +35,9 @@ pub const Context = struct {
         value: []const u8,
         max_age: ?i32 = null,
         path: []const u8 = "/",
-        http_only: bool = false,
+        http_only: bool = true,
+        same_site: bool = true,
+        secure: bool = false,
     };
 
     /// Create per-request Context. Uses parent allocator directly (no Arena)
@@ -265,10 +268,11 @@ pub const Context = struct {
     }
 
     pub fn setCookie(self: *Context, name: []const u8, value: []const u8, max_age: ?i32) !void {
-        try self.setCookieFull(name, value, max_age, "/", false);
+        // Secure defaults: HttpOnly + SameSite=Strict. Use setCookieFull for Secure (HTTPS).
+        try self.setCookieFull(name, value, max_age, "/", true, true, false);
     }
 
-    pub fn setCookieFull(self: *Context, name: []const u8, value: []const u8, max_age: ?i32, path: []const u8, http_only: bool) !void {
+    pub fn setCookieFull(self: *Context, name: []const u8, value: []const u8, max_age: ?i32, path: []const u8, http_only: bool, same_site: bool, secure: bool) !void {
         const name_copy = try self.allocator.dupe(u8, name);
         errdefer self.allocator.free(name_copy);
         const value_copy = try self.allocator.dupe(u8, value);
@@ -280,11 +284,13 @@ pub const Context = struct {
             .max_age = max_age,
             .path = path_copy,
             .http_only = http_only,
+            .same_site = same_site,
+            .secure = secure,
         });
     }
 
     pub fn removeCookie(self: *Context, name: []const u8) !void {
-        try self.setCookieFull(name, "", @as(i32, 0), "/", false);
+        try self.setCookieFull(name, "", @as(i32, 0), "/", true, true, false);
     }
 
     /// Check if the client accepts gzip encoding.
@@ -333,10 +339,12 @@ pub const Context = struct {
         // The caller must free these after respond() via freeSetCookieDupes.
         for (self.response_cookies.items) |cookie| {
             const http_part = if (cookie.http_only) "; HttpOnly" else "";
+            const same_site_part = if (cookie.same_site) "; SameSite=Strict" else "";
+            const secure_part = if (cookie.secure) "; Secure" else "";
             const cookie_value = if (cookie.max_age) |max_age|
-                try std.fmt.allocPrint(self.allocator, "{s}={s}; Path={s}; Max-Age={d}{s}", .{ cookie.name, cookie.value, cookie.path, max_age, http_part })
+                try std.fmt.allocPrint(self.allocator, "{s}={s}; Path={s}; Max-Age={d}{s}{s}{s}", .{ cookie.name, cookie.value, cookie.path, max_age, http_part, same_site_part, secure_part })
             else
-                try std.fmt.allocPrint(self.allocator, "{s}={s}; Path={s}{s}", .{ cookie.name, cookie.value, cookie.path, http_part });
+                try std.fmt.allocPrint(self.allocator, "{s}={s}; Path={s}{s}{s}{s}", .{ cookie.name, cookie.value, cookie.path, http_part, same_site_part, secure_part });
 
             try headers.append(self.allocator, .{ .name = "Set-Cookie", .value = cookie_value });
         }
@@ -564,9 +572,15 @@ pub const Context = struct {
 
     // === File Download ===
 
+    /// Reject path traversal / absolute paths for download helpers.
+    pub fn isSafeDownloadPath(path: []const u8) bool {
+        if (path.len == 0 or path[0] == '/') return false;
+        if (std.mem.indexOf(u8, path, "..") != null) return false;
+        return true;
+    }
+
     pub fn renderFile(self: *Context, path: []const u8, download_name: ?[]const u8) !void {
-        // Prevent path traversal: reject ".." segments and absolute paths
-        if (std.mem.indexOf(u8, path, "..") != null or path.len == 0 or path[0] == '/') return error.PathTraversal;
+        if (!isSafeDownloadPath(path)) return error.PathTraversal;
         const io_instance = @import("../io_instance.zig");
         const file = try std.Io.Dir.cwd().openFile(io_instance.io, path, .{});
         defer file.close(io_instance.io);
@@ -579,8 +593,9 @@ pub const Context = struct {
         var rdr = file.reader(io_instance.io, &read_buf);
         while (true) {
             const n = rdr.interface.readSliceShort(read_buf[0..]) catch break;
-            if (n < read_buf.len) break;
+            if (n == 0) break;
             try content.appendSlice(self.allocator, read_buf[0..n]);
+            if (n < read_buf.len) break;
         }
         const file_content = try content.toOwnedSlice(self.allocator);
         defer self.allocator.free(file_content);
@@ -672,4 +687,38 @@ fn getContentType(path: []const u8) []const u8 {
     });
 
     return Map.get(extension) orelse "application/octet-stream";
+}
+
+test "context: isSafeDownloadPath rejects traversal" {
+    try std.testing.expect(!Context.isSafeDownloadPath(""));
+    try std.testing.expect(!Context.isSafeDownloadPath("/etc/passwd"));
+    try std.testing.expect(!Context.isSafeDownloadPath("../secret"));
+    try std.testing.expect(!Context.isSafeDownloadPath("foo/../../etc"));
+    try std.testing.expect(Context.isSafeDownloadPath("static/app.js"));
+    try std.testing.expect(Context.isSafeDownloadPath("ok/file.txt"));
+}
+
+test "context: setCookie defaults HttpOnly+SameSite" {
+    const a = std.testing.allocator;
+    // Minimal Context without a live HTTP request — only exercise cookie list.
+    var ctx: Context = undefined;
+    ctx.allocator = a;
+    ctx.response_cookies = .empty;
+    defer {
+        for (ctx.response_cookies.items) |c| {
+            a.free(c.name);
+            a.free(c.value);
+            a.free(c.path);
+        }
+        ctx.response_cookies.deinit(a);
+    }
+
+    try ctx.setCookie("sid", "abc", 3600);
+    try std.testing.expectEqual(@as(usize, 1), ctx.response_cookies.items.len);
+    const c = ctx.response_cookies.items[0];
+    try std.testing.expect(c.http_only);
+    try std.testing.expect(c.same_site);
+    try std.testing.expect(!c.secure);
+    try std.testing.expectEqualStrings("sid", c.name);
+    try std.testing.expectEqualStrings("abc", c.value);
 }

@@ -11,7 +11,7 @@
 [![Version](https://img.shields.io/badge/version-v0.13.4-blue.svg)](CHANGELOG.md)
 [![Tests](https://img.shields.io/badge/tests-146%20passed%20%C2%B7%202%20skipped%20%C2%B7%2017%20codegen-brightgreen.svg)]()
 [![Drivers](https://img.shields.io/badge/drivers-SQLite%20%C2%B7%20PostgreSQL%20%C2%B7%20MySQL-blue.svg)]()
-[![Production](https://img.shields.io/badge/production--readiness-94%25-green.svg)](PRODUCTION_AUDIT.md)
+[![Production](https://img.shields.io/badge/production--readiness-95%25-brightgreen.svg)](PRODUCTION_AUDIT.md)
 
 **English** | [中文文档](README_CN.md)
 
@@ -397,25 +397,31 @@ context from day one.
 
 | Status | Dimension | Score |
 |--------|-----------|-------|
-| ✅ | Build Stability | 95% |
-| ✅ | Security | 92% |
-| ✅ | Memory Safety | 94% |
-| ✅ | Correctness | 93% |
-| ✅ | Observability | 88% |
-| ✅ | Concurrency | 92% |
-| ✅ | Testability | 94% (146 pass, 2 skip, 17 codegen) |
-| ✅ | Code Quality | 90% |
-| ✅ | Documentation | 90% |
-| 🟡 | Examples | 85% |
-| **→** | **Overall** | **~94%** |
+| ✅ | Build Stability | 96% |
+| ✅ | Security | 95% |
+| ✅ | Memory Safety | 95% |
+| ✅ | Correctness | 95% |
+| ✅ | Observability | 92% |
+| ✅ | Concurrency | 93% |
+| ✅ | Testability | 94% |
+| ✅ | Plugin Maturity | 92% (stable vs `experimental`) |
+| ✅ | Documentation | 95% |
+| ✅ | Examples | 90% |
+| **→** | **Overall** | **95%** |
 
-v0.12.7 → v0.13.4 lifted concurrency + memory safety + correctness
-~6 points via six rounds of pool P0 fixes (heap-allocated `DB`,
-poison guard, checked `pthread_mutex_lock` return codes, magic
-sentinel, pre-alloc capacity, `cond_broadcast`).
+v0.13.5 closed the remaining production gaps: trusted-proxy IP
+policy, experimental plugin boundary, Redis complete-read + tests,
+cookie secure defaults, Metrics-backed health example, ReleaseSafe CI.
 
-See [PRODUCTION_AUDIT.md](PRODUCTION_AUDIT.md) for the full v0.8.0
-assessment; a v0.13.4 re-audit is in progress.
+See [PRODUCTION_AUDIT.md](PRODUCTION_AUDIT.md) for the deployment contract
+and residual ≤5% gaps (Zig-dev pin, keep-alive workaround).
+
+Architecture layers, AI edit boundaries, and plugin maturity rules:
+[doc/architecture_best_practices.md](doc/architecture_best_practices.md).
+
+Scale-out (millions of users) and progressive L0→L3 code layout:
+[doc/scale_to_millions.md](doc/scale_to_millions.md) ·
+[doc/progressive_architecture.md](doc/progressive_architecture.md).
 
 ---
 
@@ -424,18 +430,30 @@ assessment; a v0.13.4 re-audit is in progress.
 | Plugin | Status | Description |
 |--------|--------|-------------|
 | Cache (memory) | ✅ Stable | In-memory cache with TTL, thread-safe |
-| Cache (Redis) | ✅ Stable | Full Redis client with RESP protocol over TCP |
+| Cache (Redis) | ✅ Stable | RESP client with loop-read, size cap, parse unit tests |
 | Cron | ✅ Stable | Cron expression parser, job scheduling |
-| PostgreSQL | ✅ Stable | libpq driver — `-Ddriver_pg=true` (v0.12.x hardened) |
-| MySQL | ✅ Stable | mysqlclient driver — `-Ddriver_mysql=true` (v0.12.x hardened) |
-| WeChat | ✅ Stable | Unified wrapper for [zwechat](https://github.com/chy3xyz/zwechat.git) — OA / mini-program / pay / work / open-platform |
-| MySQL binlog | ✅ Stable | CDC via libmysqlclient `mysql_binlog_open/fetch/close` |
-| Queue (NATS) | ✅ Stable | JetStream producer / consumer |
-| Admin (Static) | ✅ Stable | `zfinal.StaticAdmin` — single-binary deploy via `@embedFile` |
-| MQTT | 🟡 Stub | MQTT 3.1.1 client — IoT, not core |
-| Agent (MCP) | 🔧 Experimental | Model Context Protocol agent |
-| P2P | 🔧 Experimental | Peer-to-peer networking |
-| DID | 🔧 Experimental | Decentralized Identity |
+| CircuitBreaker | ✅ Stable | closed/open/half-open state machine + `call()` helper |
+| Queue (in-process) | ✅ Stable | Pub/sub mailbox fan-out (`QueueClient`) |
+| MessageQueue | ✅ Stable | Spring-style façade over `QueueClient` |
+| Queue (NATS) | ✅ Stable | NATS wire (`QueueNatsClient` / `NatsClient`, zero dep) |
+| RobustMQ / Kafka | ✅ Stable | Kafka wire → RobustMQ (`QueueRobustMQClient`, `KafkaProducer`) |
+| DID | ✅ Stable | Local `did:key` Ed25519 sign/verify/resolve |
+| Agent (MCP) | ✅ Stable | JSON-RPC `tools/list` + `tools/call` router |
+| MetricsExporter | ✅ Stable | Prometheus text + JSON from `Metrics` |
+| MQTT | ✅ Stable | MQTT 3.1.1 CONNECT/PUBLISH QoS0/PING/DISCONNECT |
+| ObjectMapper | ✅ Stable | JSON read/write via std.json |
+| P2P | ✅ Stable | TCP mesh: peers, broadcast, announce, inbox (`P2pPlugin`) |
+| HttpClient | ✅ Stable | `std.http.Client` GET/POST/PUT/DELETE + `postForm` |
+| ConfigClient | ✅ Stable | Env / JSON file / env_then_file lookup |
+| BeanValidator | ✅ Stable | Fluent wrapper over `Validator` |
+| TaskScheduler | ✅ Stable | Cron + fixed-rate / fixed-delay via `tick()` |
+| OAuth2Client | ✅ Stable | Authorize URL + code/credentials/refresh token helpers |
+| PostgreSQL | ✅ Stable | libpq driver — `-Ddriver_pg=true` |
+| MySQL | ✅ Stable | mysqlclient driver — `-Ddriver_mysql=true` |
+| WeChat | ✅ Stable | Unified wrapper for [zwechat](https://github.com/chy3xyz/zwechat.git) |
+| Admin (Static) | ✅ Stable | `zfinal.StaticAdmin` — `@embedFile` |
+
+Messaging connectors: [doc/nats.md](doc/nats.md) · [doc/robustmq.md](doc/robustmq.md).
 
 ---
 
@@ -491,7 +509,7 @@ For detailed benchmarks: `zig build run-bench`
 - `zf ai` — AI assistant with AGENTS.md + skill context (OpenAI / Anthropic)
 - `zf new` bundles all 8 AI skills + GitHub Actions workflow into new projects
 - `zf check --heal` expanded to 6 patches (idempotent on re-run)
-- Zig version aligned with `build.zig.zon`: 0.14.0 → 0.17.0-dev.813+
+- Zig version aligned with CI: `0.17.0-dev.1422+e863bf3be` (`minimum_zig_version` in `build.zig.zon`).
 
 ### v0.12.4 → v0.13.4 — Pool Stability ✅
 

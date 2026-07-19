@@ -73,6 +73,11 @@ zig build -Dlog-level=debug  # compile-time log level
 
 ## 📚 Full docs
 
+- `doc/nats.md` — NATS connector (`QueueNatsClient`, zero dep)
+- `doc/robustmq.md` — RobustMQ / Kafka connector (`QueueRobustMQClient`)
+- `doc/architecture_best_practices.md` — code architecture best practices (layers, plugins, AI boundaries)
+- `doc/scale_to_millions.md` — supporting ~10M users (topology, constraints, capacity)
+- `doc/progressive_architecture.md` — L0→L3 progressive code architecture derived from scale plan
 - `CHANGELOG.md` — version history
 - `SECURITY.md` — security policy
 - `PRODUCTION_AUDIT.md` — production readiness checklist

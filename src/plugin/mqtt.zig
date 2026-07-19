@@ -1,9 +1,8 @@
 const std = @import("std");
 const io_instance = @import("../io_instance.zig");
-const zfinal = @import("../core/zfinal.zig");
 const Plugin = @import("plugin.zig").Plugin;
 
-/// MQTT Client Configuration
+/// MQTT 3.1.1 client configuration (TCP, no TLS).
 pub const MqttConfig = struct {
     broker_host: []const u8,
     broker_port: u16 = 1883,
@@ -13,26 +12,22 @@ pub const MqttConfig = struct {
     keep_alive: u16 = 60,
 };
 
-/// MQTT Plugin Implementation
+/// Stable MQTT 3.1.1 client: CONNECT / CONNACK / PUBLISH QoS0 / PINGREQ / DISCONNECT.
+/// Subscribe + QoS>0 are not implemented yet (use a dedicated broker client if needed).
 pub const MqttPlugin = struct {
     allocator: std.mem.Allocator,
     config: MqttConfig,
-    socket: ?std.Io.net.Stream = null,
-    running: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-    read_thread: ?std.Thread = null,
+    stream: ?std.Io.net.Stream = null,
+    connected: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, config: MqttConfig) MqttPlugin {
-        return MqttPlugin{
-            .allocator = allocator,
-            .config = config,
-        };
+        return .{ .allocator = allocator, .config = config };
     }
 
     pub fn deinit(self: *MqttPlugin) void {
-        self.stop() catch {};
+        self.disconnect();
     }
 
-    /// Implement Plugin interface
     pub fn plugin(self: *MqttPlugin) Plugin {
         return Plugin{
             .name = "MQTT",
@@ -44,131 +39,150 @@ pub const MqttPlugin = struct {
         };
     }
 
-    fn start(ctx: *anyopaque) !void {
-        const self: *MqttPlugin = @ptrCast(@alignCast(ctx));
-        std.debug.print("Starting MQTT Plugin connecting to {s}:{d}...\n", .{ self.config.broker_host, self.config.broker_port });
-
-        // Connect to broker
-        // TODO: Implement MQTT connection
-        return error.NotImplemented;
+    fn start(_: *anyopaque) !void {
+        // Connection is explicit via `connect()` so apps can start without a live broker.
     }
 
     fn stop(ctx: *anyopaque) !void {
         const self: *MqttPlugin = @ptrCast(@alignCast(ctx));
-        if (!self.running.load(.monotonic)) return;
-
-        self.running.store(false, .monotonic);
-        if (self.socket) |sock| {
-            sock.close(io_instance.io);
-            self.socket = null;
-        }
-
-        if (self.read_thread) |thread| {
-            thread.join();
-            self.read_thread = null;
-        }
-        std.debug.print("MQTT Plugin stopped.\n", .{});
+        self.disconnect();
     }
 
-    fn readLoop(self: *MqttPlugin) void {
-        var buffer: [4096]u8 = undefined;
-        while (self.running.load(.monotonic)) {
-            if (self.socket) |sock| {
-                const bytes_read = sock.read(&buffer) catch |err| {
-                    std.debug.print("MQTT read error: {}\n", .{err});
-                    self.running.store(false, .monotonic);
-                    break;
-                };
+    pub fn connect(self: *MqttPlugin) !void {
+        if (self.connected) return;
+        const address = try std.Io.net.IpAddress.parseIp4(self.config.broker_host, self.config.broker_port);
+        self.stream = try address.connect(io_instance.io, .{ .mode = .stream });
+        errdefer self.disconnect();
 
-                if (bytes_read == 0) {
-                    std.debug.print("MQTT connection closed by broker.\n", .{});
-                    self.running.store(false, .monotonic);
-                    break;
-                }
+        try self.sendConnect();
+        try self.readConnack();
+        self.connected = true;
+    }
 
-                // Handle incoming packets (simplified)
-                self.handlePacket(buffer[0..bytes_read]);
-            } else {
-                break;
+    pub fn disconnect(self: *MqttPlugin) void {
+        if (self.stream) |s| {
+            if (self.connected) {
+                // DISCONNECT: type 14, remaining length 0
+                var wbuf: [16]u8 = undefined;
+                var writer = s.writer(io_instance.io, &wbuf);
+                writer.interface.writeAll(&[_]u8{ 0xE0, 0x00 }) catch {};
             }
+            s.close(io_instance.io);
+            self.stream = null;
+        }
+        self.connected = false;
+    }
+
+    fn requireStream(self: *MqttPlugin) !*std.Io.net.Stream {
+        return &(self.stream orelse return error.NotConnected);
+    }
+
+    fn encodeRemainingLength(buf: *std.ArrayList(u8), allocator: std.mem.Allocator, len: usize) !void {
+        var x = len;
+        while (true) {
+            var encoded: u8 = @intCast(x % 128);
+            x /= 128;
+            if (x > 0) encoded |= 0x80;
+            try buf.append(allocator, encoded);
+            if (x == 0) break;
         }
     }
 
-    fn handlePacket(self: *MqttPlugin, data: []const u8) void {
-        _ = self;
-        if (data.len < 2) return;
-        const packet_type = data[0] >> 4;
-
-        switch (packet_type) {
-            2 => std.debug.print("MQTT: CONNACK received\n", .{}),
-            3 => std.debug.print("MQTT: PUBLISH received\n", .{}),
-            else => std.debug.print("MQTT: Received packet type {}\n", .{packet_type}),
-        }
+    fn appendMqttString(buf: *std.ArrayList(u8), allocator: std.mem.Allocator, s: []const u8) !void {
+        try buf.append(allocator, @intCast(s.len >> 8));
+        try buf.append(allocator, @intCast(s.len & 0xFF));
+        try buf.appendSlice(allocator, s);
     }
 
     fn sendConnect(self: *MqttPlugin) !void {
-        if (self.socket) |sock| {
-            // Minimal CONNECT packet construction
-            // Fixed Header: Type 1 (CONNECT), Remaining Length
-            // Variable Header: Protocol Name, Level, Connect Flags, Keep Alive
-            // Payload: Client ID
+        const s = try self.requireStream();
+        var vh: std.ArrayList(u8) = .empty;
+        defer vh.deinit(self.allocator);
 
-            var packet = std.ArrayList(u8).init(self.allocator);
-            defer packet.deinit();
+        // Protocol Name "MQTT" + level 4
+        try appendMqttString(&vh, self.allocator, "MQTT");
+        try vh.append(self.allocator, 0x04);
 
-            // Variable Header
-            // Protocol Name "MQTT"
-            try packet.appendSlice(&[_]u8{ 0x00, 0x04, 'M', 'Q', 'T', 'T' });
-            // Protocol Level 4 (3.1.1)
-            try packet.append(0x04);
-            // Connect Flags (Clean Session)
-            try packet.append(0x02);
-            // Keep Alive
-            try packet.appendSlice(&[_]u8{ @intCast(self.config.keep_alive >> 8), @intCast(self.config.keep_alive & 0xFF) });
+        var flags: u8 = 0x02; // Clean Session
+        if (self.config.username != null) flags |= 0x80;
+        if (self.config.password != null) flags |= 0x40;
+        try vh.append(self.allocator, flags);
+        try vh.append(self.allocator, @intCast(self.config.keep_alive >> 8));
+        try vh.append(self.allocator, @intCast(self.config.keep_alive & 0xFF));
 
-            // Payload
-            // Client ID
-            try packet.appendSlice(&[_]u8{ @intCast(self.config.client_id.len >> 8), @intCast(self.config.client_id.len & 0xFF) });
-            try packet.appendSlice(self.config.client_id);
+        try appendMqttString(&vh, self.allocator, self.config.client_id);
+        if (self.config.username) |u| try appendMqttString(&vh, self.allocator, u);
+        if (self.config.password) |p| try appendMqttString(&vh, self.allocator, p);
 
-            // Fixed Header
-            var fixed_header = std.ArrayList(u8).init(self.allocator);
-            defer fixed_header.deinit();
-            try fixed_header.append(0x10); // CONNECT type
+        var packet: std.ArrayList(u8) = .empty;
+        defer packet.deinit(self.allocator);
+        try packet.append(self.allocator, 0x10); // CONNECT
+        try encodeRemainingLength(&packet, self.allocator, vh.items.len);
+        try packet.appendSlice(self.allocator, vh.items);
 
-            // Remaining Length (simplified, assuming < 128 bytes for now)
-            try fixed_header.append(@intCast(packet.items.len));
-
-            try sock.writeAll(fixed_header.items);
-            try sock.writeAll(packet.items);
-        }
+        var wbuf: [4096]u8 = undefined;
+        var writer = s.writer(io_instance.io, &wbuf);
+        try writer.interface.writeAll(packet.items);
     }
 
+    fn readConnack(self: *MqttPlugin) !void {
+        const s = try self.requireStream();
+        var rbuf: [64]u8 = undefined;
+        var reader = s.reader(io_instance.io, &rbuf);
+        var hdr: [4]u8 = undefined;
+        // CONNACK is fixed: 0x20 0x02 <flags> <return_code>
+        const n = try reader.interface.readSliceShort(hdr[0..]);
+        if (n < 4) return error.IncompleteConnack;
+        if (hdr[0] != 0x20 or hdr[1] != 0x02) return error.UnexpectedPacket;
+        if (hdr[3] != 0) return error.ConnackRefused;
+    }
+
+    /// PUBLISH QoS 0.
     pub fn publish(self: *MqttPlugin, topic: []const u8, payload: []const u8) !void {
-        if (self.socket) |sock| {
-            // Minimal PUBLISH packet
-            var packet = std.ArrayList(u8).empty;
-            defer packet.deinit(self.allocator);
+        if (!self.connected) return error.NotConnected;
+        const s = try self.requireStream();
 
-            // Variable Header: Topic Name
-            try packet.appendSlice(self.allocator, &[_]u8{ @intCast(topic.len >> 8), @intCast(topic.len & 0xFF) });
-            try packet.appendSlice(self.allocator, topic);
+        var vh: std.ArrayList(u8) = .empty;
+        defer vh.deinit(self.allocator);
+        try appendMqttString(&vh, self.allocator, topic);
+        try vh.appendSlice(self.allocator, payload);
 
-            // Payload
-            try packet.appendSlice(self.allocator, payload);
+        var packet: std.ArrayList(u8) = .empty;
+        defer packet.deinit(self.allocator);
+        try packet.append(self.allocator, 0x30); // PUBLISH QoS0
+        try encodeRemainingLength(&packet, self.allocator, vh.items.len);
+        try packet.appendSlice(self.allocator, vh.items);
 
-            // Fixed Header
-            var fixed_header = std.ArrayList(u8).empty;
-            defer fixed_header.deinit(self.allocator);
-            try fixed_header.append(self.allocator, 0x30); // PUBLISH type (QoS 0)
+        var wbuf: [4096]u8 = undefined;
+        var writer = s.writer(io_instance.io, &wbuf);
+        try writer.interface.writeAll(packet.items);
+    }
 
-            // Remaining Length (simplified)
-            try fixed_header.append(self.allocator, @intCast(packet.items.len));
-
-            var write_buf: [4096]u8 = undefined;
-            var writer = sock.writer(io_instance.io, &write_buf);
-            try writer.interface.writeAll(fixed_header.items);
-            try writer.interface.writeAll(packet.items);
-        }
+    pub fn ping(self: *MqttPlugin) !void {
+        if (!self.connected) return error.NotConnected;
+        const s = try self.requireStream();
+        var wbuf: [16]u8 = undefined;
+        var writer = s.writer(io_instance.io, &wbuf);
+        try writer.interface.writeAll(&[_]u8{ 0xC0, 0x00 }); // PINGREQ
     }
 };
+
+test "mqtt: encode remaining length" {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+    try MqttPlugin.encodeRemainingLength(&buf, std.testing.allocator, 0);
+    try std.testing.expectEqualSlices(u8, &[_]u8{0x00}, buf.items);
+    buf.clearRetainingCapacity();
+    try MqttPlugin.encodeRemainingLength(&buf, std.testing.allocator, 127);
+    try std.testing.expectEqualSlices(u8, &[_]u8{0x7F}, buf.items);
+    buf.clearRetainingCapacity();
+    try MqttPlugin.encodeRemainingLength(&buf, std.testing.allocator, 128);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x80, 0x01 }, buf.items);
+}
+
+test "mqtt: appendMqttString" {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+    try MqttPlugin.appendMqttString(&buf, std.testing.allocator, "ab");
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x00, 0x02, 'a', 'b' }, buf.items);
+}

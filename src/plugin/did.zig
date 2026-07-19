@@ -1,25 +1,26 @@
 const std = @import("std");
 const io_instance = @import("../io_instance.zig");
-const zfinal = @import("../core/zfinal.zig");
 const Plugin = @import("plugin.zig").Plugin;
-const HashKit = @import("../kit/hash_kit.zig").HashKit;
 
-/// DID Document Structure
+/// DID Document (W3C-inspired). Owned strings live in `arena` / caller frees via `deinit`.
 pub const DidDocument = struct {
-    context: []const []const u8 = &[_][]const u8{"https://www.w3.org/ns/did/v1"},
+    allocator: std.mem.Allocator,
     id: []const u8,
-    verificationMethod: []const VerificationMethod,
-    authentication: []const []const u8,
+    verification_method_id: []const u8,
+    public_key_hex: []const u8,
+    /// Authentication references the verification method id.
+    authentication: []const u8,
+
+    pub fn deinit(self: *DidDocument) void {
+        self.allocator.free(self.id);
+        self.allocator.free(self.verification_method_id);
+        self.allocator.free(self.public_key_hex);
+        // authentication aliases verification_method_id — already freed
+    }
 };
 
-pub const VerificationMethod = struct {
-    id: []const u8,
-    type: []const u8,
-    controller: []const u8,
-    publicKeyMultibase: []const u8,
-};
-
-/// DID Plugin Implementation
+/// Local `did:key`-style identity with Ed25519 sign/verify.
+/// Network DID resolution is out of scope; `resolve` only returns this node's document.
 pub const DidPlugin = struct {
     allocator: std.mem.Allocator,
     key_pair: std.crypto.sign.Ed25519.KeyPair,
@@ -29,13 +30,11 @@ pub const DidPlugin = struct {
         var seed: [std.crypto.sign.Ed25519.KeyPair.seed_length]u8 = undefined;
         io_instance.io.random(&seed);
         const key_pair = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic(seed);
-        // Generate DID from public key (simplified did:key method)
-        // In reality, did:key uses multicodec/multibase
         const pub_key_bytes = key_pair.public_key.bytes;
         const hex_bytes = std.fmt.bytesToHex(&pub_key_bytes, .lower);
         const did_id = try std.fmt.allocPrint(allocator, "did:key:z{s}", .{hex_bytes});
 
-        return DidPlugin{
+        return .{
             .allocator = allocator,
             .key_pair = key_pair,
             .did = did_id,
@@ -46,7 +45,6 @@ pub const DidPlugin = struct {
         self.allocator.free(self.did);
     }
 
-    /// Implement Plugin interface
     pub fn plugin(self: *DidPlugin) Plugin {
         return Plugin{
             .name = "DID",
@@ -60,25 +58,20 @@ pub const DidPlugin = struct {
 
     fn start(ctx: *anyopaque) !void {
         const self: *DidPlugin = @ptrCast(@alignCast(ctx));
-        std.debug.print("Starting DID Plugin...\n", .{});
-        std.debug.print("Initialized Identity: {s}\n", .{self.did});
+        std.log.info("DID plugin ready: {s}", .{self.did});
     }
 
-    fn stop(ctx: *anyopaque) !void {
-        _ = ctx;
-        std.debug.print("DID Plugin stopped.\n", .{});
-    }
+    fn stop(_: *anyopaque) !void {}
 
-    /// Sign data
+    /// Sign data; returns owned hex signature (caller frees).
     pub fn sign(self: *DidPlugin, data: []const u8) ![]const u8 {
         const signature = try self.key_pair.sign(data, null);
         const hex_sig = std.fmt.bytesToHex(&signature.toBytes(), .lower);
-        return try std.fmt.allocPrint(self.allocator, "{s}", .{hex_sig});
+        return try self.allocator.dupe(u8, &hex_sig);
     }
 
-    /// Verify signature
-    pub fn verify(self: *DidPlugin, data: []const u8, signature_hex: []const u8, public_key_hex: []const u8) !bool {
-        _ = self;
+    /// Verify hex signature against a hex public key.
+    pub fn verify(_: *DidPlugin, data: []const u8, signature_hex: []const u8, public_key_hex: []const u8) !bool {
         var sig_bytes: [64]u8 = undefined;
         _ = try std.fmt.hexToBytes(&sig_bytes, signature_hex);
         const signature = std.crypto.sign.Ed25519.Signature.fromBytes(sig_bytes);
@@ -91,29 +84,57 @@ pub const DidPlugin = struct {
         return true;
     }
 
-    /// Resolve DID (Mock implementation)
+    /// Public key of this identity as lowercase hex (owned — caller frees).
+    pub fn publicKeyHex(self: *DidPlugin) ![]const u8 {
+        const bytes = self.key_pair.public_key.bytes;
+        const hex = std.fmt.bytesToHex(&bytes, .lower);
+        return try self.allocator.dupe(u8, &hex);
+    }
+
+    /// Resolve only the local DID. Caller must `doc.deinit()`.
     pub fn resolve(self: *DidPlugin, did: []const u8) !DidDocument {
-        // In a real implementation, this would look up the DID on a ledger or resolver
-        if (std.mem.eql(u8, did, self.did)) {
-            // Return our own document
-            const pub_key_bytes = self.key_pair.public_key.bytes;
-            const pub_key_hex = try std.fmt.allocPrint(self.allocator, "{s}", .{std.fmt.fmtSliceHexLower(&pub_key_bytes)});
+        if (!std.mem.eql(u8, did, self.did)) return error.DidNotFound;
 
-            // Construct VerificationMethod (simplified)
-            // Note: This leaks memory in this simple example, needs proper arena or management
-            const vm = VerificationMethod{
-                .id = try std.fmt.allocPrint(self.allocator, "{s}#key-1", .{did}),
-                .type = "Ed25519VerificationKey2020",
-                .controller = did,
-                .publicKeyMultibase = pub_key_hex,
-            };
+        const id = try self.allocator.dupe(u8, did);
+        errdefer self.allocator.free(id);
+        const vm_id = try std.fmt.allocPrint(self.allocator, "{s}#key-1", .{did});
+        errdefer self.allocator.free(vm_id);
+        const pub_hex = try self.publicKeyHex();
+        errdefer self.allocator.free(pub_hex);
 
-            return DidDocument{
-                .id = did,
-                .verificationMethod = &[_]VerificationMethod{vm},
-                .authentication = &[_][]const u8{vm.id},
-            };
-        }
-        return error.DidNotFound;
+        return .{
+            .allocator = self.allocator,
+            .id = id,
+            .verification_method_id = vm_id,
+            .public_key_hex = pub_hex,
+            .authentication = vm_id,
+        };
     }
 };
+
+test "did: sign and verify roundtrip" {
+    const a = std.testing.allocator;
+    var plugin = try DidPlugin.init(a);
+    defer plugin.deinit();
+
+    const sig = try plugin.sign("hello");
+    defer a.free(sig);
+    const pub_hex = try plugin.publicKeyHex();
+    defer a.free(pub_hex);
+
+    try std.testing.expect(try plugin.verify("hello", sig, pub_hex));
+    try std.testing.expect(!try plugin.verify("other", sig, pub_hex));
+}
+
+test "did: resolve local document" {
+    const a = std.testing.allocator;
+    var plugin = try DidPlugin.init(a);
+    defer plugin.deinit();
+
+    var doc = try plugin.resolve(plugin.did);
+    defer doc.deinit();
+    try std.testing.expectEqualStrings(plugin.did, doc.id);
+    try std.testing.expect(std.mem.endsWith(u8, doc.verification_method_id, "#key-1"));
+
+    try std.testing.expectError(error.DidNotFound, plugin.resolve("did:key:zunknown"));
+}

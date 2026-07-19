@@ -10,7 +10,9 @@ description: Improve ZFinal framework internals. Add features, fix bugs, optimiz
 ```
 src/core/       Server, Router, Context, Session, Logger, Metrics, Shutdown
 src/db/         DB wrapper, SQLite/PG/MySQL drivers, ConnectionPool, ORM
-src/plugin/     Cache, Cron, Redis (stable); MQTT/P2P/DID/Agent (experimental)
+src/plugin/     Cache, Cron, Redis, CircuitBreaker,                 Queue, RobustMQ/Kafka, NATS, DID, Agent, MQTT, MetricsExporter, P2P,
+                HttpClient, ConfigClient, OAuth2, BeanValidator, TaskScheduler,
+                MessageQueue (stable)
 src/kit/        17 utilities (no framework deps)
 src/interceptor/ Auth, CORS, Logging, CSRF
 src/token/      CSRF token gen/validate (CSPRNG)
@@ -27,9 +29,15 @@ tools/zf/       CLI tool + codegen
 
 ```bash
 zig build               # Build everything
-zig build test          # 90 tests
+zig build test          # Unit tests
 zig build install-zf    # Build CLI
 ```
+
+Architecture best practices (layers, plugins, AI boundaries):
+`doc/architecture_best_practices.md`.
+
+Scale-out + progressive L0→L3 app layout:
+`doc/scale_to_millions.md`, `doc/progressive_architecture.md`.
 
 ## Adding a Feature
 

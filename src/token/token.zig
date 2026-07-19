@@ -119,6 +119,14 @@ pub const TokenManager = struct {
         }
     }
 
+    /// Public entry for periodic cleanup (cron / idle sweep). Call under no
+    /// external lock — this method acquires the manager mutex.
+    pub fn purgeExpired(self: *TokenManager) !void {
+        try self.mutex.lock(io_instance.io);
+        defer self.mutex.unlock(io_instance.io);
+        try self.cleanExpired();
+    }
+
     /// 设置 TTL
     pub fn setTTL(self: *TokenManager, ttl: i64) void {
         self.default_ = ttl;

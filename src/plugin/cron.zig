@@ -122,7 +122,7 @@ pub const CronExpression = struct {
 
         // Cron day-of-week: 0=Sun, 1=Mon, ..., 6=Sat.
         // EpochDay(0) = 1970-01-01 = Thursday. Thu=4 in cron notation.
-        const day_of_week: u8 = @intCast((@as(u64, @intCast(epoch_seconds.getEpochDay().sinceEpoch())) + 4) % 7);
+        const day_of_week: u8 = @intCast((@as(u64, epoch_seconds.getEpochDay().day) + 4) % 7);
 
         if (!self.minutes[minutes]) return false;
         if (!self.hours[hours]) return false;

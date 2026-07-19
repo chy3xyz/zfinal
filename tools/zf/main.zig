@@ -1127,7 +1127,7 @@ fn applySeeds(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, dir: []const
             std.debug.print("  ✗ failed: {s} — {s}\n", .{ name_no_ext, e });
             return error.SeedApplyFailed;
         }
-        const checksum = std.hash.crc.Crc32.hash(content);
+        const checksum = std.hash.Crc32.hash(content);
         const record_sql =
             \\INSERT INTO _zfinal_seeds (name, filename, checksum)
             \\VALUES (?, ?, ?);
@@ -1273,7 +1273,7 @@ fn applyMigrations(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, dir: []
                 std.debug.print("  ✗ failed: {s} — {s}\n", .{ version_trimmed, e });
                 return error.MigrationApplyFailed;
             }
-            const checksum = std.hash.crc.Crc32.hash(up_sql);
+            const checksum = std.hash.Crc32.hash(up_sql);
             const record_sql =
                 \\INSERT INTO _zfinal_migrations (version, filename, checksum)
                 \\VALUES (?, ?, ?);

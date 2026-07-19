@@ -21,10 +21,9 @@ pub fn main(init: std.process.Init) !void {
     var app = zfinal.ZFinal.init(allocator);
     defer app.deinit();
 
-    // === 1. 配置 MQTT 插件 (消息队列) ===
-    // 用于边缘设备之间的异步通信
+    // === 1. MQTT (QoS0 publish) — connect when broker is available ===
     var mqtt_plugin = MqttPlugin.init(allocator, .{
-        .broker_host = "test.mosquitto.org", // 公共测试 broker
+        .broker_host = "127.0.0.1",
         .broker_port = 1883,
         .client_id = "zfinal-edge-demo",
     });
@@ -45,7 +44,8 @@ pub fn main(init: std.process.Init) !void {
 
     // === 4. 配置 P2P 插件 ===
     // 用于边缘设备之间的直接通信
-    var p2p_plugin = P2pPlugin.init(allocator, 8081);
+    var p2p_plugin = try P2pPlugin.init(allocator, 8081);
+    defer p2p_plugin.deinit();
     try app.addPlugin(p2p_plugin.plugin());
 
     // 启动模拟线程（模拟边缘设备数据）
@@ -79,12 +79,16 @@ fn simulationLoop(mqtt: *MqttPlugin, did: *DidPlugin, agent: *AgentPlugin, p2p: 
     // 等待插件启动
     std.Io.sleep(io, .{ .nanoseconds = 1 * std.time.ns_per_s }, .awake) catch {};
 
-    // === MQTT 演示 ===
-    // 发布消息到主题
-    try mqtt.publish("zfinal/edge/status", "online");
-    try mqtt.publish("zfinal/edge/cpu", "15%");
-    try mqtt.publish("zfinal/edge/memory", "42%");
-    std.debug.print("[MQTT] Published status messages\n", .{});
+    // === MQTT 演示（broker 不可用时跳过）===
+    mqtt.connect() catch |err| {
+        std.debug.print("[MQTT] connect skipped: {t}\n", .{err});
+    };
+    if (mqtt.connected) {
+        try mqtt.publish("zfinal/edge/status", "online");
+        try mqtt.publish("zfinal/edge/cpu", "15%");
+        try mqtt.publish("zfinal/edge/memory", "42%");
+        std.debug.print("[MQTT] Published status messages\n", .{});
+    }
 
     // === DID 演示 ===
     // 对数据进行签名（用于验证数据完整性）

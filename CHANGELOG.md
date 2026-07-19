@@ -1,3 +1,71 @@
+## [0.13.9] - 2026-07-19
+
+### Changed — QueueNatsClient promoted to stable
+- Replaced optional `nats.zig` dependency with zero-dep NATS wire client (`plugin/nats_client.zig`, from zigmodu).
+- Stable exports: `NatsClient`, `NatsConfig`, `QueueNatsClient` (`connect` / publish / subscribe / request / poll).
+- `zfinal.experimental.QueueNatsClient` kept as `@deprecated` alias.
+- Docs: `doc/nats.md`.
+
+## [0.13.8] - 2026-07-19
+
+### Added — RobustMQ / Kafka connector
+- **`plugin/robustmq.zig`**: Kafka wire client (ApiVersions + Produce + Fetch) targeting RobustMQ default `:9092`, ported from zigmodu `KafkaConnector` (zero third-party deps).
+- Stable exports: `RobustMQTransport`, `KafkaProducer`, `KafkaConsumer`, `KafkaEventBridge`, `QueueRobustMQClient`.
+- Offline unit tests + optional live smoke via `ROBUSTMQ_URL` / `KAFKA_BOOTSTRAP`.
+- Docs: `doc/robustmq.md`; progressive / scale docs prefer RobustMQ over NATS for L3 bus.
+
+Still experimental (as of 0.13.8): none for messaging — NATS is stable in 0.13.9.
+
+## [0.13.7] - 2026-07-19
+
+### Changed — remaining plugins promoted to stable
+- **P2pPlugin**: TCP mesh (ZFP2 frames), `addPeer` / `broadcast` / `announce` / inbox + localhost mesh + gossip announce tests.
+- **HttpClient**: real `std.http.Client` wrapper (`get`/`post`/`put`/`delete`/`postForm`); response body via `std.Io.Writer.Allocating`.
+- **ConfigClient**: env / JSON file / env_then_file.
+- **BeanValidator**: fluent façade over `Validator`.
+- **TaskScheduler**: cron + fixed-rate / fixed-delay via `tick()`.
+- **MessageQueue**: Spring-style wrapper over in-process `QueueClient`.
+- **OAuth2Client**: authorize URL builder + code / client_credentials / refresh token exchange helpers.
+
+Still experimental: `QueueNatsClient` (optional NATS dep).
+
+### Changed — Zig 0.17.0-dev.1422 compatibility
+- CI pin: `0.17.0-dev.813+2153f8143` → `0.17.0-dev.1422+e863bf3be`.
+- **P2pPlugin**: `std.atomic.Mutex` no longer has `lock()` — spin on `tryLock`.
+- **HttpClient**: `FetchOptions.response_writer` is `?*Writer` (use `Writer.Allocating`).
+- **zf migrate**: `std.hash.crc.Crc32` → `std.hash.Crc32` (`CRC-32/ISO-HDLC`).
+
+## [0.13.6] - 2026-07-19
+
+### Changed — plugins promoted to stable
+- **CircuitBreaker**: full closed/open/half-open state machine with `call()` helper + tests (`plugin/circuit_breaker.zig`).
+- **QueueClient**: real in-process pub/sub with mailboxes (replaces no-op stub).
+- **DidPlugin**: leak-free local `did:key` Ed25519 identity; `DidDocument.deinit`; sign/verify/resolve tests.
+- **AgentPlugin**: MCP `tools/list` + `tools/call` (and legacy `call_tool`); working tool list.
+- **MetricsExporter**: Prometheus exposition text + JSON from `Metrics`.
+- **MqttPlugin**: MQTT 3.1.1 CONNECT/CONNACK/PUBLISH QoS0/PINGREQ/DISCONNECT; remaining-length encoding tests.
+- **ObjectMapper**: exported on stable API (JSON read/write).
+
+Still experimental (as of 0.13.6): `P2pPlugin`, `QueueNatsClient`, HttpClient/OAuth2/Config — see 0.13.7.
+
+## [0.13.5] - 2026-07-19
+
+### Security
+- **Trusted-proxy IP policy**: `IpExt.resolveClientIp` / `ClientIpOptions` — proxy headers ignored by default; rate limiter and access log no longer trust spoofable `X-Forwarded-For` unless explicitly enabled (optional `trusted_proxies` allow-list).
+- **Cookie defaults**: `setCookie` now sets HttpOnly + SameSite=Strict; optional Secure via `setCookieFull`.
+
+### Changed
+- **Experimental plugin namespace**: MQTT / Agent / DID / P2P / Queue / Java-compat stubs moved to `zfinal.experimental.*` so the default API surface is production-stable only.
+- **Redis RESP**: loop-read until complete value, `NeedMoreData`, 4MB response cap, unit tests for parseResp.
+- **Token/Captcha**: public `purgeExpired()` for idle cleanup.
+- **healthHandlerFor**: returns a proper `Handler` (`*Context`) matching the router.
+- **Production example**: Metrics-backed `/health`; documents trusted-proxy rate-limit config.
+- **CI**: ReleaseSafe smoke build step.
+- **PRODUCTION_AUDIT.md**: rewritten as single source of truth — overall **95%**.
+
+### Fixed
+- **renderFile**: last partial read chunk was discarded (truncated downloads).
+
 ## [0.13.4] - 2026-07-08
 
 ### Fixed (P0)

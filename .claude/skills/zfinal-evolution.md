@@ -95,7 +95,7 @@ zig build test --summary all  # 完整输出
 
 ### Zig 0.17-dev 测试 runner 规避
 
-当前 pinned 版本 `0.17.0-dev.813+2153f8143` 的 server-mode test runner 会通过 `--listen=-` 与 build server 通信，在本机触发 `EndOfStream` panic。`build.zig` 已改为直接运行编译好的测试二进制：
+当前 pinned 版本 `0.17.0-dev.1422+e863bf3be`（CI）的 server-mode test runner 可能通过 `--listen=-` 与 build server 通信并触发 `EndOfStream` panic。`build.zig` 已改为直接运行编译好的测试二进制：
 
 ```zig
 const run_lib_unit_tests = b.addRunFile(lib_unit_tests.getEmittedBin());

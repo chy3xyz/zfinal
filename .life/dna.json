@@ -2,28 +2,26 @@
   "project": "zfinal",
   "title": "ZFinal Web Framework",
   "description": "Production-hardened Zig web framework inspired by JFinal. Fiber-based async server, ActiveRecord ORM, plugin system, 17 utility kits.",
-  "version": "0.4.0",
+  "version": "0.13.9",
   "birth": "2024-12-03",
-  "zig_version": "0.16.0",
+  "zig_version": "0.17.0-dev.1422+e863bf3be",
   "fingerprint": {
     "algorithm": "sha256",
-    "source_hash": "d96b03c",
-    "computed_at": "2026-05-12"
+    "source_hash": "v0.13.9",
+    "computed_at": "2026-07-19"
   },
   "metrics": {
-    "source_files": 64,
-    "lines_of_code": 11288,
-    "tests": 90,
-    "tests_pass": 88,
-    "tests_skip": 2,
+    "source_files": 85,
+    "tests": 197,
+    "tests_pass": 190,
+    "tests_skip": 7,
     "tests_fail": 0,
-    "examples": 11,
-    "plugins_stable": 3,
-    "plugins_experimental": 4,
-    "production_readiness_pct": 94
+    "plugins_stable": 23,
+    "plugins_experimental": 0,
+    "production_readiness_pct": 95
   },
   "dependencies": {
-    "zig": "0.16.0",
+    "zig": "0.17.0-dev.1422+e863bf3be",
     "system_libs": ["libc", "sqlite3"],
     "optional_libs": ["libpq", "libmysqlclient"]
   },

@@ -14,7 +14,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         # Must match minimum_zig_version in build.zig.zon.
-        zig-version: ['0.17.0-dev.813+2153f8143']
+        zig-version: ['0.17.0-dev.1422+e863bf3be']
     
     steps:
     - uses: actions/checkout@v4
@@ -44,6 +44,9 @@ jobs:
     - name: Run codegen regression tests
       run: zig build test-zf
     
+    - name: Release-mode smoke build
+      run: zig build -Doptimize=ReleaseSafe
+    
     - name: Build CLI tool
       run: zig build install
     
@@ -63,7 +66,7 @@ jobs:
     - name: Setup Zig
       uses: mlugg/setup-zig@v2
       with:
-        version: '0.17.0-dev.813+2153f8143'
+        version: '0.17.0-dev.1422+e863bf3be'
     
     - name: Check formatting
       run: zig fmt --check src/ tools/ examples/ benchmark/ build.zig

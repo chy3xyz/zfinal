@@ -65,7 +65,7 @@ pub const Validator = @import("validator/validator.zig").Validator;
 pub const UploadFile = @import("upload/multipart.zig").UploadFile;
 pub const MultipartParser = @import("upload/multipart.zig").MultipartParser;
 
-// Export plugin modules
+// Stable plugins
 pub const Plugin = @import("plugin/plugin.zig").Plugin;
 pub const PluginManager = @import("plugin/plugin.zig").PluginManager;
 pub const CachePlugin = @import("plugin/cache.zig").CachePlugin;
@@ -74,25 +74,58 @@ pub const CacheBackend = @import("plugin/cache.zig").CacheBackend;
 pub const RedisClient = @import("plugin/redis.zig").RedisClient;
 pub const RedisCache = @import("plugin/redis.zig").RedisCache;
 pub const CronPlugin = @import("plugin/cron.zig").CronPlugin;
-pub const MqttPlugin = @import("plugin/mqtt.zig").MqttPlugin;
+pub const CircuitBreaker = @import("plugin/circuit_breaker.zig").CircuitBreaker;
+pub const QueueClient = @import("plugin/queue.zig").QueueClient;
+pub const DidPlugin = @import("plugin/did.zig").DidPlugin;
+pub const DidDocument = @import("plugin/did.zig").DidDocument;
 pub const AgentPlugin = @import("plugin/agent.zig").AgentPlugin;
+pub const MetricsExporter = @import("plugin/metrics_exporter.zig").MetricsExporter;
+pub const MqttPlugin = @import("plugin/mqtt.zig").MqttPlugin;
+pub const MqttConfig = @import("plugin/mqtt.zig").MqttConfig;
+pub const ObjectMapper = @import("plugin/compat/stubs.zig").ObjectMapper;
+pub const P2pPlugin = @import("plugin/p2p.zig").P2pPlugin;
+pub const HttpClient = @import("plugin/http_client.zig").HttpClient;
+pub const ConfigClient = @import("plugin/config_client.zig").ConfigClient;
+pub const BeanValidator = @import("plugin/bean_validator.zig").BeanValidator;
+pub const TaskScheduler = @import("plugin/task_scheduler.zig").TaskScheduler;
+pub const MessageQueue = @import("plugin/message_queue.zig").MessageQueue;
+pub const OAuth2Client = @import("plugin/oauth2.zig").OAuth2Client;
+pub const RobustMQTransport = @import("plugin/robustmq.zig").RobustMQTransport;
+pub const KafkaProducer = @import("plugin/robustmq.zig").KafkaProducer;
+pub const KafkaConsumer = @import("plugin/robustmq.zig").KafkaConsumer;
+pub const KafkaEventBridge = @import("plugin/robustmq.zig").KafkaEventBridge;
+pub const KafkaMessage = @import("plugin/robustmq.zig").KafkaMessage;
+pub const KafkaProducerConfig = @import("plugin/robustmq.zig").KafkaProducerConfig;
+pub const KafkaConsumerConfig = @import("plugin/robustmq.zig").KafkaConsumerConfig;
+pub const QueueRobustMQClient = @import("plugin/robustmq.zig").QueueRobustMQClient;
+pub const NatsClient = @import("plugin/nats_client.zig").NatsClient;
+pub const NatsConfig = @import("plugin/nats_client.zig").NatsConfig;
+pub const QueueNatsClient = @import("plugin/queue_nats.zig").QueueNatsClient;
 // WeChat plugin — requires zwechat dependency in build.zig.zon:
 //   .zwechat = .{ .path = "../zwechat" }
 // Uncomment when ready:
 // pub const WechatPlugin = @import("plugin/wechat.zig").WechatPlugin;
-pub const DidPlugin = @import("plugin/did.zig").DidPlugin;
-pub const P2pPlugin = @import("plugin/p2p.zig").P2pPlugin;
-pub const CircuitBreaker = @import("plugin/compat/stubs.zig").CircuitBreaker;
-pub const ConfigClient = @import("plugin/compat/stubs.zig").ConfigClient;
-pub const HttpClient = @import("plugin/compat/stubs.zig").HttpClient;
-pub const BeanValidator = @import("plugin/compat/stubs.zig").BeanValidator;
-pub const TaskScheduler = @import("plugin/compat/stubs.zig").TaskScheduler;
-pub const QueueClient = @import("plugin/queue.zig").QueueClient;
-pub const QueueNatsClient = @import("plugin/queue_nats.zig").QueueNatsClient;
-pub const MessageQueue = @import("plugin/compat/stubs.zig").MessageQueue;
-pub const OAuth2Client = @import("plugin/compat/stubs.zig").OAuth2Client;
-pub const ObjectMapper = @import("plugin/compat/stubs.zig").ObjectMapper;
-pub const MetricsExporter = @import("plugin/compat/stubs.zig").MetricsExporter;
+
+/// Deprecated aliases — prefer stable root exports above.
+/// Import via `zfinal.experimental.*` only for migration.
+pub const experimental = struct {
+    /// @deprecated Use `zfinal.QueueNatsClient`
+    pub const QueueNatsClient = @import("plugin/queue_nats.zig").QueueNatsClient;
+    /// @deprecated Use `zfinal.P2pPlugin`
+    pub const P2pPlugin = @import("plugin/p2p.zig").P2pPlugin;
+    /// @deprecated Use `zfinal.ConfigClient`
+    pub const ConfigClient = @import("plugin/config_client.zig").ConfigClient;
+    /// @deprecated Use `zfinal.HttpClient`
+    pub const HttpClient = @import("plugin/http_client.zig").HttpClient;
+    /// @deprecated Use `zfinal.BeanValidator`
+    pub const BeanValidator = @import("plugin/bean_validator.zig").BeanValidator;
+    /// @deprecated Use `zfinal.TaskScheduler`
+    pub const TaskScheduler = @import("plugin/task_scheduler.zig").TaskScheduler;
+    /// @deprecated Use `zfinal.MessageQueue` or `zfinal.QueueClient`
+    pub const MessageQueue = @import("plugin/message_queue.zig").MessageQueue;
+    /// @deprecated Use `zfinal.OAuth2Client`
+    pub const OAuth2Client = @import("plugin/oauth2.zig").OAuth2Client;
+};
 
 // AI Chat component
 pub const aichat = @import("aichat/aichat.zig");
@@ -135,6 +168,7 @@ pub const createCacheInterceptor = @import("ext/interceptor.zig").createCacheInt
 pub const RenderExt = @import("ext/util.zig").RenderExt;
 pub const ParamExt = @import("ext/util.zig").ParamExt;
 pub const SessionExt = @import("ext/util.zig").SessionExt;
+pub const ClientIpOptions = @import("ext/ext_util.zig").ClientIpOptions;
 pub const IpExt = @import("ext/ext_util.zig").IpExt;
 pub const RequestExt = @import("ext/ext_util.zig").RequestExt;
 pub const ResponseExt = @import("ext/ext_util.zig").ResponseExt;

@@ -94,13 +94,11 @@ pub const Metrics = struct {
 };
 
 /// Generate a health endpoint handler for the given metrics instance.
-/// Usage (must be comptime): `app.get("/health", comptime zfinal.healthHandlerFor(&metrics))`
-pub fn healthHandlerFor(metrics: *Metrics) type {
+/// `metrics` must be a comptime-known pointer (typically a global).
+/// Usage: `app.get("/health", zfinal.healthHandlerFor(&g_metrics))`
+pub fn healthHandlerFor(comptime metrics: *Metrics) *const fn (*@import("context.zig").Context) anyerror!void {
     return struct {
-        pub fn handler(ctx: *anyopaque) anyerror!void {
-            const Context = @import("context.zig").Context;
-            const c: *Context = @ptrCast(@alignCast(ctx));
-
+        fn handler(ctx: *@import("context.zig").Context) anyerror!void {
             const health_status = if (metrics.responses_5xx.load(.monotonic) == 0) "ok" else "degraded";
             const payload = .{
                 .status = health_status,
@@ -112,8 +110,8 @@ pub fn healthHandlerFor(metrics: *Metrics) type {
                 .responses_5xx = metrics.responses_5xx.load(.monotonic),
             };
 
-            c.res_status = .ok;
-            try c.renderJson(payload);
+            ctx.res_status = .ok;
+            try ctx.renderJson(payload);
         }
     }.handler;
 }

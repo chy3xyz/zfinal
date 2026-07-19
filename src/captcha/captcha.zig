@@ -231,6 +231,13 @@ pub const CaptchaManager = struct {
         }
     }
 
+    /// Public entry for periodic cleanup (cron / idle sweep).
+    pub fn purgeExpired(self: *CaptchaManager) !void {
+        try self.mutex.lock(io_instance.io);
+        defer self.mutex.unlock(io_instance.io);
+        try self.cleanExpired();
+    }
+
     /// 设置 TTL
     pub fn setTTL(self: *CaptchaManager, ttl: i64) void {
         self.default_ = ttl;

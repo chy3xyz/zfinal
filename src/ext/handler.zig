@@ -2,6 +2,7 @@ const std = @import("std");
 const io_instance = @import("../io_instance.zig");
 const zfinal = @import("../main.zig");
 const mutex_init = @import("../db/mutex_init.zig");
+const IpExt = @import("ext_util.zig").IpExt;
 
 /// CORS Handler - 跨域资源共享
 pub const CorsHandler = struct {
@@ -112,7 +113,11 @@ pub const RateLimitHandler = struct {
     max_requests: usize = 100,
     window_seconds: i64 = 60,
     /// Set to true when behind a trusted reverse proxy (nginx, haproxy).
+    /// Default false: clients cannot spoof rate-limit keys via X-Forwarded-For.
     trust_proxy_headers: bool = false,
+    /// Optional allow-list of peer addresses that may supply proxy headers.
+    /// Empty + trust_proxy_headers=true means trust any peer (private networks only).
+    trusted_proxies: []const []const u8 = &.{},
     /// Controls how often stale entries are cleaned up (every N handle() calls).
     cleanup_counter: usize = 0,
     cleanup_interval: usize = 1000,
@@ -138,15 +143,11 @@ pub const RateLimitHandler = struct {
     }
 
     pub fn handle(self: *RateLimitHandler, ctx: *zfinal.Context) !void {
-        // Build client key: prefer real socket address.
-        // Only use proxy headers when trust_proxy_headers is explicitly enabled.
         var key_buf: [64]u8 = undefined;
-        const client_key = if (ctx.remote_addr) |addr|
-            try std.fmt.bufPrint(&key_buf, "{}", .{addr})
-        else if (self.trust_proxy_headers)
-            ctx.getHeader("X-Real-IP") orelse ctx.getHeader("X-Forwarded-For") orelse "unknown"
-        else
-            "unknown";
+        const client_key = try IpExt.resolveClientIp(ctx, &key_buf, .{
+            .trust_proxy_headers = self.trust_proxy_headers,
+            .trusted_proxies = self.trusted_proxies,
+        });
 
         mutex_init.lockMut(&self.mutex);
         defer mutex_init.unlockMut(&self.mutex);

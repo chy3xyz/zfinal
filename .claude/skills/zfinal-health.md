@@ -21,7 +21,7 @@ Configured in `CLAUDE.md`:
 
 ## Known Zig 0.17-dev Quirk
 
-`zig build test` on Zig `0.17.0-dev.813+2153f8143` crashes the server-mode test runner with `EndOfStream`. `build.zig` works around this by running the compiled test binary directly:
+`zig build test` on Zig `0.17.0-dev.1422+e863bf3be` may crash the server-mode test runner with `EndOfStream`. `build.zig` works around this by running the compiled test binary directly:
 
 ```zig
 const run_lib_unit_tests = b.addRunFile(lib_unit_tests.getEmittedBin());
@@ -52,5 +52,5 @@ zig build && zig fmt --check src/ test/ benchmark/ tools/ examples/ build.zig &&
 ## When Tests Fail
 
 1. Read the actual test summary line (`N passed; M skipped; K failed.`)
-2. If the runner itself crashes before printing results, the Zig version likely regressed; try `0.17.0-dev.813+2153f8143` or the version pinned in `build.zig.zon` if present.
+2. If the runner itself crashes before printing results, the Zig version likely regressed; try `0.17.0-dev.1422+e863bf3be` or the version pinned in CI / `build.zig.zon` if present.
 3. SQLite `step failed: 19` is expected noise from the constraint-violation test; it is caught and the test passes.

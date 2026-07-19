@@ -1,12 +1,16 @@
 const std = @import("std");
 const io_instance = @import("../io_instance.zig");
 
-/// Redis client with full RESP protocol support over TCP.
+/// Redis client with RESP protocol support over TCP.
+/// Reads responses by accumulating until a complete RESP value is available
+/// (handles bulk strings larger than a single socket read). Cap via max_response_bytes.
 pub const RedisClient = struct {
     allocator: std.mem.Allocator,
     host: []const u8,
     port: u16,
     stream: ?std.Io.net.Stream = null,
+    /// Hard cap on a single response body to avoid unbounded allocation.
+    max_response_bytes: usize = 4 * 1024 * 1024,
 
     const Self = @This();
 
@@ -22,7 +26,7 @@ pub const RedisClient = struct {
     /// Connect to Redis server via TCP.
     pub fn connect(self: *Self) !void {
         const address = try std.Io.net.IpAddress.parseIp4(self.host, self.port);
-        self.stream = try address.connect(io_instance.io, .{});
+        self.stream = try address.connect(io_instance.io, .{ .mode = .stream });
     }
 
     /// Disconnect from Redis server.
@@ -53,54 +57,73 @@ pub const RedisClient = struct {
             try req.appendSlice(self.allocator, arg);
             try req.appendSlice(self.allocator, "\r\n");
         }
-        // Write to stream
         var wbuf: [4096]u8 = undefined;
         var writer = s.writer(io_instance.io, &wbuf);
         try writer.interface.writeAll(req.items);
-        // Read response
         return self.readResponse();
     }
 
-    /// Read and parse a RESP response. Returns value or null for nil bulk strings.
+    /// Read and parse a RESP response, looping until a complete value arrives.
     fn readResponse(self: *Self) !?[]const u8 {
         const s = try self.requireStream();
+        var accum = std.ArrayList(u8).empty;
+        defer accum.deinit(self.allocator);
+
         var rbuf: [4096]u8 = undefined;
         var reader = s.reader(io_instance.io, &rbuf);
-        const n = try reader.interface.readSliceShort(&rbuf);
-        if (n == 0) return error.ConnectionClosed;
-        return parseResp(self.allocator, rbuf[0..n]);
+
+        while (true) {
+            if (accum.items.len >= self.max_response_bytes) return error.ResponseTooLarge;
+            const chunk_cap = @min(rbuf.len, self.max_response_bytes - accum.items.len);
+            const n = try reader.interface.readSliceShort(rbuf[0..chunk_cap]);
+            if (n == 0) {
+                if (accum.items.len == 0) return error.ConnectionClosed;
+                return error.IncompleteResponse;
+            }
+            try accum.appendSlice(self.allocator, rbuf[0..n]);
+
+            const parsed = parseResp(self.allocator, accum.items) catch |err| switch (err) {
+                error.NeedMoreData => continue,
+                else => return err,
+            };
+            return parsed;
+        }
     }
 
-    /// Parse a RESP response line. Returns value or null for nil.
-    fn parseResp(allocator: std.mem.Allocator, data: []const u8) !?[]const u8 {
-        if (data.len == 0) return error.EmptyResponse;
+    /// Parse a RESP response. Returns value or null for nil bulk strings.
+    /// Returns error.NeedMoreData when the buffer does not yet contain a full value.
+    pub fn parseResp(allocator: std.mem.Allocator, data: []const u8) !?[]const u8 {
+        if (data.len == 0) return error.NeedMoreData;
         return switch (data[0]) {
             '+' => { // Simple String: +OK\r\n
-                const end = std.mem.indexOf(u8, data, "\r\n") orelse return error.InvalidResp;
+                const end = std.mem.indexOf(u8, data, "\r\n") orelse return error.NeedMoreData;
                 return try allocator.dupe(u8, data[1..end]);
             },
             '-' => { // Error: -ERR message\r\n
-                const end = std.mem.indexOf(u8, data, "\r\n") orelse return error.InvalidResp;
+                const end = std.mem.indexOf(u8, data, "\r\n") orelse return error.NeedMoreData;
                 const msg = data[1..end];
                 if (std.mem.startsWith(u8, msg, "ERR ")) return error.RedisError;
                 if (std.mem.startsWith(u8, msg, "WRONGTYPE ")) return error.WrongType;
                 return error.RedisError;
             },
             ':' => { // Integer: :42\r\n
-                const end = std.mem.indexOf(u8, data, "\r\n") orelse return error.InvalidResp;
+                const end = std.mem.indexOf(u8, data, "\r\n") orelse return error.NeedMoreData;
                 return try allocator.dupe(u8, data[1..end]);
             },
             '$' => { // Bulk String: $5\r\nhello\r\n  or  $-1\r\n (nil)
-                const end = std.mem.indexOfScalar(u8, data, '\n') orelse return error.InvalidResp;
-                const len_str = data[1 .. end - 1];
+                const end = std.mem.indexOf(u8, data, "\r\n") orelse return error.NeedMoreData;
+                const len_str = data[1..end];
                 const len = try std.fmt.parseInt(i64, len_str, 10);
                 if (len < 0) return null; // nil bulk string
-                const val_start = end + 1;
+                const val_start = end + 2;
                 const val_len: usize = @intCast(len);
-                if (data.len < val_start + val_len) return error.InvalidResp;
+                // Need payload + trailing \r\n
+                if (data.len < val_start + val_len + 2) return error.NeedMoreData;
                 return try allocator.dupe(u8, data[val_start .. val_start + val_len]);
             },
-            '*' => { // Array: *2\r\n...  — we only need the first element for now
+            '*' => { // Array: *N\r\n... — wait for at least the header line
+                _ = std.mem.indexOf(u8, data, "\r\n") orelse return error.NeedMoreData;
+                // Full array reassembly is out of scope; return empty for subscribe acks etc.
                 return try allocator.dupe(u8, "");
             },
             else => return error.InvalidResp,
@@ -159,7 +182,6 @@ pub const RedisClient = struct {
         const result = try self.command(&.{ "PUBLISH", channel, message });
         if (result) |r| {
             defer self.allocator.free(r);
-            // parseResp strips the ':' prefix from RESP integers.
             return std.fmt.parseInt(i64, r, 10) catch 0;
         }
         return 0;
@@ -223,3 +245,35 @@ pub const RedisCache = struct {
         try self.client.flushDb();
     }
 };
+
+test "redis: parseResp simple string" {
+    const a = std.testing.allocator;
+    const v = try RedisClient.parseResp(a, "+PONG\r\n");
+    defer if (v) |r| a.free(r);
+    try std.testing.expectEqualStrings("PONG", v.?);
+}
+
+test "redis: parseResp integer strips colon" {
+    const a = std.testing.allocator;
+    const v = try RedisClient.parseResp(a, ":1\r\n");
+    defer if (v) |r| a.free(r);
+    try std.testing.expectEqualStrings("1", v.?);
+}
+
+test "redis: parseResp bulk string" {
+    const a = std.testing.allocator;
+    const v = try RedisClient.parseResp(a, "$5\r\nhello\r\n");
+    defer if (v) |r| a.free(r);
+    try std.testing.expectEqualStrings("hello", v.?);
+}
+
+test "redis: parseResp bulk NeedMoreData" {
+    const a = std.testing.allocator;
+    try std.testing.expectError(error.NeedMoreData, RedisClient.parseResp(a, "$5\r\nhel"));
+}
+
+test "redis: parseResp nil bulk" {
+    const a = std.testing.allocator;
+    const v = try RedisClient.parseResp(a, "$-1\r\n");
+    try std.testing.expect(v == null);
+}

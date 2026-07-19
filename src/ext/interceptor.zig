@@ -1,6 +1,7 @@
 const std = @import("std");
 const zfinal = @import("../main.zig");
 const TimeKit = @import("../kit/time_kit.zig").TimeKit;
+const IpExt = @import("ext_util.zig").IpExt;
 
 /// 性能监控拦截器
 pub fn createPerformanceInterceptor() zfinal.Interceptor {
@@ -71,7 +72,9 @@ pub fn createAccessLogInterceptor() zfinal.Interceptor {
             const path = ctx.req.head.target;
             const status = @intFromEnum(ctx.res_status);
             const user_agent = ctx.getHeader("User-Agent") orelse "Unknown";
-            const client_ip = ctx.getHeader("X-Real-IP") orelse ctx.getHeader("X-Forwarded-For") orelse "unknown";
+            var ip_buf: [64]u8 = undefined;
+            // Secure default: do not trust spoofable proxy headers in access logs.
+            const client_ip = IpExt.resolveClientIp(ctx, &ip_buf, .{}) catch "unknown";
 
             std.debug.print("[Access] {s} - {s} {s} - {d} - UA: {s}\n", .{
                 client_ip,

@@ -4,6 +4,88 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+## 2026-07-19 — v0.13.9: QueueNatsClient → stable
+
+**Session**: Promote NATS from experimental; drop nats.zig optional dep
+**Changes**:
+1. `nats_client.zig` — zero-dep NATS wire (from zigmodu)
+2. `QueueNatsClient` stable root export + URL parse; experimental alias kept
+3. Docs `doc/nats.md`, ADR-005
+**Tests**: run after change
+
+---
+
+## 2026-07-19 — v0.13.8: RobustMQ / Kafka connector
+
+**Session**: Port zigmodu KafkaConnector; connect RobustMQ besides NATS
+**Changes**:
+1. `src/plugin/robustmq.zig` — Kafka wire + `QueueRobustMQClient` façade
+2. Stable root exports; docs `doc/robustmq.md`; L3 bus prefers RobustMQ
+3. NATS remains `experimental.QueueNatsClient`
+**Next**: Full Fetch RecordBatch decode; optional consumer-group join
+
+---
+
+## 2026-07-19 — Docs: scale-out + progressive architecture
+
+**Session**: Encode 千万级支撑方案; reverse into L0→L3 code architecture
+**Changes**:
+1. `doc/scale_to_millions.md` — topology, ZFinal constraints, capacity, roadmap
+2. `doc/progressive_architecture.md` — L0–L3 directories, ports/adapters, checklists
+3. Cross-links from architecture_best_practices, index, AGENTS, READMEs, framework skill
+**Next**: Optional example skeleton under `examples/` mirroring L2 ports (when requested)
+
+---
+
+## 2026-07-19 — Docs: architecture best practices
+
+**Session**: Write architecture best practices into project docs
+**Changes**:
+1. Added `doc/architecture_best_practices.md` (layers, AI zones, plugins, security, anti-patterns)
+2. Linked from `doc/index.md`, `AGENTS.md`, README / README_CN, `zfinal-framework` skill
+**Next**: Keep doc in sync when stable/experimental plugin set changes
+
+---
+
+## 2026-07-19 — v0.13.7: P2P + remaining plugins; Zig 1422
+
+**Session**: Continue P2P/HttpClient/Config/OAuth2/etc.; adapt to Zig 0.17.0-dev.1422
+**Changes**:
+1. P2P: spin-mutex helpers, safe peer snapshot, gossip `announce` test + mesh broadcast test
+2. HttpClient: `Writer.Allocating` for `response_writer` (`?*Writer` on 1422)
+3. zf migrate: `std.hash.Crc32` (ISO-HDLC) replaces removed `hash.crc.Crc32`
+4. CI / dna / audit pin → `0.17.0-dev.1422+e863bf3be`
+**Tests**: 176 passed; 2 skipped; 0 failed (`zig build` + `test-zf` OK)
+**Next**: MQTT subscribe/QoS; optional NATS behind `-Denable-nats`; keep-alive when Zig http.Server fixed
+
+---
+
+## 2026-07-19 — v0.13.6: Promote plugins to stable
+
+**Session**: CircuitBreaker, Queue, DID, Agent, MetricsExporter, MQTT → stable
+**Changes**:
+1. New `circuit_breaker.zig`, `metrics_exporter.zig`; rewrite `queue`/`did`/`agent`/`mqtt`
+2. Root exports updated; experimental keeps P2P/NATS/compat stubs
+3. 165 passed / 2 skipped
+**Next**: MQTT subscribe; optional NATS behind `-Denable-nats`
+**Tests**: 165 passed; 2 skipped; 0 failed
+
+---
+
+**Session**: Raise production score from ~75/94 claim to verified 95%
+**Changes**:
+1. Trusted-proxy IP policy (`ClientIpOptions`) — rate limit + access log no longer trust spoofable headers by default
+2. `zfinal.experimental.*` namespace for MQTT/Agent/DID/P2P/Queue/stubs
+3. Redis loop-read + NeedMoreData + size cap + 5 parseResp unit tests
+4. Token/Captcha `purgeExpired`; Cookie HttpOnly+SameSite defaults; Secure opt-in
+5. Context path-safety tests + renderFile last-chunk fix; Metrics healthHandler type fix
+6. PRODUCTION_AUDIT rewritten; README badges 95%; CI ReleaseSafe smoke
+**Errors**: healthHandlerFor capture of non-comptime pointer — fixed with `comptime metrics: *Metrics`
+**Next**: Optional PG/MySQL CI matrix; revisit keep-alive when Zig http.Server is fixed
+**Tests**: 154 passed; 2 skipped; 0 failed
+
+---
+
 ## 2026-05-12 — v0.4.0: Framework Unification & AI-Native Codegen
 
 **Session**: Production hardening wave 2
