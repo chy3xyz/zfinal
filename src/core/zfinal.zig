@@ -4,6 +4,7 @@ const HttpMethod = @import("router.zig").HttpMethod;
 const Server = @import("server.zig").Server;
 const ServerConfig = @import("server.zig").ServerConfig;
 const Handler = @import("router.zig").Handler;
+const Metrics = @import("metrics.zig").Metrics;
 const Interceptor = @import("../interceptor/interceptor.zig").Interceptor;
 const InterceptorChain = @import("../interceptor/interceptor.zig").InterceptorChain;
 
@@ -17,6 +18,8 @@ pub const ZFinal = struct {
     router: Router,
     plugin_manager: PluginManager,
     config: ServerConfig,
+    /// Optional request metrics. When set, `dispatch` auto-records status classes.
+    metrics: ?*Metrics = null,
 
     /// Initialize a new ZFinal application. Routes, plugins, and config
     /// are added before calling `start()`.
@@ -46,6 +49,11 @@ pub const ZFinal = struct {
     /// Replace the entire server configuration.
     pub fn setConfig(self: *ZFinal, config: ServerConfig) void {
         self.config = config;
+    }
+
+    /// Attach shared Metrics so the core server auto-records connections/requests.
+    pub fn setMetrics(self: *ZFinal, metrics: *Metrics) void {
+        self.metrics = metrics;
     }
 
     /// Register a plugin. Plugins are started in registration order when
@@ -131,6 +139,7 @@ pub const ZFinal = struct {
     pub fn start(self: *ZFinal) !void {
         try self.plugin_manager.startAll();
         var server = try Server.init(self.allocator, &self.router, self.config);
+        server.metrics = self.metrics;
         try server.start();
     }
 };

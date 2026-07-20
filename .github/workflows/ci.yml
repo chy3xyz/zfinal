@@ -15,58 +15,94 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         # Must match minimum_zig_version in build.zig.zon.
         zig-version: ['0.17.0-dev.1422+e863bf3be']
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Setup Zig
       uses: mlugg/setup-zig@v2
       with:
         version: ${{ matrix.zig-version }}
-    
+
     - name: Install SQLite (Ubuntu)
       if: matrix.os == 'ubuntu-latest'
       run: |
         sudo apt-get update
         sudo apt-get install -y sqlite3 libsqlite3-dev
-    
+
     - name: Install SQLite (macOS)
       if: matrix.os == 'macos-latest'
       run: |
         brew install sqlite3
-    
+
     - name: Build
       run: zig build
-    
+
     - name: Run tests
       run: zig build test
-    
+
     - name: Run codegen regression tests
       run: zig build test-zf
-    
+
     - name: Release-mode smoke build
       run: zig build -Doptimize=ReleaseSafe
-    
+
     - name: Build CLI tool
       run: zig build install
-    
+
     - name: Test CLI
       run: |
         export PATH="$PATH:$(pwd)/zig-out/bin"
         zf version
         zf help
 
-  lint:
-    name: Lint
+  drivers-compile:
+    name: Compile with PG + MySQL + zent
     runs-on: ubuntu-latest
-    
     steps:
     - uses: actions/checkout@v4
-    
     - name: Setup Zig
       uses: mlugg/setup-zig@v2
       with:
         version: '0.17.0-dev.1422+e863bf3be'
-    
+    - name: Install client libs
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libsqlite3-dev libpq-dev default-libmysqlclient-dev
+    - name: Build with optional drivers
+      run: zig build -Ddriver_pg=true -Ddriver_mysql=true -Denable-zent=true
+    - name: Unit tests with optional drivers
+      run: zig build test -Ddriver_pg=true -Ddriver_mysql=true -Denable-zent=true
+    - name: Codegen regression
+      run: zig build test-zf
+
+  production-example:
+    name: Production example build
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Zig
+      uses: mlugg/setup-zig@v2
+      with:
+        version: '0.17.0-dev.1422+e863bf3be'
+    - name: Install SQLite
+      run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+    - name: Build and install (includes production binary)
+      run: zig build -Doptimize=ReleaseSafe
+    - name: Assert production example binary
+      run: test -x zig-out/bin/production
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Zig
+      uses: mlugg/setup-zig@v2
+      with:
+        version: '0.17.0-dev.1422+e863bf3be'
+
     - name: Check formatting
       run: zig fmt --check src/ tools/ examples/ benchmark/ build.zig

@@ -3,6 +3,7 @@ const http = std.http;
 const Router = @import("router.zig").Router;
 const HttpMethod = @import("router.zig").HttpMethod;
 const Context = @import("context.zig").Context;
+const Metrics = @import("metrics.zig").Metrics;
 const getLog = @import("logger.zig").getLogger;
 const shutdown = @import("shutdown.zig");
 
@@ -16,6 +17,10 @@ pub const ServerConfig = struct {
     /// Max time to wait for in-flight connections after SIGTERM/SIGINT (ms).
     /// Prevents hang forever when a client never closes. Default 30s.
     drain_timeout_ms: u64 = 30_000,
+    /// Per-connection idle timeout (ms) between request activity.
+    /// Watchdog closes the socket if no `receiveHead`/dispatch progress.
+    /// 0 disables. Default 30s. Still pair with reverse-proxy timeouts.
+    request_timeout_ms: u64 = 30_000,
 };
 
 /// Error set for server operations. Wrapped to fit Group.async std.Io.Cancelable!void constraint.
@@ -38,6 +43,8 @@ pub const Server = struct {
     allocator: std.mem.Allocator,
     router: *Router,
     config: ServerConfig,
+    /// Optional shared metrics; when set, dispatch auto-records status classes.
+    metrics: ?*Metrics = null,
     active_conns: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     err_handle: ErrorHandle = .{},
     /// Listener socket, stored so a shutdown watchdog can close it to unblock accept().
@@ -146,9 +153,34 @@ fn acceptLoopImpl(io: std.Io, server: *Server, addr: std.Io.net.IpAddress, group
 
 /// Handler fiber — manages keep-alive request loop for one connection.
 fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cancelable!void {
-    defer conn.close(io);
     defer _ = server.active_conns.fetchSub(1, .monotonic);
     _ = server.active_conns.fetchAdd(1, .monotonic);
+    if (server.metrics) |m| m.recordConnection();
+
+    var conn_closed = std.atomic.Value(bool).init(false);
+    defer {
+        if (!conn_closed.swap(true, .monotonic)) conn.close(io);
+    }
+
+    var last_activity_ms = std.atomic.Value(u64).init(monoMs(io));
+    var finished = std.atomic.Value(bool).init(false);
+    defer finished.store(true, .release);
+
+    var idle_group = std.Io.Group.init;
+    if (server.config.request_timeout_ms > 0) {
+        idle_group.async(io, idleWatchdog, .{
+            io,
+            conn,
+            &last_activity_ms,
+            &finished,
+            &conn_closed,
+            server.config.request_timeout_ms,
+        });
+    }
+    defer {
+        finished.store(true, .release);
+        _ = idle_group.await(io) catch {};
+    }
 
     var read_buf: [4096]u8 = undefined;
     var write_buf: [4096]u8 = undefined;
@@ -158,11 +190,44 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
     var req_count: usize = 0;
 
     while (req_count < server.config.max_requests_per_conn) : (req_count += 1) {
+        if (conn_closed.load(.monotonic)) break;
+        last_activity_ms.store(monoMs(io), .monotonic);
         var request = http_srv.receiveHead() catch break;
+        last_activity_ms.store(monoMs(io), .monotonic);
         dispatch(&request, server) catch break;
+        last_activity_ms.store(monoMs(io), .monotonic);
         if (request.head.version != .@"HTTP/1.1") break;
         if (!request.head.keep_alive) break;
     }
+}
+
+fn idleWatchdog(
+    io: std.Io,
+    conn: std.Io.net.Stream,
+    last_activity_ms: *std.atomic.Value(u64),
+    finished: *std.atomic.Value(bool),
+    conn_closed: *std.atomic.Value(bool),
+    timeout_ms: u64,
+) std.Io.Cancelable!void {
+    while (!finished.load(.acquire)) {
+        io.sleep(std.Io.Duration.fromMilliseconds(100), .awake) catch break;
+        if (finished.load(.acquire)) break;
+        const now = monoMs(io);
+        const last = last_activity_ms.load(.monotonic);
+        if (now > last and (now - last) >= timeout_ms) {
+            getLog().warnFmt("Request idle timeout ({d}ms); closing connection", .{timeout_ms});
+            if (!conn_closed.swap(true, .monotonic)) {
+                conn.close(io);
+            }
+            break;
+        }
+    }
+}
+
+fn monoMs(io: std.Io) u64 {
+    const ts = std.Io.Timestamp.now(io, .awake);
+    const secs: u64 = @intCast(@max(ts.toSeconds(), 0));
+    return secs *% 1000;
 }
 
 fn dispatch(request: *http.Server.Request, server: *Server) !void {
@@ -181,7 +246,14 @@ fn dispatch(request: *http.Server.Request, server: *Server) !void {
         ctx.renderText("Internal Server Error") catch |render_err| {
             getLog().warnFmt("Failed to render 500 response: {t}", .{render_err});
         };
+        if (server.metrics) |m| {
+            m.recordError(@errorName(err), path);
+        }
     };
+
+    if (server.metrics) |m| {
+        m.recordRequest(@intFromEnum(ctx.res_status));
+    }
 
     // TODO(zig-0.17): Force Connection: close to work around http.Server
     // reader state bug. Keep-alive on same connection triggers

@@ -115,3 +115,47 @@ pub fn healthHandlerFor(comptime metrics: *Metrics) *const fn (*@import("context
         }
     }.handler;
 }
+
+/// Named probe used by `healthHandlerWithChecks`.
+pub const HealthCheck = struct {
+    name: []const u8,
+    /// Return true when the dependency is healthy.
+    check: *const fn () bool,
+};
+
+/// Health JSON including named probes (e.g. DB ping). Overall status is
+/// `ok` only when metrics 5xx==0 and every probe returns true.
+pub fn healthHandlerWithChecks(
+    comptime metrics: *Metrics,
+    comptime checks: []const HealthCheck,
+) *const fn (*@import("context.zig").Context) anyerror!void {
+    return struct {
+        fn handler(ctx: *@import("context.zig").Context) anyerror!void {
+            var all_ok = metrics.responses_5xx.load(.monotonic) == 0;
+            var probe_buf: [16]struct { name: []const u8, ok: bool } = undefined;
+            const n = @min(checks.len, probe_buf.len);
+            var i: usize = 0;
+            while (i < n) : (i += 1) {
+                const ok = checks[i].check();
+                probe_buf[i] = .{ .name = checks[i].name, .ok = ok };
+                if (!ok) all_ok = false;
+            }
+
+            const health_status: []const u8 = if (all_ok) "ok" else "degraded";
+            // Fixed-shape JSON for ≤16 probes; unused slots omitted via slice.
+            const probes = probe_buf[0..n];
+            const payload = .{
+                .status = health_status,
+                .uptime_sec = metrics.uptime(),
+                .connections = metrics.total_connections.load(.monotonic),
+                .total_requests = metrics.total_requests.load(.monotonic),
+                .responses_2xx = metrics.responses_2xx.load(.monotonic),
+                .responses_4xx = metrics.responses_4xx.load(.monotonic),
+                .responses_5xx = metrics.responses_5xx.load(.monotonic),
+                .probes = probes,
+            };
+            ctx.res_status = if (all_ok) .ok else .service_unavailable;
+            try ctx.renderJson(payload);
+        }
+    }.handler;
+}

@@ -7,6 +7,7 @@ test {
     std.testing.refAllDecls(@This());
     _ = @import("aichat/aichat_test.zig");
     _ = @import("aichat/zf_tool.zig");
+    _ = @import("auth/jwt.zig");
 }
 
 // Export core modules
@@ -30,6 +31,8 @@ pub const initGlobalLogger = @import("core/logger.zig").initGlobalLogger;
 pub const getLogger = @import("core/logger.zig").getLogger;
 pub const Metrics = @import("core/metrics.zig").Metrics;
 pub const healthHandlerFor = @import("core/metrics.zig").healthHandlerFor;
+pub const healthHandlerWithChecks = @import("core/metrics.zig").healthHandlerWithChecks;
+pub const HealthCheck = @import("core/metrics.zig").HealthCheck;
 pub const shutdown = @import("core/shutdown.zig");
 pub const JsonNaming = enum { snake_case, camelCase };
 
@@ -73,6 +76,14 @@ pub const LoggingInterceptor = @import("interceptor/interceptor.zig").LoggingInt
 pub const AuthInterceptor = @import("interceptor/interceptor.zig").AuthInterceptor;
 pub const CORSInterceptor = @import("interceptor/interceptor.zig").CORSInterceptor;
 pub const createCorsInterceptor = @import("interceptor/interceptor.zig").createCorsInterceptor;
+pub const createJwtAuthInterceptor = @import("interceptor/interceptor.zig").createJwtAuthInterceptor;
+
+// Auth
+pub const Jwt = @import("auth/jwt.zig");
+pub const jwtSign = @import("auth/jwt.zig").sign;
+pub const jwtVerify = @import("auth/jwt.zig").verify;
+pub const jwtFreeClaims = @import("auth/jwt.zig").freeClaims;
+pub const JwtClaims = @import("auth/jwt.zig").Claims;
 
 // Export validator module
 pub const Validator = @import("validator/validator.zig").Validator;
@@ -181,6 +192,7 @@ pub const createPerformanceInterceptor = @import("ext/interceptor.zig").createPe
 pub const createExceptionInterceptor = @import("ext/interceptor.zig").createExceptionInterceptor;
 pub const createAccessLogInterceptor = @import("ext/interceptor.zig").createAccessLogInterceptor;
 pub const createCacheInterceptor = @import("ext/interceptor.zig").createCacheInterceptor;
+pub const createRateLimitInterceptor = @import("ext/interceptor.zig").createRateLimitInterceptor;
 pub const RenderExt = @import("ext/util.zig").RenderExt;
 pub const ParamExt = @import("ext/util.zig").ParamExt;
 pub const SessionExt = @import("ext/util.zig").SessionExt;

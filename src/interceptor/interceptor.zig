@@ -1,5 +1,6 @@
 const std = @import("std");
 const Context = @import("../core/context.zig").Context;
+const jwt = @import("../auth/jwt.zig");
 
 pub const Handler = *const fn (*Context) anyerror!void;
 
@@ -128,7 +129,7 @@ pub const LoggingInterceptor = Interceptor{
 };
 
 /// Demo-only auth: checks cookie `auth_token` **presence**, not validity.
-/// Do **not** use for production — implement JWT/session verification yourself.
+/// Do **not** use for production — use `createJwtAuthInterceptor`.
 pub fn authBefore(ctx: *Context) !bool {
     const token = try ctx.getCookie("auth_token");
     if (token == null) {
@@ -143,6 +144,49 @@ pub const AuthInterceptor = Interceptor{
     .name = "auth",
     .before = authBefore,
 };
+
+/// Production JWT (HS256) auth. Expects `Authorization: Bearer <token>`.
+/// On success sets attrs `jwt_sub` and optional `jwt_role` (copied into ctx).
+pub fn createJwtAuthInterceptor(secret: []const u8) Interceptor {
+    const Impl = struct {
+        var sec: []const u8 = undefined;
+
+        fn before(ctx: *Context) !bool {
+            const hdr = ctx.getHeader("Authorization") orelse {
+                ctx.res_status = .unauthorized;
+                try ctx.renderJson(.{ .err = "Missing Authorization" });
+                return false;
+            };
+            const prefix = "Bearer ";
+            if (hdr.len <= prefix.len or !std.ascii.eqlIgnoreCase(hdr[0..prefix.len], prefix)) {
+                ctx.res_status = .unauthorized;
+                try ctx.renderJson(.{ .err = "Expected Bearer token" });
+                return false;
+            }
+            const token = hdr[prefix.len..];
+            var ts: std.c.timespec = undefined;
+            _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+            const now: i64 = @intCast(ts.sec);
+
+            const claims = jwt.verify(ctx.allocator, sec, token, now) catch {
+                ctx.res_status = .unauthorized;
+                try ctx.renderJson(.{ .err = "Invalid or expired token" });
+                return false;
+            };
+            defer jwt.freeClaims(ctx.allocator, claims);
+            try ctx.setAttr("jwt_sub", claims.sub);
+            if (claims.role) |role| {
+                try ctx.setAttr("jwt_role", role);
+            }
+            return true;
+        }
+    };
+    Impl.sec = secret;
+    return Interceptor{
+        .name = "jwt_auth",
+        .before = Impl.before,
+    };
+}
 
 /// Default CORS: `Access-Control-Allow-Origin: *`.
 /// **Not safe for credentialed browser APIs.** Prefer `createCorsInterceptor`.

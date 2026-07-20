@@ -1,5 +1,6 @@
-//! Production-oriented example: structured logging, Metrics health,
-//! CSRF on POST, rate limiting, restricted CORS, graceful shutdown.
+//! Production-oriented example: structured logging, auto Metrics,
+//! CSRF on POST, rate-limit interceptor, JWT-protected route,
+//! restricted CORS, request idle timeout, graceful shutdown.
 //!
 //! See PRODUCTION_AUDIT.md deployment contract.
 
@@ -11,6 +12,11 @@ pub const log_level = "info";
 var g_metrics: zfinal.Metrics = undefined;
 var g_token_mgr: *zfinal.TokenManager = undefined;
 var g_rate: *zfinal.RateLimitHandler = undefined;
+var g_jwt_secret: []const u8 = "change-me-in-production-min-32-bytes!!";
+
+fn probeProcessAlive() bool {
+    return true;
+}
 
 pub fn main(init: std.process.Init) !void {
     zfinal.io_instance.init(init);
@@ -28,15 +34,23 @@ pub fn main(init: std.process.Init) !void {
     g_metrics = zfinal.Metrics.init(allocator);
     defer g_metrics.deinit();
 
+    if (std.c.getenv("JWT_SECRET")) |s| {
+        g_jwt_secret = std.mem.span(s);
+    }
+
     var app = zfinal.ZFinal.init(allocator);
     defer app.deinit();
     app.setConfig(.{
         .port = 8080,
         .drain_timeout_ms = 15_000,
+        .request_timeout_ms = 30_000,
         .max_body_size = 1 * 1024 * 1024,
     });
+    app.setMetrics(&g_metrics);
 
-    try app.get("/health", zfinal.healthHandlerFor(&g_metrics));
+    try app.get("/health", zfinal.healthHandlerWithChecks(&g_metrics, &.{
+        .{ .name = "process", .check = probeProcessAlive },
+    }));
 
     var token_mgr = zfinal.TokenManager.init(allocator);
     defer token_mgr.deinit();
@@ -57,6 +71,8 @@ pub fn main(init: std.process.Init) !void {
         .token_name = "_token",
         .error_message = "Invalid or expired CSRF token",
     });
+    const rate_mw = zfinal.createRateLimitInterceptor(&rate_limiter);
+    const jwt_mw = zfinal.createJwtAuthInterceptor(g_jwt_secret);
 
     // Explicit origin — never ship wildcard CORS for credentialed APIs.
     const cors_origin = blk: {
@@ -64,23 +80,21 @@ pub fn main(init: std.process.Init) !void {
         break :blk "http://127.0.0.1:8080";
     };
     try app.addGlobalInterceptor(zfinal.createCorsInterceptor(cors_origin));
+    try app.addGlobalInterceptor(rate_mw);
 
     var api = zfinal.RouteGroup.init(&app, "/api");
     _ = try api.get("/form", handleForm);
     try app.postWithInterceptors("/api/submit", handleSubmit, &.{csrf});
+    try app.getWithInterceptors("/api/me", handleMe, &.{jwt_mw});
+    try app.post("/api/token", handleIssueToken);
 
-    zfinal.getLogger().infoFmt("Listening on http://0.0.0.0:8080 (drain_timeout=15s)", .{});
-    zfinal.getLogger().infoFmt("Health: /health | Form: /api/form | POST /api/submit (CSRF)", .{});
+    zfinal.getLogger().infoFmt("Listening on http://0.0.0.0:8080 (drain=15s idle=30s)", .{});
+    zfinal.getLogger().infoFmt("Health: /health | Form: /api/form | POST /api/submit | JWT /api/me", .{});
 
     try app.start();
 }
 
 fn handleForm(ctx: *zfinal.Context) !void {
-    g_rate.handle(ctx) catch {
-        g_metrics.recordRequest(429);
-        return;
-    };
-    g_metrics.recordRequest(200);
     const token = try g_token_mgr.generate();
     defer ctx.allocator.free(token);
 
@@ -100,11 +114,26 @@ fn handleForm(ctx: *zfinal.Context) !void {
 }
 
 fn handleSubmit(ctx: *zfinal.Context) !void {
-    g_rate.handle(ctx) catch {
-        g_metrics.recordRequest(429);
-        return;
-    };
-    g_metrics.recordRequest(200);
     const msg = try ctx.getPara("message") orelse "";
     try ctx.renderJson(.{ .ok = true, .received = msg });
+}
+
+fn handleIssueToken(ctx: *zfinal.Context) !void {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+    const now: i64 = @intCast(ts.sec);
+    const token = try zfinal.jwtSign(ctx.allocator, g_jwt_secret, .{
+        .sub = "demo-user",
+        .exp = now + 3600,
+        .iat = now,
+        .role = "user",
+    });
+    defer ctx.allocator.free(token);
+    try ctx.renderJson(.{ .token = token, .token_type = "Bearer", .expires_in = 3600 });
+}
+
+fn handleMe(ctx: *zfinal.Context) !void {
+    const sub = ctx.getAttr("jwt_sub") orelse "unknown";
+    const role = ctx.getAttr("jwt_role") orelse "";
+    try ctx.renderJson(.{ .sub = sub, .role = role });
 }
