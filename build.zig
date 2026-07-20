@@ -105,6 +105,8 @@ pub fn build(b: *std.Build) void {
         "Minimum log level: debug, info, warn, err (default: info)",
     ) orelse "info";
 
+    const enable_zent = b.option(bool, "enable-zent", "Enable zent data layer (alternative/primary to DB/Model; default on)") orelse true;
+
     // Define the zfinal module
     const zfinal_mod = b.addModule("zfinal", .{
         .root_source_file = b.path("src/main.zig"),
@@ -117,11 +119,21 @@ pub fn build(b: *std.Build) void {
     if (mysql_c_mod) |m| zfinal_mod.addImport("c_mysql", m);
     if (pg_c_mod) |p| zfinal_mod.addImport("c_pg", p);
 
+    // Peer data layer: zent (ent-style). Same product surface as DB/Model when enabled.
+    if (enable_zent) {
+        const zent_dep = b.dependency("zent", .{
+            .target = target,
+            .optimize = optimize,
+        });
+        zfinal_mod.addImport("zent", zent_dep.module("zent"));
+    }
+
     // Inject compile-time log level via a generated options module
     const log_opts = b.addOptions();
     log_opts.addOption([]const u8, "log_level", log_level);
     log_opts.addOption(bool, "enable_mysql", driver_mysql);
     log_opts.addOption(bool, "enable_pg", driver_pg);
+    log_opts.addOption(bool, "enable_zent", enable_zent);
     zfinal_mod.addImport("build_options", log_opts.createModule());
 
     // Tests (unit)
@@ -184,6 +196,16 @@ pub fn build(b: *std.Build) void {
         ruoyi_step.dependOn(&ruoyi_run.step);
     }
 
+    // zent-shop demo (uses package zent; path sibling optional for local edit)
+    {
+        const zs_step = b.step("run-zent-shop", "Run zent-shop demo (zfinal.zent peer data layer; see doc/zent.md)");
+        const note = b.addSystemCommand(&.{
+            "sh", "-c",
+            \\cd examples/zent-shop && exec zig build run
+        });
+        zs_step.dependOn(&note.step);
+    }
+
     // PocketBase demo (more complex, has its own src/ tree)
     const pb_mod = b.createModule(.{
         .root_source_file = b.path("examples/pocketbase/main.zig"),
@@ -207,7 +229,7 @@ pub fn build(b: *std.Build) void {
     const zf_opts = b.addOptions();
     zf_opts.addOption(bool, "enable_pg", enable_pg);
     zf_opts.addOption(bool, "enable_my", enable_mysql);
-    zf_opts.addOption([]const u8, "version", "v0.8.1"); // current framework version
+    zf_opts.addOption([]const u8, "version", "v0.13.10"); // current framework version
 
     const zf_mod = b.createModule(.{
         .root_source_file = b.path("tools/zf/main.zig"),
@@ -229,6 +251,14 @@ pub fn build(b: *std.Build) void {
         codegen_for_zf.linkSystemLibrary("sqlite3", .{});
         codegen_for_zf.addImport("c_sqlite3", sqlite3_c_mod);
         zf_mod.addImport("codegen", codegen_for_zf);
+    }
+    {
+        const zent_cg = b.createModule(.{
+            .root_source_file = b.path("tools/zf/zent_codegen.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        zf_mod.addImport("zent_codegen", zent_cg);
     }
     zf_mod.link_libc = true;
     zf_mod.linkSystemLibrary("sqlite3", .{});
@@ -292,6 +322,12 @@ pub fn build(b: *std.Build) void {
         admin_templates_mod.linkSystemLibrary("sqlite3", .{});
         admin_templates_mod.addImport("c_sqlite3", sqlite3_c_mod);
 
+        const zent_cg_mod = b.createModule(.{
+            .root_source_file = b.path("tools/zf/zent_codegen.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+
         const zf_test_mod = b.createModule(.{
             .root_source_file = b.path("tools/zf/codegen_test.zig"),
             .target = target,
@@ -299,6 +335,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "codegen", .module = codegen_mod },
                 .{ .name = "admin_templates", .module = admin_templates_mod },
+                .{ .name = "zent_codegen", .module = zent_cg_mod },
             },
         });
         zf_test_mod.link_libc = true;

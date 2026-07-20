@@ -4,20 +4,35 @@
 > Optimized for AI-driven development: the `zf` CLI emits machine-readable
 > JSON manifests, generated files contain `// ── ai-edit-zone: ...`
 > markers telling you exactly where to write business logic, and the
-> in-framework `zfinal.ZfTool` lets you invoke the generator from code.
+> in-framework `zfinal.aichat.ZfTool` lets you invoke generators from code
+> (`manifestFromSql` **and** `manifestFromZent`).
 > When you (an AI agent) start a ZFinal task, read
-> `.claude/skills/zfinal-onboarding.md` first.
+> `.claude/skills/zfinal-onboarding.md` first. For graphs / e-commerce,
+> load `.claude/skills/zfinal-zent-ai.md`.
 
 > **🛑 RULE: Use `zf` CLI tools. Never hand-code Zig from scratch.**
 
 ## ▶️ START — pick your flow
 
 ```
+# Data layer A (SQL primary): DB / Model + zf
 New project:       zf new <name> → zf crud:sql <file> → edit generated files
 Add module:        zf g handler|model|middleware|service|task <Name>
 Migrate Java:      extract SQL → zf crud:sql schema.sql → see doc/aichat.md
 PG/MySQL live:     zf crud:dsn postgres://user:pass@host/db  (needs -Denable-pg)
+
+# Data layer B (zent primary): schema-as-code — e-commerce / social / RBAC
+zf crud:zent schema.zent --json   # see doc/zent.md + examples/zent-shop
 ```
+
+## 💾 Data layers — two alternatives
+
+| Primary | Export | Use when |
+|---------|--------|----------|
+| **A. SQL** | `zfinal.DB` / `Model` | Flat CRUD, existing SQL, `zf crud:sql` |
+| **B. zent** | `zfinal.zent` | Dense graphs, privacy, hooks — **can be the whole app's main ORM** |
+
+Pick **one stack per module**. Do not mix drivers in one transaction. Details: `doc/zent.md`.
 
 ## 📂 EDIT ZONE — only these are safe
 
@@ -44,8 +59,8 @@ zf check    # scans for generated/edit boundary violations
 ## 🏗️ Architecture (3 layers)
 
 ```
-handler.zig → service.zig → model.zig
-  HTTP bind     business logic   DB mapping
+handler.zig → service.zig → model / persistence
+  HTTP bind     business logic   DB/Model  或  zent Schema（二选一主力）
 ```
 
 ## 📁 Generated module layout
@@ -73,6 +88,7 @@ zig build -Dlog-level=debug  # compile-time log level
 
 ## 📚 Full docs
 
+- `doc/zent.md` — data layer B: `zfinal.zent` as alternative / primary vs `DB`/`Model`
 - `doc/nats.md` — NATS connector (`QueueNatsClient`, zero dep)
 - `doc/robustmq.md` — RobustMQ / Kafka connector (`QueueRobustMQClient`)
 - `doc/architecture_best_practices.md` — code architecture best practices (layers, plugins, AI boundaries)

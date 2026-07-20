@@ -13,6 +13,9 @@ pub const ServerConfig = struct {
     max_connections: usize = 10000,
     max_requests_per_conn: usize = 100,
     max_body_size: usize = 10 * 1024 * 1024,
+    /// Max time to wait for in-flight connections after SIGTERM/SIGINT (ms).
+    /// Prevents hang forever when a client never closes. Default 30s.
+    drain_timeout_ms: u64 = 30_000,
 };
 
 /// Error set for server operations. Wrapped to fit Group.async std.Io.Cancelable!void constraint.
@@ -121,27 +124,24 @@ fn acceptLoopImpl(io: std.Io, server: *Server, addr: std.Io.net.IpAddress, group
 
         group.async(io, handleConn, .{ io, conn, server });
     }
-    // Graceful shutdown: drain pending connections.
-    // group.cancel(io) would panic on aarch64-macos when handleConn
-    // fibers have active cancelation waiters. Instead, close the
-    // listener (defer above handles that) and let connections drain
-    // naturally via keep-alive timeout or max_requests_per_conn.
+    // Graceful shutdown: drain pending connections with a hard deadline.
     getLog().info("Shutting down server...", .{});
-    var drain_ok: bool = false;
-    while (!drain_ok) {
-        // Wait for active connections to complete
-        for (0..10) |_| {
-            if (server.active_conns.load(.monotonic) == 0) {
-                drain_ok = true;
-                break;
-            }
-            io.sleep(std.Io.Duration.fromMilliseconds(100), .awake) catch break;
+    const drain_deadline_ms = server.config.drain_timeout_ms;
+    var waited_ms: u64 = 0;
+    while (server.active_conns.load(.monotonic) > 0) {
+        if (waited_ms >= drain_deadline_ms) {
+            getLog().warnFmt(
+                "Drain timeout ({d}ms) reached with {d} active connection(s); exiting",
+                .{ drain_deadline_ms, server.active_conns.load(.monotonic) },
+            );
+            break;
         }
-        if (!drain_ok) {
-            getLog().info("Waiting for active connections to drain...", .{});
-        }
+        io.sleep(std.Io.Duration.fromMilliseconds(100), .awake) catch break;
+        waited_ms += 100;
     }
-    getLog().info("All connections drained.", .{});
+    if (server.active_conns.load(.monotonic) == 0) {
+        getLog().info("All connections drained.", .{});
+    }
 }
 
 /// Handler fiber — manages keep-alive request loop for one connection.

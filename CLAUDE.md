@@ -16,6 +16,7 @@ Key routing rules for this project:
 
 - **First contact / "what is zfinal" / orientation** → invoke `zfinal-onboarding`
 - Add a new entity / regenerate from SQL → invoke `zfinal-ai-playbook`
+- E-commerce / social / graph / `schema.zent` / `crud:zent` → invoke `zfinal-zent-ai`
 - Health check / CI / `zig build test` issues → invoke `zfinal-health`
 - Add a new module / fix framework internals → invoke `zfinal-framework`
 - Build a ZFinal app from scratch → invoke `zfinal-app`

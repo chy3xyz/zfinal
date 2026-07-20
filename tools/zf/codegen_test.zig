@@ -11,6 +11,7 @@
 
 const std = @import("std");
 const codegen = @import("codegen");
+const zent_codegen = @import("zent_codegen");
 
 /// Run `body` with a `*codegen.Table` parsed from a single CREATE TABLE
 /// statement. Cleans up tables array and the borrowed Table after the
@@ -422,4 +423,78 @@ fn expectZigSyntax(code: []const u8) !void {
     }
     if (saw_error) return error.GeneratedCodeHasInvalidTokens;
     if (!saw_eof) return error.GeneratedCodeMissingEof;
+}
+
+test "zent_codegen: parse DSL and emit ai-edit-zones" {
+    const allocator = std.testing.allocator;
+    const dsl =
+        \\module shop
+        \\api_prefix /api/v1
+        \\
+        \\entity User {
+        \\  name: string
+        \\  handle: string @index
+        \\}
+        \\
+        \\entity Product {
+        \\  seller_id: int
+        \\  name: string
+        \\  price_cents: int
+        \\  stock: int = 0
+        \\  list_by: seller_id
+        \\}
+    ;
+    var schema = try zent_codegen.parseZentDsl(allocator, dsl);
+    defer schema.deinit();
+    try std.testing.expectEqualStrings("shop", schema.module);
+    try std.testing.expectEqual(@as(usize, 2), schema.entities.items.len);
+    try std.testing.expect(schema.entities.items[0].fields.items[1].indexed);
+    try std.testing.expectEqualStrings("0", schema.entities.items[1].fields.items[3].default_value.?);
+    try std.testing.expectEqualStrings("seller_id", schema.entities.items[1].list_by.?);
+
+    const model = try zent_codegen.generateModel(allocator, &schema);
+    defer allocator.free(model);
+    try std.testing.expect(std.mem.indexOf(u8, model, "// @generated") != null);
+    try std.testing.expect(std.mem.indexOf(u8, model, "ai-edit-zone: model hooks") != null);
+    try std.testing.expect(std.mem.indexOf(u8, model, "Schema(\"User\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, model, "field.String(\"handle\")") != null);
+    try expectZigSyntax(model);
+
+    const persist = try zent_codegen.generatePersistence(allocator, &schema);
+    defer allocator.free(persist);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "ShopStore") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "listProductBySellerId") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "ai-edit-zone: custom queries") != null);
+    try expectZigSyntax(persist);
+
+    const service = try zent_codegen.generateService(allocator, &schema);
+    defer allocator.free(service);
+    try std.testing.expect(std.mem.indexOf(u8, service, "ai-edit-zone: business rules") != null);
+    try std.testing.expect(std.mem.indexOf(u8, service, "createProduct") != null);
+    try expectZigSyntax(service);
+
+    const handler = try zent_codegen.generateHandler(allocator, &schema);
+    defer allocator.free(handler);
+    try std.testing.expect(std.mem.indexOf(u8, handler, "ai-edit-zone: handler hooks") != null);
+    try std.testing.expect(std.mem.indexOf(u8, handler, "post(\"/products\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, handler, "get(\"/products\"") != null);
+    try expectZigSyntax(handler);
+
+    const manifest = try zent_codegen.emitJsonManifest(allocator, "schema.zent", &schema);
+    defer allocator.free(manifest);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "\"generator\": \"zf crud:zent\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "\"data_layer\": \"zent\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "\"ai_primary\": true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "\"purpose\":") != null);
+}
+
+test "zent_codegen: parse JSON schema" {
+    const allocator = std.testing.allocator;
+    const js =
+        \\{"module":"catalog","entities":[{"name":"Item","fields":[{"name":"title","type":"string"}],"list_by":null}]}
+    ;
+    var schema = try zent_codegen.parseZentJson(allocator, js);
+    defer schema.deinit();
+    try std.testing.expectEqualStrings("catalog", schema.module);
+    try std.testing.expectEqual(@as(usize, 1), schema.entities.items.len);
 }

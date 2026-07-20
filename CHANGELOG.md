@@ -1,3 +1,20 @@
+## [0.13.10] - 2026-07-20
+
+### Changed — production readiness honesty + hardening
+- **`PRODUCTION_AUDIT.md`**: independent score **6.8/10** (controlled deploy ~7.5–8); replaces marketing “95%”.
+- **`ServerConfig.drain_timeout_ms`** (default 30s): hard-cap graceful connection drain.
+- **`createCorsInterceptor(origin)`**: non-wildcard CORS; default `CORSInterceptor` documented as unsafe for credentials.
+- **`examples/production`**: CSRF on POST, rate limit, restricted CORS, `shutdown.registerHandlers()`, drain timeout.
+- **Version align**: `build.zig.zon` / `zf` CLI / README badge → **0.13.10**; `SECURITY.md` support table + practices.
+- **Docker**: pin Zig via zigup to CI version (not `apk add zig`).
+
+### Added — zent as alternative / primary data layer (`zfinal.zent`)
+- **zent** (`v0.12.0`) in root `build.zig.zon`; export **`zfinal.zent`** / **`zent_enabled`** beside `DB`/`Model`.
+- Positioning: **two first-class alternatives** — SQL stack (`DB`/`Model` + `zf`) **or** zent (can be the app's **main** ORM for e-commerce / social).
+- Build flag **`-Denable-zent`** (default **true**); ADR-007; `doc/zent.md`; `examples/zent-shop`.
+- **`zf crud:zent`**: generate zent-primary modules from `.zent` DSL or `.json` (`tools/zf/zent_codegen.zig`) → `model` / `persistence` / `service` / `handler` / `routes` + rich `--json` manifest (`ai_edit_zones` with file/markers/purpose).
+- **AI-first zent**: `zfinal.aichat.ZfTool.manifestFromZent` / `buildAgentSystemPromptZent`; skill `.claude/skills/zfinal-zent-ai.md`; dual path in `doc/ai-quickstart.md` / onboarding.
+
 ## [0.13.9] - 2026-07-19
 
 ### Changed — QueueNatsClient promoted to stable

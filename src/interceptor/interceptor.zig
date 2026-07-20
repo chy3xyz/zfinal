@@ -127,14 +127,14 @@ pub const LoggingInterceptor = Interceptor{
     .after = loggingAfter,
 };
 
-/// Auth interceptor example
+/// Demo-only auth: checks cookie `auth_token` **presence**, not validity.
+/// Do **not** use for production — implement JWT/session verification yourself.
 pub fn authBefore(ctx: *Context) !bool {
-    // Check for auth token in cookie or header
     const token = try ctx.getCookie("auth_token");
     if (token == null) {
         ctx.res_status = .unauthorized;
         try ctx.renderJson(.{ .err = "Unauthorized" });
-        return false; // Stop execution
+        return false;
     }
     return true;
 }
@@ -144,17 +144,17 @@ pub const AuthInterceptor = Interceptor{
     .before = authBefore,
 };
 
-/// CORS interceptor
+/// Default CORS: `Access-Control-Allow-Origin: *`.
+/// **Not safe for credentialed browser APIs.** Prefer `createCorsInterceptor`.
 pub fn corsBefore(ctx: *Context) !bool {
     try ctx.setHeader("Access-Control-Allow-Origin", "*");
     try ctx.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
     try ctx.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
 
-    // Handle OPTIONS request
     if (ctx.req.head.method == .OPTIONS) {
         ctx.res_status = .ok;
         try ctx.renderText("");
-        return false; // Stop execution
+        return false;
     }
 
     return true;
@@ -169,6 +169,34 @@ pub const CORSInterceptor = Interceptor{
     .before = corsBefore,
     .after = corsAfter,
 };
+
+/// Production-oriented CORS: single explicit origin (no wildcard).
+pub fn createCorsInterceptor(allowed_origin: []const u8) Interceptor {
+    const Impl = struct {
+        var origin: []const u8 = undefined;
+
+        fn before(ctx: *Context) !bool {
+            try ctx.setHeader("Access-Control-Allow-Origin", origin);
+            try ctx.setHeader("Vary", "Origin");
+            try ctx.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
+            try ctx.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+            try ctx.setHeader("Access-Control-Allow-Credentials", "true");
+
+            if (ctx.req.head.method == .OPTIONS) {
+                ctx.res_status = .ok;
+                try ctx.renderText("");
+                return false;
+            }
+            return true;
+        }
+    };
+    Impl.origin = allowed_origin;
+    return Interceptor{
+        .name = "cors_restricted",
+        .before = Impl.before,
+        .after = corsAfter,
+    };
+}
 
 test "interceptor basic" {
     const allocator = std.testing.allocator;

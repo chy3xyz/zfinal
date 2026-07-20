@@ -8,10 +8,10 @@
 
 [![Zig](https://img.shields.io/badge/Zig-0.17.0-orange.svg)](https://ziglang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v0.13.4-blue.svg)](CHANGELOG.md)
-[![Tests](https://img.shields.io/badge/tests-146%20passed%20%C2%B7%202%20skipped%20%C2%B7%2017%20codegen-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/version-v0.13.10-blue.svg)](CHANGELOG.md)
+[![Tests](https://img.shields.io/badge/tests-190%2B%20passed%20%C2%B7%20skips%20env--gated-brightgreen.svg)]()
 [![Drivers](https://img.shields.io/badge/drivers-SQLite%20%C2%B7%20PostgreSQL%20%C2%B7%20MySQL-blue.svg)]()
-[![Production](https://img.shields.io/badge/production--readiness-95%25-brightgreen.svg)](PRODUCTION_AUDIT.md)
+[![Production](https://img.shields.io/badge/production--score-6.8%2F10%20(controlled%207.5%2B)-yellow.svg)](PRODUCTION_AUDIT.md)
 
 **English** | [中文文档](README_CN.md)
 
@@ -422,6 +422,10 @@ Architecture layers, AI edit boundaries, and plugin maturity rules:
 Scale-out (millions of users) and progressive L0→L3 code layout:
 [doc/scale_to_millions.md](doc/scale_to_millions.md) ·
 [doc/progressive_architecture.md](doc/progressive_architecture.md).
+
+**Data layers (pick a primary):** `zfinal.DB`/`Model` (SQL + `zf`) **or** `zfinal.zent`
+(schema-as-code — recommended primary for e-commerce / social). See
+[doc/zent.md](doc/zent.md) · [`examples/zent-shop`](examples/zent-shop/).
 
 ---
 

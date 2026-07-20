@@ -4,6 +4,17 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+## 2026-07-20 — v0.13.10: ZFinal × zent (e-commerce / social)
+
+**Session**: Introduce zent like zigmodu — orthogonal ORM for graph-heavy domains
+**Changes**:
+1. `doc/zent.md` — when to use zent vs zf Model; anti-mix-stack rules
+2. `examples/zent-shop` — User/Product/Follow/Post + HTTP smoke
+3. `zig build run-zent-shop` convenience (sibling `../zent`)
+**Tests**: example build + curl smoke on :18200 OK
+
+---
+
 ## 2026-07-19 — v0.13.9: QueueNatsClient → stable
 
 **Session**: Promote NATS from experimental; drop nats.zig optional dep

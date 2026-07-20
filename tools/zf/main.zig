@@ -1,6 +1,7 @@
 const std = @import("std");
 const templates = @import("templates.zig");
 const codegen = @import("codegen");
+const zent_codegen = @import("zent_codegen");
 const csql = @import("csql.zig");
 const zf_cfg = @import("zf_cfg");
 
@@ -45,6 +46,7 @@ const Command = enum {
     help,
     crud,
     crud_sql,
+    crud_zent,
     crud_dsn,
     check,
     upgrade,
@@ -268,6 +270,31 @@ pub fn main(init: std.process.Init) !void {
             const dry_run = hasFlag(args, "--dry-run");
             try handleCrudFromSql(allocator, args[2], project_name, force, json_mode, admin_mode, explain_mode, dry_run);
         },
+        .crud_zent => {
+            if (args.len < 3) {
+                std.debug.print("Usage: {s} crud:zent <schema.zent|schema.json> [--force] [--json] [--explain] [--dry-run] [--out <dir>]\n", .{args[0]});
+                std.debug.print("  Generate zent-primary module: model/persistence/service/handler/routes.\n", .{});
+                std.debug.print("  AI-first: always pass --json; edit only ai-edit-zone blocks.\n", .{});
+                std.debug.print("  --force    Overwrite existing files (else write *.gen.new)\n", .{});
+                std.debug.print("  --json     Emit machine-readable manifest for AI agents\n", .{});
+                std.debug.print("  --explain  Print plan + AI edit zones before writing\n", .{});
+                std.debug.print("  --dry-run  Print plan only; do not write files\n", .{});
+                std.debug.print("  --out dir  Output root (default: src/modules)\n", .{});
+                return;
+            }
+            const force = hasFlag(args, "--force");
+            const json_mode = hasFlag(args, "--json");
+            const explain_mode = hasFlag(args, "--explain");
+            const dry_run = hasFlag(args, "--dry-run");
+            const out_dir = blk: {
+                var i: usize = 3;
+                while (i + 1 < args.len) : (i += 1) {
+                    if (std.mem.eql(u8, args[i], "--out")) break :blk args[i + 1];
+                }
+                break :blk "src/modules";
+            };
+            try handleCrudZent(allocator, args[2], out_dir, force, json_mode, explain_mode, dry_run);
+        },
         .admin => {
             if (args.len < 3) {
                 std.debug.print("Usage: {s} admin <sql_file> [--out <dir>]\n", .{args[0]});
@@ -323,6 +350,7 @@ fn parseCommand(cmd: []const u8) ?Command {
     if (std.mem.eql(u8, cmd, "help") or std.mem.eql(u8, cmd, "h")) return .help;
     if (std.mem.eql(u8, cmd, "crud")) return .crud;
     if (std.mem.eql(u8, cmd, "crud:sql")) return .crud_sql;
+    if (std.mem.eql(u8, cmd, "crud:zent")) return .crud_zent;
     if (std.mem.eql(u8, cmd, "admin")) return .admin;
     if (std.mem.eql(u8, cmd, "crud:dsn")) return .crud_dsn;
     if (std.mem.eql(u8, cmd, "check")) return .check;
@@ -349,7 +377,8 @@ fn printHelp(exe_name: []const u8) void {
     std.debug.print("  migrate <action> [name] Manage database migrations\n", .{});
     std.debug.print("  test:gen <name>         Generate test file\n", .{});
     std.debug.print("  crud <db> <table>       Generate full CRUD from SQLite DB schema\n", .{});
-    std.debug.print("  crud:sql <file> [name]  Generate from .sql file. Optional project name creates dir.\n", .{});
+    std.debug.print("  crud:sql <file> [name]  Generate from .sql file (DB/Model data layer).\n", .{});
+    std.debug.print("  crud:zent <file>        Generate from .zent/.json (zent primary data layer).\n", .{});
     std.debug.print("  admin <file>            Generate vben-style admin HTML (htmx + alpine + tailwind, CDN)\n", .{});
     std.debug.print("  check                   Audit project for AI compliance (gen/ext boundaries)\n", .{});
     std.debug.print("  upgrade                 Upgrade zfinal dependency to latest release\n", .{});
@@ -363,6 +392,8 @@ fn printHelp(exe_name: []const u8) void {
     std.debug.print("\n", .{});
     std.debug.print("Examples:\n", .{});
     std.debug.print("  {s} new myapp           Create a new project named 'myapp'\n", .{exe_name});
+    std.debug.print("  {s} crud:sql schema.sql --json\n", .{exe_name});
+    std.debug.print("  {s} crud:zent schema.zent --json   # zent primary (e-commerce/social)\n", .{exe_name});
     std.debug.print("  {s} g handler User      Generate User handler\n", .{exe_name});
     std.debug.print("  {s} g model Product     Generate Product model\n", .{exe_name});
     std.debug.print("  {s} g middleware Auth   Generate Auth middleware\n", .{exe_name});
@@ -1789,6 +1820,112 @@ fn handleCrudFromDsn(allocator: std.mem.Allocator, dsn_url: []const u8) !void {
         try writeGeneratedFiles(allocator, table, mp, false);
     }
     try generateIntegrationTestEntry(allocator, tables.items);
+}
+
+fn handleCrudZent(
+    allocator: std.mem.Allocator,
+    schema_path: []const u8,
+    out_root: []const u8,
+    force: bool,
+    json_mode: bool,
+    explain_mode: bool,
+    dry_run: bool,
+) !void {
+    const content = readFileAlloc(allocator, schema_path) catch |e| {
+        std.debug.print("error: cannot read {s}: {t}\n", .{ schema_path, e });
+        return e;
+    };
+    defer allocator.free(content);
+
+    var schema = zent_codegen.parseFile(allocator, schema_path, content) catch |e| {
+        std.debug.print("error: failed to parse {s}: {t}\n", .{ schema_path, e });
+        return e;
+    };
+    defer schema.deinit();
+
+    std.debug.print("zent schema: module={s} entities={d} api={s}\n", .{
+        schema.module,
+        schema.entities.items.len,
+        schema.api_prefix,
+    });
+    for (schema.entities.items) |ent| {
+        std.debug.print("  • {s} ({d} fields", .{ ent.name, ent.fields.items.len });
+        if (ent.list_by) |lb| std.debug.print(", list_by={s}", .{lb});
+        std.debug.print(")\n", .{});
+    }
+
+    if (explain_mode or dry_run) {
+        std.debug.print("\n──── zf crud:zent plan (AI) ────\n", .{});
+        std.debug.print("data_layer: zent (primary)\n", .{});
+        std.debug.print("module path: {s}/{s}/\n", .{ out_root, schema.module });
+        std.debug.print("generated: model.zig, persistence.zig, service.zig, handler.zig, routes.zig\n", .{});
+        std.debug.print("ai-edit-zones:\n", .{});
+        std.debug.print("  • model.zig        → model hooks (edges / privacy)\n", .{});
+        std.debug.print("  • persistence.zig  → custom queries\n", .{});
+        std.debug.print("  • service.zig      → business rules / extra methods\n", .{});
+        std.debug.print("  • handler.zig      → handler hooks / extra routes\n", .{});
+        std.debug.print("rules: edit ONLY ai-edit-zones; never mix zfinal.DB + zent Tx\n", .{});
+        if (dry_run) {
+            const boot = try zent_codegen.generateBootstrapSnippet(allocator, &schema);
+            defer allocator.free(boot);
+            std.debug.print("\n{s}\n", .{boot});
+            std.debug.print("[dry-run] exiting without writing files.\n", .{});
+            return;
+        }
+        std.debug.print("\n──── continue ────\n", .{});
+    }
+
+    if (dry_run) {
+        std.debug.print("\n[dry-run] would write under {s}/{s}/:\n", .{ out_root, schema.module });
+        std.debug.print("  model.zig persistence.zig service.zig handler.zig routes.zig\n", .{});
+        const boot = try zent_codegen.generateBootstrapSnippet(allocator, &schema);
+        defer allocator.free(boot);
+        std.debug.print("\n{s}\n", .{boot});
+        return;
+    }
+
+    const mod_dir = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ out_root, schema.module });
+    defer allocator.free(mod_dir);
+    try std.Io.Dir.cwd().createDirPath(io, mod_dir);
+
+    const model = try zent_codegen.generateModel(allocator, &schema);
+    defer allocator.free(model);
+    const persist = try zent_codegen.generatePersistence(allocator, &schema);
+    defer allocator.free(persist);
+    const service = try zent_codegen.generateService(allocator, &schema);
+    defer allocator.free(service);
+    const handler = try zent_codegen.generateHandler(allocator, &schema);
+    defer allocator.free(handler);
+    const routes = try zent_codegen.generateRoutes(allocator, &schema);
+    defer allocator.free(routes);
+
+    const model_path = try std.fmt.allocPrint(allocator, "{s}/model.zig", .{mod_dir});
+    defer allocator.free(model_path);
+    const persist_path = try std.fmt.allocPrint(allocator, "{s}/persistence.zig", .{mod_dir});
+    defer allocator.free(persist_path);
+    const service_path = try std.fmt.allocPrint(allocator, "{s}/service.zig", .{mod_dir});
+    defer allocator.free(service_path);
+    const handler_path = try std.fmt.allocPrint(allocator, "{s}/handler.zig", .{mod_dir});
+    defer allocator.free(handler_path);
+    const routes_path = try std.fmt.allocPrint(allocator, "{s}/routes.zig", .{mod_dir});
+    defer allocator.free(routes_path);
+
+    try safeWrite(allocator, model_path, model, force);
+    try safeWrite(allocator, persist_path, persist, force);
+    try safeWrite(allocator, service_path, service, force);
+    try safeWrite(allocator, handler_path, handler, force);
+    try safeWrite(allocator, routes_path, routes, force);
+
+    const boot = try zent_codegen.generateBootstrapSnippet(allocator, &schema);
+    defer allocator.free(boot);
+    std.debug.print("\n── bootstrap (wire in main.zig) ──\n{s}\n", .{boot});
+
+    if (json_mode) {
+        const manifest = try zent_codegen.emitJsonManifest(allocator, schema_path, &schema);
+        defer allocator.free(manifest);
+        var out = std.Io.File.stdout();
+        try out.writeStreamingAll(io, manifest);
+    }
 }
 
 fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8, project_name: ?[]const u8, force: bool, json_mode: bool, admin_mode: bool, explain_mode: bool, dry_run: bool) !void {

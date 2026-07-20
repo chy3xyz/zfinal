@@ -14,6 +14,31 @@
 
 ## 一、快速起手式
 
+### 1.0 选型：SQL 还是 zent？
+
+| 领域 | 用 |
+|------|-----|
+| 平 CRUD / 存量 SQL | `zf crud:sql`（下节 1.1） |
+| 电商 / 社交 / 密图 / privacy | **`zf crud:zent`**（下节 1.0b） |
+
+### 1.0b zent 主力（AI 友好）
+
+```
+基于以下领域描述，用 ZFinal + zent 生成模块（不要用手写 Schema 样板）：
+
+1. 先写出 schema.zent（module / entity / fields / list_by）
+2. 运行：zf crud:zent schema.zent --json
+3. 只在 ai-edit-zone 内补校验与鉴权
+4. 按命令打印的 bootstrap 接入 main.zig（migrateSchema + Store）
+5. 禁止混用 zfinal.DB 与 zent 同一事务
+6. 验证：zf check && zig build test
+
+领域：
+[粘贴电商/社交需求，或直接给 schema.zent / schema.json]
+```
+
+参考：`doc/zent.md`、`examples/zent-shop/`、`.claude/skills/zfinal-zent-ai.md`。
+
 ### 1.1 仅凭 SQL Schema 生成全栈 CRUD
 
 ```

@@ -1,8 +1,16 @@
 # AI Quickstart — Build a ZFinal App in 5 Minutes
 
-The fastest path from "I have a database idea" to a runnable Zig web app.
+The fastest path from "I have a domain idea" to a runnable Zig web app.
+**Two AI-first data layers** — pick one primary:
 
-## The 30-second pitch
+| Path | When | Command |
+|------|------|---------|
+| **A. SQL / DB** | Flat CRUD, existing SQL | `zf crud:sql schema.sql --json` |
+| **B. zent** | E-commerce / social / graphs | `zf crud:zent schema.zent --json` |
+
+Both emit `--json` manifests and `ai-edit-zone` markers for agents.
+
+## Path A — SQL (30-second pitch)
 
 ```bash
 # 1. Write your schema (the only file you truly need)
@@ -20,17 +28,41 @@ zf crud:sql schema.sql --json | jq '.tables[].files'
 zig build run
 ```
 
-That's the whole pitch. The rest of this doc is the long form.
+## Path B — zent (AI-first, same contract)
+
+```bash
+cat > schema.zent << 'EOF'
+module shop
+api_prefix /api/v1
+entity User { name: string; handle: string @index }
+entity Product {
+  seller_id: int
+  name: string
+  price_cents: int
+  stock: int = 0
+  list_by: seller_id
+}
+EOF
+
+zf crud:zent schema.zent --json | jq '.files,.ai_edit_zones'
+# → model/persistence/service/handler/routes under src/modules/shop/
+
+# Edit only ai-edit-zones; wire bootstrap printed by zf; then:
+zf check && zig build
+```
+
+Agent skill: `.claude/skills/zfinal-zent-ai.md` · Demo: `examples/zent-shop/`.
 
 ## Why this works
 
 ZFinal's `zf` CLI separates three concerns:
 
-1. **Schema** — a `.sql` file. The source of truth.
-2. **Boilerplate** — `model.zig`, `service.zig`, `handler.zig`, `routes.zig`. Always identical for a given table. Generated.
-3. **Business logic** — auth checks, computed fields, custom error codes, cross-table validation. Lives in the `// ── ai-edit-zone: …` blocks. Hand-written by you or your AI.
+1. **Schema** — `.sql` **or** `.zent`/JSON. The source of truth.
+2. **Boilerplate** — generated modules. Always identical for a given schema.
+3. **Business logic** — lives in `// ── ai-edit-zone: …` blocks.
 
-`zf` handles concern #2 in one command. The manifest emitted with `--json` tells an AI exactly which files exist and where to edit.
+`--json` tells an AI exactly which files exist and where to edit.
+In-process: `zfinal.aichat.ZfTool.manifestFromSql` / `manifestFromZent`.
 
 ## The full 5-minute walkthrough
 
@@ -173,11 +205,13 @@ Each accepts `--json` for a machine-readable manifest.
 
 ## The full playbook for AI agents
 
-See `.claude/skills/zfinal-ai-playbook.md` for the step-by-step script
-an AI should follow when adding a feature. TL;DR:
+- SQL stack: `.claude/skills/zfinal-ai-playbook.md`
+- **zent stack: `.claude/skills/zfinal-zent-ai.md`**
+
+TL;DR:
 
 1. Read `CLAUDE.md` and `AGENTS.md`.
-2. Run `zf crud:sql schema.sql --json` to generate.
+2. Pick primary: `zf crud:sql … --json` **or** `zf crud:zent … --json`.
 3. Edit **only** inside `ai-edit-zone` markers.
 4. Run `zf check && zig build test`.
 5. Commit and ship.
@@ -192,8 +226,11 @@ Three reasons:
 
 ## See also
 
-- `examples/ai-blog-5min/` — runnable 5-minute walkthrough
-- `.claude/skills/zfinal-ai-playbook.md` — AI agent standard script
+- `examples/ai-blog-5min/` — runnable SQL 5-minute walkthrough
+- `examples/zent-shop/` — zent primary (e-commerce + social)
+- `.claude/skills/zfinal-ai-playbook.md` — SQL AI script
+- `.claude/skills/zfinal-zent-ai.md` — zent AI script
 - `.claude/skills/zfinal-health.md` — CI / health checks
+- `doc/zent.md` — zent as DB alternative / primary
 - `doc/zf_cli.md` — full `zf` reference
 - `doc/getting_started.md` — framework basics

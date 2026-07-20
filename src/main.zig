@@ -6,6 +6,7 @@ const std = @import("std");
 test {
     std.testing.refAllDecls(@This());
     _ = @import("aichat/aichat_test.zig");
+    _ = @import("aichat/zf_tool.zig");
 }
 
 // Export core modules
@@ -31,7 +32,14 @@ pub const Metrics = @import("core/metrics.zig").Metrics;
 pub const healthHandlerFor = @import("core/metrics.zig").healthHandlerFor;
 pub const shutdown = @import("core/shutdown.zig");
 pub const JsonNaming = enum { snake_case, camelCase };
-// Export database modules
+
+// ═══════════════════════════════════════════════════════════
+// Data layers — two first-class alternatives (pick a primary)
+//   A) DB / Model  — SQL-first, `zf crud:sql` (CRUD / legacy SQL)
+//   B) zent        — schema-as-code (can be the app's main ORM)
+// Choose one stack per module; do NOT mix drivers in one Tx.
+// Guide: doc/zent.md
+// ═══════════════════════════════════════════════════════════
 pub const DB = @import("db/db.zig").DB;
 pub const DBConfig = @import("db/config.zig").DBConfig;
 pub const DBType = @import("db/config.zig").DBType;
@@ -51,12 +59,20 @@ pub const Page = @import("db/pagination.zig").Page;
 pub const SqlTemplate = @import("db/sql_template.zig").SqlTemplate;
 pub const SqlTemplateManager = @import("db/sql_template.zig").SqlTemplateManager;
 
+/// Alternative data layer to `DB`/`Model` ([zent](https://github.com/chy3xyz/zent)).
+/// Equal choice — and the recommended **primary** stack for graph-heavy apps
+/// (e-commerce, social, RBAC). Default on (`-Denable-zent=true`).
+/// Usage: `const zent = zfinal.zent;`
+pub const zent = @import("data/zent_layer.zig").api;
+pub const zent_enabled = @import("data/zent_layer.zig").enabled;
+
 // Export interceptor modules
 pub const Interceptor = @import("interceptor/interceptor.zig").Interceptor;
 pub const InterceptorChain = @import("interceptor/interceptor.zig").InterceptorChain;
 pub const LoggingInterceptor = @import("interceptor/interceptor.zig").LoggingInterceptor;
 pub const AuthInterceptor = @import("interceptor/interceptor.zig").AuthInterceptor;
 pub const CORSInterceptor = @import("interceptor/interceptor.zig").CORSInterceptor;
+pub const createCorsInterceptor = @import("interceptor/interceptor.zig").createCorsInterceptor;
 
 // Export validator module
 pub const Validator = @import("validator/validator.zig").Validator;
