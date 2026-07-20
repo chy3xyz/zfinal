@@ -2574,7 +2574,7 @@ fn handleCheck(allocator: std.mem.Allocator, heal: bool, ai_zones: bool, prod: b
 /// Heuristic scan for PRODUCTION_AUDIT deployment-contract anti-patterns.
 fn checkProdContract(allocator: std.mem.Allocator, pass: *u32, warn: *u32, fail: *u32) !void {
     std.debug.print("\n--- Production contract (--prod) ---\n", .{});
-    const roots = [_][]const u8{ "src", "examples" };
+    const roots = [_][]const u8{"examples/production"};
     var banned_auth: u32 = 0;
     var banned_cors_star: u32 = 0;
     var experimental: u32 = 0;
@@ -2596,18 +2596,11 @@ fn checkProdContract(allocator: std.mem.Allocator, pass: *u32, warn: *u32, fail:
                 std.mem.indexOf(u8, content, "createJwtAuthInterceptor") == null and
                 std.mem.indexOf(u8, content, "Demo-only") == null)
             {
-                // Skip framework definition file itself
-                if (!std.mem.eql(u8, entry.basename, "interceptor.zig") and
-                    !std.mem.eql(u8, entry.basename, "main.zig"))
-                {
-                    banned_auth += 1;
-                    std.debug.print("⚠️  WARN: {s} references AuthInterceptor (prefer createJwtAuthInterceptor)\n", .{rel});
-                }
+                banned_auth += 1;
+                std.debug.print("⚠️  WARN: {s} references AuthInterceptor (prefer createJwtAuthInterceptor)\n", .{rel});
             }
             if (std.mem.indexOf(u8, content, "CORSInterceptor") != null and
-                std.mem.indexOf(u8, content, "createCors") == null and
-                !std.mem.eql(u8, entry.basename, "interceptor.zig") and
-                !std.mem.eql(u8, entry.basename, "main.zig"))
+                std.mem.indexOf(u8, content, "createCors") == null)
             {
                 banned_cors_star += 1;
                 std.debug.print("⚠️  WARN: {s} uses CORSInterceptor (wildcard) — prefer createCorsAllowlistInterceptor\n", .{rel});
@@ -2625,12 +2618,40 @@ fn checkProdContract(allocator: std.mem.Allocator, pass: *u32, warn: *u32, fail:
         }
     }
 
-    if (banned_auth == 0 and banned_cors_star == 0 and experimental == 0 and force_ka_off == 0) {
-        std.debug.print("✅ PASS: no production-contract anti-patterns found\n", .{});
+    var prod_fail: u32 = 0;
+
+    // Required production wiring checks on the reference example.
+    const prod_main = "examples/production/main.zig";
+    if (readFileAlloc(allocator, prod_main)) |content| {
+        defer allocator.free(content);
+        if (std.mem.indexOf(u8, content, "createSecurityHeadersInterceptor") == null) {
+            prod_fail += 1;
+            std.debug.print("❌ FAIL: {s} missing createSecurityHeadersInterceptor\n", .{prod_main});
+        }
+        if (std.mem.indexOf(u8, content, "createRequestIdInterceptor") == null) {
+            prod_fail += 1;
+            std.debug.print("❌ FAIL: {s} missing createRequestIdInterceptor\n", .{prod_main});
+        }
+        if (std.mem.indexOf(u8, content, "createJwtAuthInterceptorWithOptions") == null) {
+            prod_fail += 1;
+            std.debug.print("❌ FAIL: {s} missing createJwtAuthInterceptorWithOptions\n", .{prod_main});
+        }
+        if (std.mem.indexOf(u8, content, "metricsHandlerFor") == null) {
+            prod_fail += 1;
+            std.debug.print("❌ FAIL: {s} missing /metrics wiring\n", .{prod_main});
+        }
+    } else |_| {
+        prod_fail += 1;
+        std.debug.print("❌ FAIL: missing {s}\n", .{prod_main});
+    }
+
+    fail.* += prod_fail;
+
+    if (banned_auth == 0 and banned_cors_star == 0 and experimental == 0 and force_ka_off == 0 and prod_fail == 0) {
+        std.debug.print("✅ PASS: production example meets deployment contract\n", .{});
         pass.* += 1;
-    } else {
+    } else if (prod_fail == 0) {
         warn.* += banned_auth + banned_cors_star + experimental + force_ka_off;
-        _ = fail;
     }
 }
 

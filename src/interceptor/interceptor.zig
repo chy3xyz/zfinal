@@ -147,10 +147,15 @@ pub const AuthInterceptor = Interceptor{
 };
 
 /// Production JWT (HS256) auth. Expects `Authorization: Bearer <token>`.
-/// On success sets attrs `jwt_sub` and optional `jwt_role` (copied into ctx).
 pub fn createJwtAuthInterceptor(secret: []const u8) Interceptor {
+    return createJwtAuthInterceptorWithOptions(secret, .{});
+}
+
+/// Production JWT with `VerifyOptions` (iss/aud/rotation/leeway).
+pub fn createJwtAuthInterceptorWithOptions(secret: []const u8, opts: jwt.VerifyOptions) Interceptor {
     const Impl = struct {
         var sec: []const u8 = undefined;
+        var verify_opts: jwt.VerifyOptions = undefined;
 
         fn before(ctx: *Context) !bool {
             const hdr = ctx.getHeader("Authorization") orelse {
@@ -169,7 +174,7 @@ pub fn createJwtAuthInterceptor(secret: []const u8) Interceptor {
             _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
             const now: i64 = @intCast(ts.sec);
 
-            const claims = jwt.verify(ctx.allocator, sec, token, now) catch {
+            const claims = jwt.verifyWithOptions(ctx.allocator, sec, token, now, verify_opts) catch {
                 const path = if (std.mem.indexOfScalar(u8, ctx.req.head.target, '?')) |q|
                     ctx.req.head.target[0..q]
                 else
@@ -188,6 +193,7 @@ pub fn createJwtAuthInterceptor(secret: []const u8) Interceptor {
         }
     };
     Impl.sec = secret;
+    Impl.verify_opts = opts;
     return Interceptor{
         .name = "jwt_auth",
         .before = Impl.before,

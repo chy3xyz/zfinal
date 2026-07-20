@@ -2,13 +2,27 @@
 
 ## Default: JWT-stateless
 
-Production apps should prefer **`createJwtAuthInterceptor`** + `jwtSign` /
-`jwtVerifyWithOptions` (see `examples/production`). No shared session store is
-required across instances.
+Production apps should prefer **`createJwtAuthInterceptorWithOptions`** (or
+`createJwtAuthInterceptor` for secret-only) + `jwtSign` / `jwtVerifyWithOptions`
+(see `examples/production`). No shared session store is required across instances.
 
 - Claims: `sub`, `exp`, optional `nbf` / `iss` / `aud` / `role`
 - Rejects `alg=none`; supports `previous_secret` for HMAC key rotation
+- Env knobs in the reference example: `JWT_SECRET`, `JWT_SECRET_PREVIOUS`,
+  `JWT_ISS`, `JWT_AUD`
 - RS256 is **not** implemented yet — terminate OIDC at a gateway or contribute later
+
+## Baseline HTTP hardening (opt-in)
+
+Wire globally (as in `examples/production`):
+
+```zig
+try app.addGlobalInterceptor(zfinal.createRequestIdInterceptor());
+try app.addGlobalInterceptor(zfinal.createSecurityHeadersInterceptor(true)); // HSTS when TLS terminates
+```
+
+- `createRequestIdInterceptor`: propagate or generate `X-Request-Id`, set attr `request_id`
+- `createSecurityHeadersInterceptor(include_hsts)`: nosniff / frame deny / XSS / optional HSTS
 
 ## In-memory `SessionStore`
 

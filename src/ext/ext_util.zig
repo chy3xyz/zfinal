@@ -174,7 +174,7 @@ pub const SecurityExt = struct {
 
     /// 生成 CSRF Token
     pub fn generateCsrfToken(allocator: std.mem.Allocator) ![]const u8 {
-        return try zfinal.RandomKit.generateRandomString(allocator, 32);
+        return try zfinal.HashKit.generateRandomString(allocator, 32);
     }
 
     /// 验证 CSRF Token

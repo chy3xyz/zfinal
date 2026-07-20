@@ -81,6 +81,7 @@ pub const CORSInterceptor = @import("interceptor/interceptor.zig").CORSIntercept
 pub const createCorsInterceptor = @import("interceptor/interceptor.zig").createCorsInterceptor;
 pub const createCorsAllowlistInterceptor = @import("interceptor/interceptor.zig").createCorsAllowlistInterceptor;
 pub const createJwtAuthInterceptor = @import("interceptor/interceptor.zig").createJwtAuthInterceptor;
+pub const createJwtAuthInterceptorWithOptions = @import("interceptor/interceptor.zig").createJwtAuthInterceptorWithOptions;
 
 // Auth
 pub const Jwt = @import("auth/jwt.zig");
@@ -200,6 +201,8 @@ pub const createExceptionInterceptor = @import("ext/interceptor.zig").createExce
 pub const createAccessLogInterceptor = @import("ext/interceptor.zig").createAccessLogInterceptor;
 pub const createCacheInterceptor = @import("ext/interceptor.zig").createCacheInterceptor;
 pub const createRateLimitInterceptor = @import("ext/interceptor.zig").createRateLimitInterceptor;
+pub const createSecurityHeadersInterceptor = @import("ext/security_interceptor.zig").createSecurityHeadersInterceptor;
+pub const createRequestIdInterceptor = @import("ext/security_interceptor.zig").createRequestIdInterceptor;
 pub const RenderExt = @import("ext/util.zig").RenderExt;
 pub const ParamExt = @import("ext/util.zig").ParamExt;
 pub const SessionExt = @import("ext/util.zig").SessionExt;

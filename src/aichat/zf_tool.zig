@@ -327,7 +327,7 @@ fn emitZentManifest(allocator: std.mem.Allocator, module: []const u8, api_prefix
     try buf.appendSlice(allocator,
         \\{
         \\  "$schema": "https://zfinal.dev/schemas/zent-manifest-1.json",
-        \\  "version": "0.13.10",
+        \\  "version": "0.13.11",
         \\  "generator": "ZfTool.manifestFromZent",
         \\  "data_layer": "zent",
         \\  "ai_primary": true,

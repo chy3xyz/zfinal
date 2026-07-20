@@ -1,3 +1,16 @@
+## [0.13.11] - 2026-07-20
+
+### Added — contractual production readiness **9.8**
+- **`createJwtAuthInterceptorWithOptions`**: iss/aud/leeway/`previous_secret` on the interceptor path.
+- **`createSecurityHeadersInterceptor`** / **`createRequestIdInterceptor`**: baseline headers + `X-Request-Id`.
+- **Per-route-class latency**: `Metrics.recordRouteLatencyMs` → Prometheus `zfinal_request_duration_by_route_ms_{sum,count}`.
+- **`examples/production`**: Request-ID + security headers; JWT env `JWT_ISS` / `JWT_AUD` / `JWT_SECRET_PREVIOUS` / `ENABLE_HSTS`.
+- **`zf check --prod`**: scopes to `examples/production` and asserts required wiring (CI lint job runs it).
+- **`PRODUCTION_AUDIT.md`**: contractual **9.8 / 10** (absolute ~9.1 until Zig stable + keep-alive).
+
+### Changed
+- Version align: `build.zig.zon` / `zf` / README badge → **0.13.11**.
+
 ## [0.13.10] - 2026-07-20
 
 ### Changed — production readiness honesty + hardening

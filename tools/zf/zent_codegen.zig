@@ -661,7 +661,7 @@ pub fn emitJsonManifest(allocator: std.mem.Allocator, schema_path: []const u8, s
     const w = &aw.writer;
 
     try w.writeAll("{\n  \"$schema\": \"https://zfinal.dev/schemas/zent-manifest-1.json\",\n");
-    try w.writeAll("  \"version\": \"0.13.10\",\n  \"generator\": \"zf crud:zent\",\n");
+    try w.writeAll("  \"version\": \"0.13.11\",\n  \"generator\": \"zf crud:zent\",\n");
     try w.print("  \"schema_path\": \"{s}\",\n", .{schema_path});
     try w.print("  \"module\": \"{s}\",\n", .{schema.module});
     try w.print("  \"api_prefix\": \"{s}\",\n", .{schema.api_prefix});

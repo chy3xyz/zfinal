@@ -339,6 +339,7 @@ fn dispatch(request: *http.Server.Request, server: *Server) !void {
         const end_ms = std.Io.Timestamp.now(io_instance.io, .awake).toMilliseconds();
         const dur: u64 = @intCast(@max(end_ms - start_ms, 0));
         m.recordLatencyMs(dur);
+        m.recordRouteLatencyMs(path, dur);
     }
 
     // Zig http.Server keep-alive is unsafe until ziglang/zig#25017 (+ body drain).

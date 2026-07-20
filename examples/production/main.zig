@@ -1,8 +1,9 @@
 //! Production-oriented example: structured logging, auto Metrics,
-//! CSRF on POST, rate-limit interceptor, JWT-protected route,
-//! restricted CORS, request idle timeout, graceful shutdown.
+//! CSRF on POST, rate-limit interceptor, JWT-protected route (iss/aud/rotation),
+//! CORS allow-list, security headers, request ID, idle/read timeouts,
+//! graceful shutdown.
 //!
-//! See PRODUCTION_AUDIT.md deployment contract.
+//! See PRODUCTION_AUDIT.md deployment contract (contractual 9.8).
 
 const std = @import("std");
 const zfinal = @import("zfinal");
@@ -13,6 +14,9 @@ var g_metrics: zfinal.Metrics = undefined;
 var g_token_mgr: *zfinal.TokenManager = undefined;
 var g_rate: *zfinal.RateLimitHandler = undefined;
 var g_jwt_secret: []const u8 = "change-me-in-production-min-32-bytes!!";
+var g_jwt_secret_prev: ?[]const u8 = null;
+var g_jwt_iss: ?[]const u8 = null;
+var g_jwt_aud: ?[]const u8 = null;
 
 fn probeProcessAlive() bool {
     return true;
@@ -37,6 +41,16 @@ pub fn main(init: std.process.Init) !void {
     if (std.c.getenv("JWT_SECRET")) |s| {
         g_jwt_secret = std.mem.span(s);
     }
+    if (std.c.getenv("JWT_SECRET_PREVIOUS")) |s| {
+        g_jwt_secret_prev = std.mem.span(s);
+    }
+    if (std.c.getenv("JWT_ISS")) |s| {
+        g_jwt_iss = std.mem.span(s);
+    }
+    if (std.c.getenv("JWT_AUD")) |s| {
+        g_jwt_aud = std.mem.span(s);
+    }
+    const use_hsts = std.c.getenv("ENABLE_HSTS") != null;
 
     var app = zfinal.ZFinal.init(allocator);
     defer app.deinit();
@@ -74,7 +88,15 @@ pub fn main(init: std.process.Init) !void {
         .error_message = "Invalid or expired CSRF token",
     });
     const rate_mw = zfinal.createRateLimitInterceptor(&rate_limiter);
-    const jwt_mw = zfinal.createJwtAuthInterceptor(g_jwt_secret);
+    const jwt_mw = zfinal.createJwtAuthInterceptorWithOptions(g_jwt_secret, .{
+        .expected_iss = g_jwt_iss,
+        .expected_aud = g_jwt_aud,
+        .previous_secret = g_jwt_secret_prev,
+        .leeway_sec = 30,
+    });
+
+    try app.addGlobalInterceptor(zfinal.createRequestIdInterceptor());
+    try app.addGlobalInterceptor(zfinal.createSecurityHeadersInterceptor(use_hsts));
 
     // Explicit origins — never ship wildcard CORS for credentialed APIs.
     const cors_origin = blk: {
@@ -135,6 +157,8 @@ fn handleIssueToken(ctx: *zfinal.Context) !void {
         .sub = "demo-user",
         .exp = now + 3600,
         .iat = now,
+        .iss = g_jwt_iss,
+        .aud = g_jwt_aud,
         .role = "user",
     });
     defer ctx.allocator.free(token);
@@ -144,5 +168,6 @@ fn handleIssueToken(ctx: *zfinal.Context) !void {
 fn handleMe(ctx: *zfinal.Context) !void {
     const sub = ctx.getAttr("jwt_sub") orelse "unknown";
     const role = ctx.getAttr("jwt_role") orelse "";
-    try ctx.renderJson(.{ .sub = sub, .role = role });
+    const request_id = ctx.getAttr("request_id") orelse "";
+    try ctx.renderJson(.{ .sub = sub, .role = role, .request_id = request_id });
 }

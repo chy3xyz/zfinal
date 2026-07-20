@@ -39,6 +39,16 @@ pub const MetricsExporter = struct {
             \\zfinal_requests_by_route_total{{route="metrics"}} {d}
             \\zfinal_requests_by_route_total{{route="api"}} {d}
             \\zfinal_requests_by_route_total{{route="other"}} {d}
+            \\# HELP zfinal_request_duration_by_route_ms Coarse path-class latency (ms).
+            \\# TYPE zfinal_request_duration_by_route_ms summary
+            \\zfinal_request_duration_by_route_ms_sum{{route="health"}} {d}
+            \\zfinal_request_duration_by_route_ms_count{{route="health"}} {d}
+            \\zfinal_request_duration_by_route_ms_sum{{route="metrics"}} {d}
+            \\zfinal_request_duration_by_route_ms_count{{route="metrics"}} {d}
+            \\zfinal_request_duration_by_route_ms_sum{{route="api"}} {d}
+            \\zfinal_request_duration_by_route_ms_count{{route="api"}} {d}
+            \\zfinal_request_duration_by_route_ms_sum{{route="other"}} {d}
+            \\zfinal_request_duration_by_route_ms_count{{route="other"}} {d}
             \\
         , .{
             metrics.uptime(),
@@ -62,6 +72,14 @@ pub const MetricsExporter = struct {
             metrics.route_hits[1].load(.monotonic),
             metrics.route_hits[2].load(.monotonic),
             metrics.route_hits[3].load(.monotonic),
+            metrics.route_latency_sum_ms[0].load(.monotonic),
+            metrics.route_latency_count[0].load(.monotonic),
+            metrics.route_latency_sum_ms[1].load(.monotonic),
+            metrics.route_latency_count[1].load(.monotonic),
+            metrics.route_latency_sum_ms[2].load(.monotonic),
+            metrics.route_latency_count[2].load(.monotonic),
+            metrics.route_latency_sum_ms[3].load(.monotonic),
+            metrics.route_latency_count[3].load(.monotonic),
         });
     }
 
@@ -96,12 +114,16 @@ test "metrics exporter: prometheus contains counters" {
     m.recordConnection();
     m.recordRequest(200);
     m.recordRequest(500);
+    m.recordRoute("/api/me");
+    m.recordRouteLatencyMs("/api/me", 12);
 
     const text = try MetricsExporter.toPrometheus(&m, a);
     defer a.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "zfinal_connections_total 1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "code=\"2xx\"}} 1") != null or std.mem.indexOf(u8, text, "code=\"2xx\"} 1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "5xx") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "zfinal_request_duration_by_route_ms_sum{route=\"api\"} 12") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "zfinal_request_duration_by_route_ms_count{route=\"api\"} 1") != null);
 
     const json = try MetricsExporter.toJson(&m, a);
     defer a.free(json);

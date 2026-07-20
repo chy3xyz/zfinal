@@ -25,6 +25,13 @@ pub const Metrics = struct {
     route_hits: [4]std.atomic.Value(u64) = .{
         .init(0), .init(0), .init(0), .init(0),
     },
+    /// Per route-class latency sum/count for Prometheus averages.
+    route_latency_sum_ms: [4]std.atomic.Value(u64) = .{
+        .init(0), .init(0), .init(0), .init(0),
+    },
+    route_latency_count: [4]std.atomic.Value(u64) = .{
+        .init(0), .init(0), .init(0), .init(0),
+    },
     /// Ring buffer for recent errors (last N errors). Access via recordError only.
     recent_errors: std.ArrayList(ErrorEntry),
     max_error_entries: usize = 50,
@@ -87,6 +94,12 @@ pub const Metrics = struct {
     pub fn recordRoute(self: *Metrics, path: []const u8) void {
         const idx = routeClass(path);
         _ = self.route_hits[idx].fetchAdd(1, .monotonic);
+    }
+
+    pub fn recordRouteLatencyMs(self: *Metrics, path: []const u8, duration_ms: u64) void {
+        const idx = routeClass(path);
+        _ = self.route_latency_sum_ms[idx].fetchAdd(duration_ms, .monotonic);
+        _ = self.route_latency_count[idx].fetchAdd(1, .monotonic);
     }
 
     pub fn routeClass(path: []const u8) usize {
