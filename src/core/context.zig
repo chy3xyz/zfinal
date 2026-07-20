@@ -396,9 +396,12 @@ pub const Context = struct {
         // Add Set-Cookie headers (heap-allocated, freed in defer above)
         try self.appendSetCookieHeaders(&headers);
 
+        self.drainUnconsumedBody();
+
         try self.req.respond(text, .{
             .status = self.res_status,
             .extra_headers = headers.items,
+            .keep_alive = self.req.head.keep_alive,
         });
     }
 
@@ -428,6 +431,7 @@ pub const Context = struct {
         try self.req.respond(json, .{
             .status = self.res_status,
             .extra_headers = headers.items,
+            .keep_alive = self.req.head.keep_alive,
         });
     }
 
@@ -449,9 +453,12 @@ pub const Context = struct {
         // Add Set-Cookie headers (heap-allocated, freed in defer above)
         try self.appendSetCookieHeaders(&headers);
 
+        self.drainUnconsumedBody();
+
         try self.req.respond(html, .{
             .status = self.res_status,
             .extra_headers = headers.items,
+            .keep_alive = self.req.head.keep_alive,
         });
     }
 

@@ -102,3 +102,15 @@ zig build -Dlog-level=debug  # compile-time log level
 Zig 0.17 specifics: `@cImport` removed → use `b.addTranslateC` in build.zig.
 `std.fmt.bufPrintZ` → `bufPrint` + manual `buf[len]=0`.
 `allocator.dupeZ` → `allocSentinel` + `@memcpy`.
+
+## Learned User Preferences
+
+- Prefer writing architecture / best-practice conclusions into `doc/` (not chat-only).
+- Prefer graduating experimental plugins and queue clients into stable public API rather than leaving them under `experimental`.
+- When asked to submit or ship, expect a git commit plus a version tag (and a GitHub push when specified).
+
+## Learned Workspace Facts
+
+- Sibling project `zigmodu` at `/Users/n0x/w4_proj/zig_ws/zigmodu` is the reference for connector patterns (Kafka → RobustMQ) and zent integration.
+- Stable messaging surface targets formal `QueueNatsClient` and RobustMQ connectors, not long-lived experimental exports.
+- Keep pace with the locally installed latest Zig 0.17-dev when upgrading compatibility.

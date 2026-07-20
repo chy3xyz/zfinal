@@ -57,8 +57,10 @@ Skipped automatically when env is unset.
 
 ## Scope / limits
 
-- Implements ApiVersions + Produce (+ Fetch round-trip); consumer group protocol incomplete.
-- `KafkaConsumer.poll` Fetch value decode is still a stub (network exercised; full RecordBatch later).
-- Prefer `QueueRobustMQClient.publish` for L3 `ports/bus` adapter until consume path matures.
+- Implements ApiVersions + Produce + Fetch; **RecordBatch value decode is implemented**
+  (`parseFetchValues` / `parseRecordBatchValues`). Consumer group protocol
+  (JoinGroup / SyncGroup / OffsetCommit) is still incomplete.
+- Prefer `QueueRobustMQClient.publish` for L3 `ports/bus` until group consume matures;
+  for mature consume prefer NATS (`QueueNatsClient`).
 
 See also: [progressive_architecture.md](progressive_architecture.md), [scale_to_millions.md](scale_to_millions.md).

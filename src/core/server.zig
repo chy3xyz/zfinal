@@ -6,6 +6,7 @@ const Context = @import("context.zig").Context;
 const Metrics = @import("metrics.zig").Metrics;
 const getLog = @import("logger.zig").getLogger;
 const shutdown = @import("shutdown.zig");
+const io_instance = @import("../io_instance.zig");
 
 pub const ServerConfig = struct {
     host: []const u8 = "0.0.0.0",
@@ -20,7 +21,16 @@ pub const ServerConfig = struct {
     /// Per-connection idle timeout (ms) between request activity.
     /// Watchdog closes the socket if no `receiveHead`/dispatch progress.
     /// 0 disables. Default 30s. Still pair with reverse-proxy timeouts.
+    /// Note: Zig 0.17 Threaded has no Stream Writer timeout; this covers
+    /// blocked handlers/writes by closing the socket (fallback).
     request_timeout_ms: u64 = 30_000,
+    /// Per `net_read` deadline (ms) via `Io.operateTimeout` for receiveHead/body.
+    /// 0 disables (rely on idle watchdog only). Default matches request_timeout_ms.
+    read_timeout_ms: u64 = 30_000,
+    /// When true (default), force one-request-per-connection to avoid
+    /// Zig `http.Server` keep-alive / discardBody bugs (ziglang/zig#25017).
+    /// Set false only after full body-drain coverage + upstream fix + soak tests.
+    force_connection_close: bool = true,
 };
 
 /// Error set for server operations. Wrapped to fit Group.async std.Io.Cancelable!void constraint.
@@ -184,7 +194,7 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
 
     var read_buf: [4096]u8 = undefined;
     var write_buf: [4096]u8 = undefined;
-    var reader = conn.reader(io, &read_buf);
+    var reader = TimedReader.init(conn, io, &read_buf, server.config.read_timeout_ms);
     var writer = conn.writer(io, &write_buf);
     var http_srv = http.Server.init(&reader.interface, &writer.interface);
     var req_count: usize = 0;
@@ -200,6 +210,78 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
         if (!request.head.keep_alive) break;
     }
 }
+
+/// Stream reader that applies `Io.operateTimeout` on each `net_read`.
+const TimedReader = struct {
+    io: std.Io,
+    interface: std.Io.Reader,
+    stream: std.Io.net.Stream,
+    timeout_ms: u64,
+    err: ?anyerror = null,
+
+    const max_iovecs_len = 8;
+
+    fn init(stream: std.Io.net.Stream, io: std.Io, buffer: []u8, timeout_ms: u64) TimedReader {
+        return .{
+            .io = io,
+            .interface = .{
+                .vtable = &.{
+                    .stream = streamImpl,
+                    .readVec = readVec,
+                },
+                .buffer = buffer,
+                .seek = 0,
+                .end = 0,
+            },
+            .stream = stream,
+            .timeout_ms = timeout_ms,
+        };
+    }
+
+    fn streamImpl(io_r: *std.Io.Reader, io_w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+        const dest = limit.slice(try io_w.writableSliceGreedy(1));
+        var data: [1][]u8 = .{dest};
+        const n = try readVec(io_r, &data);
+        io_w.advance(n);
+        return n;
+    }
+
+    fn readVec(io_r: *std.Io.Reader, data: [][]u8) std.Io.Reader.Error!usize {
+        const r: *TimedReader = @alignCast(@fieldParentPtr("interface", io_r));
+        var iovecs_buffer: [max_iovecs_len][]u8 = undefined;
+        const dest_n, const data_size = try io_r.writableVector(&iovecs_buffer, data);
+        const dest = iovecs_buffer[0..dest_n];
+        std.debug.assert(dest[0].len > 0);
+
+        const timeout: std.Io.Timeout = if (r.timeout_ms == 0)
+            .none
+        else
+            .{ .duration = .{
+                .raw = .fromMilliseconds(@intCast(r.timeout_ms)),
+                .clock = .awake,
+            } };
+
+        const n = (r.io.operateTimeout(.{
+            .net_read = .{
+                .socket_handle = r.stream.socket.handle,
+                .data = dest,
+            },
+        }, timeout) catch |err| {
+            r.err = err;
+            return error.ReadFailed;
+        }).net_read catch |err| {
+            r.err = err;
+            return error.ReadFailed;
+        };
+
+        if (n == 0) return error.EndOfStream;
+        if (n > data_size) {
+            r.interface.end += n - data_size;
+            return data_size;
+        }
+        return n;
+    }
+};
 
 fn idleWatchdog(
     io: std.Io,
@@ -226,8 +308,7 @@ fn idleWatchdog(
 
 fn monoMs(io: std.Io) u64 {
     const ts = std.Io.Timestamp.now(io, .awake);
-    const secs: u64 = @intCast(@max(ts.toSeconds(), 0));
-    return secs *% 1000;
+    return @intCast(@max(ts.toMilliseconds(), 0));
 }
 
 fn dispatch(request: *http.Server.Request, server: *Server) !void {
@@ -235,6 +316,7 @@ fn dispatch(request: *http.Server.Request, server: *Server) !void {
     const safe_target = if (target.len > 4096) target[0..4096] else target;
     const path = if (std.mem.indexOfScalar(u8, safe_target, '?')) |q| safe_target[0..q] else safe_target;
     const method = HttpMethod.fromString(@tagName(request.head.method)) orelse .GET;
+    const start_ms: i64 = std.Io.Timestamp.now(io_instance.io, .awake).toMilliseconds();
 
     var ctx = Context.init(request, server.allocator);
     ctx.max_body_size = server.config.max_body_size;
@@ -253,13 +335,17 @@ fn dispatch(request: *http.Server.Request, server: *Server) !void {
 
     if (server.metrics) |m| {
         m.recordRequest(@intFromEnum(ctx.res_status));
+        m.recordRoute(path);
+        const end_ms = std.Io.Timestamp.now(io_instance.io, .awake).toMilliseconds();
+        const dur: u64 = @intCast(@max(end_ms - start_ms, 0));
+        m.recordLatencyMs(dur);
     }
 
-    // TODO(zig-0.17): Force Connection: close to work around http.Server
-    // reader state bug. Keep-alive on same connection triggers
-    // readerExpectNone assertion (state != .received_head).
-    // Remove this once upstream fix lands (see ziglang/zig#XXXXX).
-    request.head.keep_alive = false;
+    // Zig http.Server keep-alive is unsafe until ziglang/zig#25017 (+ body drain).
+    // Default forces close; opt-in via ServerConfig.force_connection_close=false.
+    if (server.config.force_connection_close) {
+        request.head.keep_alive = false;
+    }
 }
 
 // ============================================================

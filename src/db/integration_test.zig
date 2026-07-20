@@ -303,7 +303,7 @@ test "db: bulk insert on SQLite" {
 // ============================================================
 test "db: CRUD on PostgreSQL" {
     const a = std.testing.allocator;
-    var db = (try tryOpenPG(a)) orelse return;
+    var db = (try tryOpenPG(a)) orelse return error.SkipZigTest;
     defer db.destroy();
 
     _ = db.exec("DROP TABLE IF EXISTS cross_crud") catch {};
@@ -323,7 +323,7 @@ test "db: CRUD on PostgreSQL" {
 // ============================================================
 test "db: CRUD on MySQL" {
     const a = std.testing.allocator;
-    var db = (try tryOpenMY(a)) orelse return;
+    var db = (try tryOpenMY(a)) orelse return error.SkipZigTest;
     defer db.destroy();
 
     _ = db.exec("DROP TABLE IF EXISTS cross_crud") catch {};

@@ -76,6 +76,59 @@ jobs:
     - name: Codegen regression
       run: zig build test-zf
 
+  drivers-live:
+    name: Live PG + MySQL integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: zfinal
+          POSTGRES_USER: postgres
+          POSTGRES_DB: zfinal_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: zfinal
+          MYSQL_DATABASE: zfinal_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pzfinal"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Zig
+      uses: mlugg/setup-zig@v2
+      with:
+        version: '0.17.0-dev.1422+e863bf3be'
+    - name: Install client libs
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libsqlite3-dev libpq-dev default-libmysqlclient-dev
+    - name: Live driver tests
+      env:
+        ZF_PG_HOST: 127.0.0.1
+        ZF_PG_PORT: 5432
+        ZF_PG_USER: postgres
+        ZF_PG_PASSWORD: zfinal
+        ZF_PG_DATABASE: zfinal_test
+        ZF_MY_HOST: 127.0.0.1
+        ZF_MY_PORT: 3306
+        ZF_MY_USER: root
+        ZF_MY_PASSWORD: zfinal
+        ZF_MY_DATABASE: zfinal_test
+      run: zig build test -Ddriver_pg=true -Ddriver_mysql=true
+
   production-example:
     name: Production example build
     runs-on: ubuntu-latest

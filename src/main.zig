@@ -32,8 +32,11 @@ pub const getLogger = @import("core/logger.zig").getLogger;
 pub const Metrics = @import("core/metrics.zig").Metrics;
 pub const healthHandlerFor = @import("core/metrics.zig").healthHandlerFor;
 pub const healthHandlerWithChecks = @import("core/metrics.zig").healthHandlerWithChecks;
+pub const metricsHandlerFor = @import("core/metrics.zig").metricsHandlerFor;
 pub const HealthCheck = @import("core/metrics.zig").HealthCheck;
 pub const shutdown = @import("core/shutdown.zig");
+pub const auditLog = @import("core/audit.zig").log;
+pub const AuditEvent = @import("core/audit.zig").Event;
 pub const JsonNaming = enum { snake_case, camelCase };
 
 // ═══════════════════════════════════════════════════════════
@@ -76,14 +79,17 @@ pub const LoggingInterceptor = @import("interceptor/interceptor.zig").LoggingInt
 pub const AuthInterceptor = @import("interceptor/interceptor.zig").AuthInterceptor;
 pub const CORSInterceptor = @import("interceptor/interceptor.zig").CORSInterceptor;
 pub const createCorsInterceptor = @import("interceptor/interceptor.zig").createCorsInterceptor;
+pub const createCorsAllowlistInterceptor = @import("interceptor/interceptor.zig").createCorsAllowlistInterceptor;
 pub const createJwtAuthInterceptor = @import("interceptor/interceptor.zig").createJwtAuthInterceptor;
 
 // Auth
 pub const Jwt = @import("auth/jwt.zig");
 pub const jwtSign = @import("auth/jwt.zig").sign;
 pub const jwtVerify = @import("auth/jwt.zig").verify;
+pub const jwtVerifyWithOptions = @import("auth/jwt.zig").verifyWithOptions;
 pub const jwtFreeClaims = @import("auth/jwt.zig").freeClaims;
 pub const JwtClaims = @import("auth/jwt.zig").Claims;
+pub const JwtVerifyOptions = @import("auth/jwt.zig").VerifyOptions;
 
 // Export validator module
 pub const Validator = @import("validator/validator.zig").Validator;
@@ -100,6 +106,7 @@ pub const CacheConfig = @import("plugin/cache.zig").CacheConfig;
 pub const CacheBackend = @import("plugin/cache.zig").CacheBackend;
 pub const RedisClient = @import("plugin/redis.zig").RedisClient;
 pub const RedisCache = @import("plugin/redis.zig").RedisCache;
+pub const RedisSessionStore = @import("plugin/redis_session.zig").RedisSessionStore;
 pub const CronPlugin = @import("plugin/cron.zig").CronPlugin;
 pub const CircuitBreaker = @import("plugin/circuit_breaker.zig").CircuitBreaker;
 pub const QueueClient = @import("plugin/queue.zig").QueueClient;

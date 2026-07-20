@@ -323,7 +323,8 @@ pub fn main(init: std.process.Init) !void {
         .check => {
             const heal = hasFlag(args, "--heal");
             const ai_zones = hasFlag(args, "--ai-zones");
-            try handleCheck(allocator, heal, ai_zones);
+            const prod = hasFlag(args, "--prod");
+            try handleCheck(allocator, heal, ai_zones, prod);
         },
         .upgrade => {
             try handleUpgrade(allocator);
@@ -381,6 +382,7 @@ fn printHelp(exe_name: []const u8) void {
     std.debug.print("  crud:zent <file>        Generate from .zent/.json (zent primary data layer).\n", .{});
     std.debug.print("  admin <file>            Generate vben-style admin HTML (htmx + alpine + tailwind, CDN)\n", .{});
     std.debug.print("  check                   Audit project for AI compliance (gen/ext boundaries)\n", .{});
+    std.debug.print("  check --prod            Also scan for production-contract anti-patterns\n", .{});
     std.debug.print("  upgrade                 Upgrade zfinal dependency to latest release\n", .{});
     std.debug.print("  docker                  Generate Dockerfile\n", .{});
     std.debug.print("  deploy                  Deploy application\n", .{});
@@ -2495,7 +2497,7 @@ fn modulePath(alloc: std.mem.Allocator, name: []const u8) ![]const u8 {
 
 /// Audit project for AI compliance: .gen.zig boundaries, ext/ structure, import correctness.
 /// With --heal: automatically patch known issues (stale getPool pattern, missing getters, etc.)
-fn handleCheck(allocator: std.mem.Allocator, heal: bool, ai_zones: bool) !void {
+fn handleCheck(allocator: std.mem.Allocator, heal: bool, ai_zones: bool, prod: bool) !void {
     if (ai_zones) {
         try printAiZones(allocator);
         return;
@@ -2553,6 +2555,10 @@ fn handleCheck(allocator: std.mem.Allocator, heal: bool, ai_zones: bool) !void {
     // 4. Detect .zig files outside ext/ that should be in ext/
     checkOrphanHandlers(allocator, &warn);
 
+    if (prod) {
+        try checkProdContract(allocator, &pass, &warn, &fail);
+    }
+
     std.debug.print("\n═══════════════════════════════\n", .{});
     std.debug.print("Results: {d} pass  {d} warn  {d} fail\n", .{ pass, warn, fail });
     if (fail > 0) {
@@ -2563,6 +2569,69 @@ fn handleCheck(allocator: std.mem.Allocator, heal: bool, ai_zones: bool) !void {
         std.debug.print("\n✅ All checks passed. AI compliance verified.\n", .{});
     }
     std.debug.print("\n", .{});
+}
+
+/// Heuristic scan for PRODUCTION_AUDIT deployment-contract anti-patterns.
+fn checkProdContract(allocator: std.mem.Allocator, pass: *u32, warn: *u32, fail: *u32) !void {
+    std.debug.print("\n--- Production contract (--prod) ---\n", .{});
+    const roots = [_][]const u8{ "src", "examples" };
+    var banned_auth: u32 = 0;
+    var banned_cors_star: u32 = 0;
+    var experimental: u32 = 0;
+    var force_ka_off: u32 = 0;
+
+    for (roots) |root| {
+        var dir = std.Io.Dir.cwd().openDir(io, root, .{ .iterate = true }) catch continue;
+        defer dir.close(io);
+        var walker = dir.walk(allocator) catch continue;
+        defer walker.deinit();
+        while (walker.next(io) catch null) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.basename, ".zig")) continue;
+            const rel = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ root, entry.path });
+            defer allocator.free(rel);
+            const content = readFileAlloc(allocator, rel) catch continue;
+            defer allocator.free(content);
+            if (std.mem.indexOf(u8, content, "AuthInterceptor") != null and
+                std.mem.indexOf(u8, content, "createJwtAuthInterceptor") == null and
+                std.mem.indexOf(u8, content, "Demo-only") == null)
+            {
+                // Skip framework definition file itself
+                if (!std.mem.eql(u8, entry.basename, "interceptor.zig") and
+                    !std.mem.eql(u8, entry.basename, "main.zig"))
+                {
+                    banned_auth += 1;
+                    std.debug.print("⚠️  WARN: {s} references AuthInterceptor (prefer createJwtAuthInterceptor)\n", .{rel});
+                }
+            }
+            if (std.mem.indexOf(u8, content, "CORSInterceptor") != null and
+                std.mem.indexOf(u8, content, "createCors") == null and
+                !std.mem.eql(u8, entry.basename, "interceptor.zig") and
+                !std.mem.eql(u8, entry.basename, "main.zig"))
+            {
+                banned_cors_star += 1;
+                std.debug.print("⚠️  WARN: {s} uses CORSInterceptor (wildcard) — prefer createCorsAllowlistInterceptor\n", .{rel});
+            }
+            if (std.mem.indexOf(u8, content, "zfinal.experimental.") != null) {
+                experimental += 1;
+                std.debug.print("⚠️  WARN: {s} uses zfinal.experimental.*\n", .{rel});
+            }
+            if (std.mem.indexOf(u8, content, "force_connection_close = false") != null or
+                std.mem.indexOf(u8, content, ".force_connection_close = false") != null)
+            {
+                force_ka_off += 1;
+                std.debug.print("⚠️  WARN: {s} disables force_connection_close (keep-alive experimental)\n", .{rel});
+            }
+        }
+    }
+
+    if (banned_auth == 0 and banned_cors_star == 0 and experimental == 0 and force_ka_off == 0) {
+        std.debug.print("✅ PASS: no production-contract anti-patterns found\n", .{});
+        pass.* += 1;
+    } else {
+        warn.* += banned_auth + banned_cors_star + experimental + force_ka_off;
+        _ = fail;
+    }
 }
 
 fn countGenFiles(allocator: std.mem.Allocator, count: *u32) void {

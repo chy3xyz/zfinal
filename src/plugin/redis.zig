@@ -11,6 +11,11 @@ pub const RedisClient = struct {
     stream: ?std.Io.net.Stream = null,
     /// Hard cap on a single response body to avoid unbounded allocation.
     max_response_bytes: usize = 4 * 1024 * 1024,
+    /// Soft deadline for connect + first PING (ms). Zig Threaded has no dial
+    /// timeout; we connect then require a PING reply within this window.
+    connect_timeout_ms: u64 = 5_000,
+    /// Soft deadline for subsequent command reads (ms). 0 = unlimited.
+    command_timeout_ms: u64 = 5_000,
 
     const Self = @This();
 
@@ -23,10 +28,19 @@ pub const RedisClient = struct {
         self.allocator.free(self.host);
     }
 
-    /// Connect to Redis server via TCP.
+    /// Connect to Redis server via TCP, then PING within `connect_timeout_ms`.
     pub fn connect(self: *Self) !void {
         const address = try std.Io.net.IpAddress.parseIp4(self.host, self.port);
         self.stream = try address.connect(io_instance.io, .{ .mode = .stream });
+        errdefer self.disconnect();
+        // Application-level deadline: require a PING round-trip.
+        const deadline = nowMillis() + @as(i64, @intCast(self.connect_timeout_ms));
+        const pong = self.commandWithDeadline(&.{"PING"}, deadline) catch |err| switch (err) {
+            error.Timeout => return error.ConnectTimeout,
+            else => return err,
+        };
+        defer if (pong) |p| self.allocator.free(p);
+        if (pong == null or !std.mem.eql(u8, pong.?, "PONG")) return error.ConnectTimeout;
     }
 
     /// Disconnect from Redis server.
@@ -41,10 +55,21 @@ pub const RedisClient = struct {
         return &(self.stream orelse return error.NotConnected);
     }
 
-    /// Send a RESP command and read the response.
+    fn nowMillis() i64 {
+        return std.Io.Timestamp.now(io_instance.io, .real).toMilliseconds();
+    }
+
+    /// Send a RESP command and read the response (uses `command_timeout_ms`).
     fn command(self: *Self, args: []const []const u8) !?[]const u8 {
+        const deadline: ?i64 = if (self.command_timeout_ms == 0)
+            null
+        else
+            nowMillis() + @as(i64, @intCast(self.command_timeout_ms));
+        return self.commandWithDeadline(args, deadline);
+    }
+
+    fn commandWithDeadline(self: *Self, args: []const []const u8, deadline: ?i64) !?[]const u8 {
         const s = try self.requireStream();
-        // Build RESP: *<n>\r\n$<len>\r\n<arg>\r\n...
         var req = std.ArrayList(u8).empty;
         defer req.deinit(self.allocator);
         const n_str = try std.fmt.allocPrint(self.allocator, "*{d}\r\n", .{args.len});
@@ -60,11 +85,15 @@ pub const RedisClient = struct {
         var wbuf: [4096]u8 = undefined;
         var writer = s.writer(io_instance.io, &wbuf);
         try writer.interface.writeAll(req.items);
-        return self.readResponse();
+        return self.readResponseDeadline(deadline);
     }
 
     /// Read and parse a RESP response, looping until a complete value arrives.
     fn readResponse(self: *Self) !?[]const u8 {
+        return self.readResponseDeadline(null);
+    }
+
+    fn readResponseDeadline(self: *Self, deadline: ?i64) !?[]const u8 {
         const s = try self.requireStream();
         var accum = std.ArrayList(u8).empty;
         defer accum.deinit(self.allocator);
@@ -73,6 +102,9 @@ pub const RedisClient = struct {
         var reader = s.reader(io_instance.io, &rbuf);
 
         while (true) {
+            if (deadline) |d| {
+                if (nowMillis() >= d) return error.Timeout;
+            }
             if (accum.items.len >= self.max_response_bytes) return error.ResponseTooLarge;
             const chunk_cap = @min(rbuf.len, self.max_response_bytes - accum.items.len);
             const n = try reader.interface.readSliceShort(rbuf[0..chunk_cap]);

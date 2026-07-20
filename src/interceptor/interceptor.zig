@@ -1,6 +1,7 @@
 const std = @import("std");
 const Context = @import("../core/context.zig").Context;
 const jwt = @import("../auth/jwt.zig");
+const audit = @import("../core/audit.zig");
 
 pub const Handler = *const fn (*Context) anyerror!void;
 
@@ -169,6 +170,11 @@ pub fn createJwtAuthInterceptor(secret: []const u8) Interceptor {
             const now: i64 = @intCast(ts.sec);
 
             const claims = jwt.verify(ctx.allocator, sec, token, now) catch {
+                const path = if (std.mem.indexOfScalar(u8, ctx.req.head.target, '?')) |q|
+                    ctx.req.head.target[0..q]
+                else
+                    ctx.req.head.target;
+                audit.log(.auth_fail, path, "jwt");
                 ctx.res_status = .unauthorized;
                 try ctx.renderJson(.{ .err = "Invalid or expired token" });
                 return false;
@@ -216,15 +222,36 @@ pub const CORSInterceptor = Interceptor{
 
 /// Production-oriented CORS: single explicit origin (no wildcard).
 pub fn createCorsInterceptor(allowed_origin: []const u8) Interceptor {
+    return createCorsAllowlistInterceptor(&.{allowed_origin});
+}
+
+/// Production CORS with an allow-list of origins. Reflects request Origin when matched.
+pub fn createCorsAllowlistInterceptor(allowed_origins: []const []const u8) Interceptor {
     const Impl = struct {
-        var origin: []const u8 = undefined;
+        var origins: []const []const u8 = &.{};
 
         fn before(ctx: *Context) !bool {
-            try ctx.setHeader("Access-Control-Allow-Origin", origin);
-            try ctx.setHeader("Vary", "Origin");
+            const req_origin = ctx.getHeader("Origin");
+            var matched: ?[]const u8 = null;
+            if (req_origin) |o| {
+                for (origins) |allowed| {
+                    if (std.mem.eql(u8, allowed, o)) {
+                        matched = allowed;
+                        break;
+                    }
+                }
+            } else if (origins.len == 1) {
+                // Non-browser / same-origin tools: still emit the configured origin.
+                matched = origins[0];
+            }
+
+            if (matched) |m| {
+                try ctx.setHeader("Access-Control-Allow-Origin", m);
+                try ctx.setHeader("Vary", "Origin");
+                try ctx.setHeader("Access-Control-Allow-Credentials", "true");
+            }
             try ctx.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
             try ctx.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
-            try ctx.setHeader("Access-Control-Allow-Credentials", "true");
 
             if (ctx.req.head.method == .OPTIONS) {
                 ctx.res_status = .ok;
@@ -234,9 +261,9 @@ pub fn createCorsInterceptor(allowed_origin: []const u8) Interceptor {
             return true;
         }
     };
-    Impl.origin = allowed_origin;
+    Impl.origins = allowed_origins;
     return Interceptor{
-        .name = "cors_restricted",
+        .name = "cors_allowlist",
         .before = Impl.before,
         .after = corsAfter,
     };

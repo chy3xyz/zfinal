@@ -217,3 +217,21 @@ entity Product {
 字段类型：`string` / `text` / `int` / `bool` / `float` / `time`；修饰 `@index`、`= default`。
 
 Agent：电商/社交优先 **`zf crud:zent`**，不要默认拆成一堆裸 JOIN 的 `zf` Model。
+
+---
+
+## 10. 生产成熟度 / 事务边界 / SLA
+
+| 级别 | 何时可用 |
+|------|----------|
+| Demo / AI codegen | `examples/zent-shop` + `zf crud:zent` — **可用** |
+| 受控生产（单库、池化） | `ConnPool`、migrate 在 listen 前、压测通过 — **可用** |
+| 硬 SLA / 多区域 | 需自建备份、迁移演练、故障注入 — **bake 后再承诺** |
+
+**事务边界（硬规则）**
+
+1. 同一事务只使用 **一个** zent Driver/Client（或只使用 `zfinal.DB`）— 禁止混用。
+2. 跨模块副作用走 Queue（NATS / 进程内），不要指望跨库 2PC。
+3. HTTP 层只见 DTO；写路径在 service，不在 handler 开长事务。
+
+交叉引用：[`PRODUCTION_AUDIT.md`](../PRODUCTION_AUDIT.md) · [`examples/zent-shop`](../examples/zent-shop/) · [ADR-007](../.life/decisions/007-zent-peer-data-layer.md)。

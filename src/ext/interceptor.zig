@@ -121,7 +121,14 @@ pub fn createRateLimitInterceptor(limiter: *zfinal.RateLimitHandler) zfinal.Inte
         var lim: *zfinal.RateLimitHandler = undefined;
 
         fn before(ctx: *zfinal.Context) !bool {
-            lim.handle(ctx) catch return false;
+            lim.handle(ctx) catch {
+                const path = if (std.mem.indexOfScalar(u8, ctx.req.head.target, '?')) |q|
+                    ctx.req.head.target[0..q]
+                else
+                    ctx.req.head.target;
+                zfinal.auditLog(.rate_limited, path, "429");
+                return false;
+            };
             return true;
         }
     };

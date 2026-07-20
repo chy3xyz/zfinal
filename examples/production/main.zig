@@ -44,6 +44,7 @@ pub fn main(init: std.process.Init) !void {
         .port = 8080,
         .drain_timeout_ms = 15_000,
         .request_timeout_ms = 30_000,
+        .read_timeout_ms = 30_000,
         .max_body_size = 1 * 1024 * 1024,
     });
     app.setMetrics(&g_metrics);
@@ -51,6 +52,7 @@ pub fn main(init: std.process.Init) !void {
     try app.get("/health", zfinal.healthHandlerWithChecks(&g_metrics, &.{
         .{ .name = "process", .check = probeProcessAlive },
     }));
+    try app.get("/metrics", zfinal.metricsHandlerFor(&g_metrics));
 
     var token_mgr = zfinal.TokenManager.init(allocator);
     defer token_mgr.deinit();
@@ -74,12 +76,19 @@ pub fn main(init: std.process.Init) !void {
     const rate_mw = zfinal.createRateLimitInterceptor(&rate_limiter);
     const jwt_mw = zfinal.createJwtAuthInterceptor(g_jwt_secret);
 
-    // Explicit origin — never ship wildcard CORS for credentialed APIs.
+    // Explicit origins — never ship wildcard CORS for credentialed APIs.
     const cors_origin = blk: {
         if (std.c.getenv("CORS_ORIGIN")) |o| break :blk std.mem.span(o);
         break :blk "http://127.0.0.1:8080";
     };
-    try app.addGlobalInterceptor(zfinal.createCorsInterceptor(cors_origin));
+    // Allow-list: primary origin + optional second via CORS_ORIGIN_2.
+    var cors_origins_buf: [2][]const u8 = .{ cors_origin, cors_origin };
+    var cors_n: usize = 1;
+    if (std.c.getenv("CORS_ORIGIN_2")) |o2| {
+        cors_origins_buf[1] = std.mem.span(o2);
+        cors_n = 2;
+    }
+    try app.addGlobalInterceptor(zfinal.createCorsAllowlistInterceptor(cors_origins_buf[0..cors_n]));
     try app.addGlobalInterceptor(rate_mw);
 
     var api = zfinal.RouteGroup.init(&app, "/api");
