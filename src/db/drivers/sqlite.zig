@@ -1,5 +1,6 @@
 const std = @import("std");
 const DBConfig = @import("../config.zig").DBConfig;
+const Cell = @import("../result.zig").Cell;
 const ResultSet = @import("../result.zig").ResultSet;
 const SqlParam = @import("../sql_param.zig").SqlParam;
 
@@ -131,29 +132,39 @@ pub const SQLiteDB = struct {
                 return diag.error_code;
             }
 
-            // Read row data
-            var cells = try self.allocator.alloc(?[]const u8, @intCast(n_cols));
+            // Read row data — typed Cell union. SQLite exposes typed columns
+            // natively via sqlite3_column_type + sqlite3_column_int64/float/text/blob,
+            // so we map each column to its natural Cell variant and avoid the
+            // parseInt/parseFloat round-trip on consumer reads.
+            var cells = try self.allocator.alloc(Cell, @intCast(n_cols));
             errdefer {
-                for (cells) |cell| {
-                    if (cell) |cval| self.allocator.free(cval);
-                }
+                for (cells) |cell| switch (cell) {
+                    .text => |t| self.allocator.free(t),
+                    .blob => |b| self.allocator.free(b),
+                    else => {},
+                };
                 self.allocator.free(cells);
             }
 
             for (0..@intCast(n_cols)) |i| {
                 const col_type = c.sqlite3_column_type(stmt, @intCast(i));
 
-                if (col_type == c.SQLITE_NULL) {
-                    cells[i] = null;
-                } else {
-                    const text = c.sqlite3_column_text(stmt, @intCast(i));
-                    if (text != null) {
+                cells[i] = switch (col_type) {
+                    c.SQLITE_NULL => .null,
+                    c.SQLITE_INTEGER => .{ .int = c.sqlite3_column_int64(stmt, @intCast(i)) },
+                    c.SQLITE_FLOAT => .{ .float = c.sqlite3_column_double(stmt, @intCast(i)) },
+                    c.SQLITE_TEXT => blk: {
+                        const text = c.sqlite3_column_text(stmt, @intCast(i)) orelse break :blk Cell{ .null = {} };
                         const text_len = std.mem.len(text);
-                        cells[i] = try self.allocator.dupe(u8, text[0..text_len]);
-                    } else {
-                        cells[i] = null;
-                    }
-                }
+                        break :blk .{ .text = try self.allocator.dupe(u8, text[0..text_len]) };
+                    },
+                    c.SQLITE_BLOB => blk: {
+                        const blob = c.sqlite3_column_blob(stmt, @intCast(i)) orelse break :blk Cell{ .null = {} };
+                        const blob_len: usize = @intCast(c.sqlite3_column_bytes(stmt, @intCast(i)));
+                        break :blk .{ .blob = try self.allocator.dupe(u8, @as([*]const u8, @ptrCast(blob))[0..blob_len]) };
+                    },
+                    else => .null,
+                };
             }
 
             try result_set.addRow(cells);

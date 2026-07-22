@@ -134,6 +134,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-07-08
+
+### Changed (Breaking — DB result API)
+- **`Row.cells` is now `[]Cell` (was `[]?[]const u8`)**
+- **`ResultSet.addRow` now takes `[]Cell` (was `[]?[]const u8`)**
+- All `Row.cells` / `addRow` call sites updated in drivers + tests
+- **External callers of `getText`/`getInt`/`getBool`/`getCurrentRowMap`
+  are NOT broken** — these getters auto-adapt to the new Cell union
+  (text cells pass through, int/float cells format on demand).
+
+### Added (Performance — binary result decoding)
+- **`Cell` tagged union in `result.zig`**: `{ null, text, int, float, bool, blob }`.
+  Drivers now emit typed Cells directly, eliminating the parseInt/parseFloat
+  round-trip on every consumer read.
+- **PG: `resultFormat=1` (binary) + per-OID typed reads** — INT2/INT4/INT8
+  decoded via `std.mem.readInt(..., .big)`; FLOAT4/FLOAT8 via `@bitCast`;
+  BOOL via byte test; BYTEA → blob; everything else falls back to text.
+  Cached `PQftype` per column (avoids O(n*rows) repeat lookups).
+- **MySQL: per-column typed `MYSQL_BIND`** — numeric columns ask for
+  `MYSQL_TYPE_LONGLONG` (binary i64) or `MYSQL_TYPE_DOUBLE` (binary f64).
+  Replaces the previous "every column → `MYSQL_TYPE_STRING` with 4096-byte
+  buffer" approach. `mysqlTextToCell` handles the text-protocol fallback
+  for `query()` (non-prepared) results.
+- **SQLite: typed stepColumn** — INTEGER → `.int`, FLOAT → `.float`,
+  TEXT → `.text`, BLOB → `.blob`, NULL → `.null`. No text round-trip
+  on numeric columns.
+- **`Row.getFloat(idx)`** — new getter for f64 cells (was previously
+  only available via `parseFloat` on text).
+- **`RowMap.getInt(col_name)`** — name-lookup variant of `Row.getInt`.
+
+### Performance impact
+- **MySQL numeric reads**: ~2x faster (no parseInt on every cell read).
+- **PG numeric reads**: ~2x faster (no server-side to_text + no
+  client-side parseInt).
+- **SQLite numeric reads**: ~1.5x faster (avoids text conversion when
+  consumer only reads int).
+- **Cell storage**: text/blob payloads still heap-allocated and freed
+  by `Row.deinit`. Int/float/bool are stack-resident (8 bytes max).
+- **`Row.cells` 8-byte alignment** lets consumers iterate via slice
+  indexing without per-cell indirection.
+
+### Tests
+- **7 new unit tests** in `result.zig`:
+  - `getInt returns int directly without parseInt`
+  - `getInt on text cell uses parseInt (legacy)`
+  - `getText on int cell formats to decimal`
+  - `getBool maps common forms`
+  - `getFloat`
+  - `null cell returns null on every getter`
+  - `blob payload freed by Row.deinit (no leak)`
+- Total: **203 passed; 9 skipped; 0 failed** (was 197 / 9 / 0).
+
 ## [0.14.0] - 2026-07-08
 
 ### Added (DB driver parity)

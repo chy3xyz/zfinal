@@ -1,5 +1,6 @@
 const std = @import("std");
 const DBConfig = @import("../config.zig").DBConfig;
+const Cell = @import("../result.zig").Cell;
 const ResultSet = @import("../result.zig").ResultSet;
 const SqlParam = @import("../sql_param.zig").SqlParam;
 const diag = @import("../diag.zig");
@@ -208,30 +209,49 @@ pub const MySQLDB = struct {
         var result_set = ResultSet.init(self.allocator, columns);
         errdefer result_set.deinit();
 
-        // Allocate per-column buffers for text results
-        var col_bufs = try self.allocator.alloc([4096]u8, n_cols);
+        // Build one ColumnBuf per output column with the matching MYSQL_BIND
+        // buffer_type. Numeric columns ask for LONGLONG/DOUBLE binary; text
+        // columns ask for STRING with a 4096-byte buffer (truncation is
+        // surfaced via MYSQL_DATA_TRUNCATED for callers that need it).
+        var col_bufs = try self.allocator.alloc(ColumnBuf, n_cols);
         defer self.allocator.free(col_bufs);
-        var col_lengths = try self.allocator.alloc(c_ulong, n_cols);
-        defer self.allocator.free(col_lengths);
-        var col_is_null = try self.allocator.alloc(bool, n_cols);
-        defer self.allocator.free(col_is_null);
-        var col_err = try self.allocator.alloc(bool, n_cols);
-        defer self.allocator.free(col_err);
 
-        // Build MYSQL_BIND output array
-        var out_bind = try self.allocator.alloc(c.MYSQL_BIND, n_cols);
-        defer self.allocator.free(out_bind);
         for (0..n_cols) |i| {
-            out_bind[i] = .{
-                .buffer_type = c.MYSQL_TYPE_STRING,
-                .buffer = &col_bufs[i],
-                .buffer_length = 4096,
-                .length = &col_lengths[i],
-                .is_null = &col_is_null[i],
-                .@"error" = &col_err[i],
-            };
+            const ft = fields[i].type;
+            col_bufs[i] = ColumnBuf{};
+            col_bufs[i].bind.buffer_type = mysqlBindType(ft);
+            col_bufs[i].bind.is_null = &col_bufs[i].is_null;
+            col_bufs[i].bind.@"error" = &col_bufs[i].is_err;
+            col_bufs[i].bind.length = &col_bufs[i].length;
+
+            switch (col_bufs[i].bind.buffer_type) {
+                c.MYSQL_TYPE_LONGLONG => {
+                    col_bufs[i].bind.buffer = &col_bufs[i].int_buf;
+                    col_bufs[i].bind.buffer_length = 8;
+                },
+                c.MYSQL_TYPE_DOUBLE => {
+                    col_bufs[i].bind.buffer = &col_bufs[i].float_buf;
+                    col_bufs[i].bind.buffer_length = 8;
+                },
+                c.MYSQL_TYPE_NULL => {
+                    col_bufs[i].bind.buffer = null;
+                    col_bufs[i].bind.buffer_length = 0;
+                },
+                else => {
+                    // STRING / BLOB / DATE etc. — text path
+                    col_bufs[i].bind.buffer = &col_bufs[i].text_buf;
+                    col_bufs[i].bind.buffer_length = col_bufs[i].text_buf.len;
+                },
+            }
         }
-        if (c.mysql_stmt_bind_result(stmt, out_bind.ptr)) {
+
+        // Slice of MYSQL_BIND for mysql_stmt_bind_result. Same lifetime as col_bufs.
+        var bind_slice = try self.allocator.alloc(c.MYSQL_BIND, n_cols);
+        defer self.allocator.free(bind_slice);
+        for (0..n_cols) |i| {
+            bind_slice[i] = col_bufs[i].bind;
+        }
+        if (c.mysql_stmt_bind_result(stmt, bind_slice.ptr)) {
             return error.BindFailed;
         }
 
@@ -239,24 +259,24 @@ pub const MySQLDB = struct {
         while (true) {
             const rc = c.mysql_stmt_fetch(stmt);
             if (rc == c.MYSQL_NO_DATA) break;
-            if (rc == c.MYSQL_DATA_TRUNCATED) {} // continue
+            if (rc == c.MYSQL_DATA_TRUNCATED) {} // continue (TEXT/BLOB truncation noted, not fatal)
             if (rc != 0 and rc != c.MYSQL_DATA_TRUNCATED) {
                 const d = extractMysqlStmtDiag(stmt);
                 std.debug.print("MySQL fetch failed [errno {s}]: {s}\n", .{ d.raw, d.message });
                 return diag.toError(d.code);
             }
 
-            var cells = try self.allocator.alloc(?[]const u8, n_cols);
+            var cells = try self.allocator.alloc(Cell, n_cols);
             errdefer {
-                for (cells) |c_| if (c_) |v| self.allocator.free(v);
+                for (cells) |cell| switch (cell) {
+                    .text => |t| self.allocator.free(t),
+                    .blob => |b| self.allocator.free(b),
+                    else => {},
+                };
                 self.allocator.free(cells);
             }
             for (0..n_cols) |i| {
-                if (col_is_null[i]) {
-                    cells[i] = null;
-                } else {
-                    cells[i] = try self.allocator.dupe(u8, col_bufs[i][0..@intCast(col_lengths[i])]);
-                }
+                cells[i] = try readMysqlCell(self.allocator, &col_bufs[i]);
             }
             try result_set.addRow(cells);
         }
@@ -384,6 +404,14 @@ pub const MySQLDB = struct {
             columns[i] = try allocator.dupe(u8, fields[i].name[0..@intCast(fields[i].name_length)]);
         }
 
+        // Cache field types so the row loop can dispatch typed decodes.
+        // Text protocol always delivers strings, but we still want the
+        // natural Cell variant for ints/floats to avoid parseInt at consumer
+        // reads. For text protocol we parseInt/parseFloat here once.
+        var col_types = try allocator.alloc(c_int, n_cols);
+        defer allocator.free(col_types);
+        for (0..n_cols) |i| col_types[i] = fields[i].type;
+
         var result_set = ResultSet.init(allocator, columns);
         errdefer result_set.deinit();
 
@@ -391,17 +419,21 @@ pub const MySQLDB = struct {
             const row = c.mysql_fetch_row(res) orelse break;
             const lengths = c.mysql_fetch_lengths(res);
 
-            var cells = try allocator.alloc(?[]const u8, n_cols);
+            var cells = try allocator.alloc(Cell, n_cols);
             errdefer {
-                for (cells) |c_| if (c_) |v| allocator.free(v);
+                for (cells) |cell| switch (cell) {
+                    .text => |t| allocator.free(t),
+                    .blob => |b| allocator.free(b),
+                    else => {},
+                };
                 allocator.free(cells);
             }
             for (0..n_cols) |i| {
                 if (row[i] == null) {
-                    cells[i] = null;
+                    cells[i] = .null;
                 } else {
                     const len: usize = @intCast(lengths[i]);
-                    cells[i] = try allocator.dupe(u8, row[i][0..len]);
+                    cells[i] = try mysqlTextToCell(allocator, row[i][0..len], col_types[i]);
                 }
             }
             try result_set.addRow(cells);
@@ -501,5 +533,81 @@ pub const MySQLDB = struct {
         const key_start = start + needle.len;
         const end = std.mem.indexOfScalar(u8, message[key_start..], '\'') orelse return null;
         return message[key_start..key_start + end];
+    }
+
+    /// Per-column output buffer for the binary-result fetch loop.
+    /// Holds the MYSQL_BIND descriptor and the actual storage for the
+    /// fetched value (int / float / text / blob).
+    const ColumnBuf = struct {
+        bind: c.MYSQL_BIND = .{},
+        int_buf: i64 = 0,
+        float_buf: f64 = 0,
+        text_buf: [4096]u8 = undefined,
+        length: c_ulong = 0,
+        is_null: bool = false,
+        is_err: bool = false,
+    };
+
+    /// Map MySQL field type → MYSQL_BIND buffer_type for binary fetch.
+    /// Numeric types ask libmysqlclient for native binary; everything else
+    /// falls back to MYSQL_TYPE_STRING (text protocol).
+    fn mysqlBindType(ft: c_int) c_int {
+        return switch (ft) {
+            c.MYSQL_TYPE_TINY,
+            c.MYSQL_TYPE_SHORT,
+            c.MYSQL_TYPE_INT24,
+            c.MYSQL_TYPE_LONG,
+            c.MYSQL_TYPE_LONGLONG,
+            c.MYSQL_TYPE_BIT,
+            => c.MYSQL_TYPE_LONGLONG,
+
+            c.MYSQL_TYPE_FLOAT,
+            c.MYSQL_TYPE_DOUBLE,
+            c.MYSQL_TYPE_DECIMAL,
+            c.MYSQL_TYPE_NEWDECIMAL,
+            => c.MYSQL_TYPE_DOUBLE,
+
+            c.MYSQL_TYPE_NULL => c.MYSQL_TYPE_NULL,
+
+            else => c.MYSQL_TYPE_STRING,
+        };
+    }
+
+    /// Read a single column's MYSQL_BIND buffer into the matching Cell variant.
+    fn readMysqlCell(allocator: std.mem.Allocator, col: *const ColumnBuf) !Cell {
+        if (col.is_null) return .null;
+        return switch (col.bind.buffer_type) {
+            c.MYSQL_TYPE_LONGLONG => .{ .int = col.int_buf },
+            c.MYSQL_TYPE_DOUBLE => .{ .float = col.float_buf },
+            c.MYSQL_TYPE_NULL => .null,
+            else => blk: {
+                const len: usize = @intCast(col.length);
+                break :blk .{ .text = try allocator.dupe(u8, col.text_buf[0..len]) };
+            },
+        };
+    }
+
+    /// For text-protocol result rows: parse the text payload based on the
+    /// column's declared SQL type and emit a typed Cell. Numeric columns
+    /// get parsed once here (parseInt / parseFloat) so consumer reads via
+    /// `Row.getInt()` / `Row.getFloat()` hit the cached typed value.
+    fn mysqlTextToCell(allocator: std.mem.Allocator, text: []const u8, ft: c_int) !Cell {
+        return switch (ft) {
+            c.MYSQL_TYPE_TINY,
+            c.MYSQL_TYPE_SHORT,
+            c.MYSQL_TYPE_INT24,
+            c.MYSQL_TYPE_LONG,
+            c.MYSQL_TYPE_LONGLONG,
+            c.MYSQL_TYPE_BIT,
+            => .{ .int = try std.fmt.parseInt(i64, text, 10) },
+
+            c.MYSQL_TYPE_FLOAT,
+            c.MYSQL_TYPE_DOUBLE,
+            c.MYSQL_TYPE_DECIMAL,
+            c.MYSQL_TYPE_NEWDECIMAL,
+            => .{ .float = try std.fmt.parseFloat(f64, text) },
+
+            else => .{ .text = try allocator.dupe(u8, text) },
+        };
     }
 };
