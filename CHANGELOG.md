@@ -134,6 +134,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-07-08
+
+### Added (Unix socket + streaming)
+- **`DBConfig.unix_socket: ?[]const u8`** — connect via local Unix domain
+  socket instead of TCP. Both PG and MySQL honor it.
+  - **PG**: emits `host=/path/to/socket` in conninfo, port omitted.
+  - **MySQL**: passed as the 7th arg to `mysql_real_connect`; libmysql
+    auto-detects the SOCKET protocol.
+- **Incremental query iterators** — stream rows without materializing
+  the full result set into RAM:
+  - **`SQLiteDB.queryIter(sql, params) !SQLiteIter`** + **`SQLiteIter.next() !?Row`**
+  - **`MySQLDB.queryIter(sql, params) !MySQLIter`** + **`MySQLIter.next() !?Row`**
+  - Both yield one typed `Row` per call. Caller iterates and frees each
+    row's cell payloads with `row.deinit()`. Memory usage is O(1) per row.
+- **Shared `readSqliteCell` helper** in sqlite.zig (dedupes the
+  Cell-emission path used by both `queryParams` and `SQLiteIter`).
+
+### Tests
+- 2 new integration tests for SQLite iterator (50-row stream + empty
+  result set + double-deinit safety).
+- Total: **205 passed; 9 skipped; 0 failed** (was 203 / 9 / 0).
+
+### Deferred
+- **PG incremental iterator**: requires `PQsetSingleRowMode` refactor
+  of `queryParams`. Logged as TODO in postgres.zig. Coming in v0.17.
+
 ## [0.15.0] - 2026-07-08
 
 ### Changed (Breaking — DB result API)

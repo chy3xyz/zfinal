@@ -31,6 +31,12 @@ pub const DBConfig = struct {
     // Connection parameters (for Postgres/MySQL)
     host: ?[]const u8 = null,
     port: ?u16 = null,
+    /// Unix domain socket path. When set, the driver connects via the
+    /// local socket instead of TCP. For PostgreSQL this becomes
+    /// `host=/path` in conninfo (port is ignored). For MySQL the path
+    /// is passed as the 7th arg to `mysql_real_connect`. Leave null for
+    /// the default TCP behavior.
+    unix_socket: ?[]const u8 = null,
 
     // Database name or file path
     database: []const u8,

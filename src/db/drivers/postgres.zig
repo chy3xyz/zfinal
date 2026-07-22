@@ -22,8 +22,20 @@ pub const PostgresDB = struct {
 
     pub fn connect(allocator: std.mem.Allocator, config: DBConfig) !PostgresDB {
         var conn_buf: [1024]u8 = undefined;
-        // Build the conninfo string. Optional keys are appended only if set.
-        const base = try std.fmt.bufPrint(
+        // Build the conninfo string. If unix_socket is set, the host is
+        // the socket path (libpq accepts `host=/path/to/socket` directly)
+        // and the port is irrelevant — we omit it to avoid libpq errors.
+        const base = if (config.unix_socket) |sock| try std.fmt.bufPrint(
+            &conn_buf,
+            "host={s} dbname={s} user={s} password={s} connect_timeout={d} client_encoding=UTF8",
+            .{
+                sock,
+                config.database,
+                config.username orelse "",
+                config.password orelse "",
+                config.timeout,
+            },
+        ) else try std.fmt.bufPrint(
             &conn_buf,
             "host={s} port={d} dbname={s} user={s} password={s} connect_timeout={d} client_encoding=UTF8",
             .{

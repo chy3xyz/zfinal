@@ -1,6 +1,7 @@
 const std = @import("std");
 const DBConfig = @import("../config.zig").DBConfig;
 const Cell = @import("../result.zig").Cell;
+const Row = @import("../result.zig").Row;
 const ResultSet = @import("../result.zig").ResultSet;
 const SqlParam = @import("../sql_param.zig").SqlParam;
 
@@ -147,24 +148,7 @@ pub const SQLiteDB = struct {
             }
 
             for (0..@intCast(n_cols)) |i| {
-                const col_type = c.sqlite3_column_type(stmt, @intCast(i));
-
-                cells[i] = switch (col_type) {
-                    c.SQLITE_NULL => .null,
-                    c.SQLITE_INTEGER => .{ .int = c.sqlite3_column_int64(stmt, @intCast(i)) },
-                    c.SQLITE_FLOAT => .{ .float = c.sqlite3_column_double(stmt, @intCast(i)) },
-                    c.SQLITE_TEXT => blk: {
-                        const text = c.sqlite3_column_text(stmt, @intCast(i)) orelse break :blk Cell{ .null = {} };
-                        const text_len = std.mem.len(text);
-                        break :blk .{ .text = try self.allocator.dupe(u8, text[0..text_len]) };
-                    },
-                    c.SQLITE_BLOB => blk: {
-                        const blob = c.sqlite3_column_blob(stmt, @intCast(i)) orelse break :blk Cell{ .null = {} };
-                        const blob_len: usize = @intCast(c.sqlite3_column_bytes(stmt, @intCast(i)));
-                        break :blk .{ .blob = try self.allocator.dupe(u8, @as([*]const u8, @ptrCast(blob))[0..blob_len]) };
-                    },
-                    else => .null,
-                };
+                cells[i] = try readSqliteCell(self.allocator, stmt.?, i);
             }
 
             try result_set.addRow(cells);
@@ -176,6 +160,125 @@ pub const SQLiteDB = struct {
     /// Legacy query without params (kept for backward compatibility)
     pub fn query(self: *SQLiteDB, sql: [:0]const u8) !ResultSet {
         return self.queryParams(sql, &.{});
+    }
+
+    /// Open an incremental query iterator. Unlike `queryParams` which
+    /// materializes the entire result set into RAM, this yields one Row
+    /// at a time via `sqlite3_step`. Memory usage is O(1) per row.
+    ///
+    /// Caller MUST call `iter.deinit()` to finalize the prepared statement
+    /// and free the column-name allocations, even if iteration is aborted
+    /// mid-stream.
+    pub fn queryIter(self: *SQLiteDB, sql: [:0]const u8, params: []const SqlParam) !SQLiteIter {
+        const db = self.db orelse return error.NotConnected;
+        var stmt: ?*c.sqlite3_stmt = null;
+        const rc = c.sqlite3_prepare_v2(db, sql.ptr, @intCast(sql.len + 1), &stmt, null);
+        if (rc != c.SQLITE_OK) {
+            std.debug.print("SQLite prepare failed: {s}\n", .{c.sqlite3_errmsg(db)});
+            return error.PrepareFailed;
+        }
+        try bindParams(stmt, params);
+
+        const n_cols: usize = @intCast(c.sqlite3_column_count(stmt));
+        var columns = try self.allocator.alloc([]const u8, n_cols);
+        errdefer self.allocator.free(columns);
+
+        for (0..n_cols) |i| {
+            const col_name = c.sqlite3_column_name(stmt, @intCast(i));
+            const col_name_len = std.mem.len(col_name);
+            columns[i] = try self.allocator.dupe(u8, col_name[0..col_name_len]);
+        }
+
+        return .{
+            .stmt = stmt,
+            .n_cols = n_cols,
+            .col_names = columns,
+            .allocator = self.allocator,
+            .done = false,
+        };
+    }
+
+    /// Legacy single-arg iterator. Same as `queryIter(sql, &.{})`.
+    pub fn queryIterNoArgs(self: *SQLiteDB, sql: [:0]const u8) !SQLiteIter {
+        return self.queryIter(sql, &.{});
+    }
+
+    /// Incremental query iterator. Holds the prepared statement open and
+    /// yields rows one at a time. Always call `deinit()` when done.
+    pub const SQLiteIter = struct {
+        stmt: ?*c.sqlite3_stmt,
+        n_cols: usize,
+        col_names: [][]const u8,
+        allocator: std.mem.Allocator,
+        done: bool,
+
+        /// Fetch the next row. Returns null when iteration completes.
+        /// On error the iterator is poisoned; caller should still call deinit.
+        pub fn next(self: *SQLiteIter) !?Row {
+            if (self.done) return null;
+            const stmt = self.stmt orelse return null;
+            const step_rc = c.sqlite3_step(stmt);
+
+            if (step_rc == c.SQLITE_DONE) {
+                self.done = true;
+                return null;
+            }
+            if (step_rc != c.SQLITE_ROW) {
+                const err_msg = c.sqlite3_errmsg(c.sqlite3_db_handle(stmt));
+                std.debug.print("SQLite step failed during iter: {s} (code {d})\n", .{ err_msg, step_rc });
+                return error.QueryFailed;
+            }
+
+            var cells = try self.allocator.alloc(Cell, self.n_cols);
+            errdefer {
+                for (cells) |cell| switch (cell) {
+                    .text => |t| self.allocator.free(t),
+                    .blob => |b| self.allocator.free(b),
+                    else => {},
+                };
+                self.allocator.free(cells);
+            }
+            for (0..self.n_cols) |i| {
+                cells[i] = try readSqliteCell(self.allocator, stmt, @intCast(i));
+            }
+            return Row{ .cells = cells, .allocator = self.allocator };
+        }
+
+        pub fn columns(self: *const SQLiteIter) []const []const u8 {
+            return self.col_names;
+        }
+
+        pub fn deinit(self: *SQLiteIter) void {
+            if (self.stmt) |s| {
+                _ = c.sqlite3_finalize(s);
+                self.stmt = null;
+            }
+            for (self.col_names) |col| self.allocator.free(col);
+            self.allocator.free(self.col_names);
+        }
+    };
+
+    /// Build a single typed Cell from the current row of a prepared
+    /// statement. Shared between the eager `queryParams` and the
+    /// incremental `SQLiteIter.next` paths.
+    fn readSqliteCell(allocator: std.mem.Allocator, stmt: *c.sqlite3_stmt, col: usize) !Cell {
+        const col_type = c.sqlite3_column_type(stmt, @intCast(col));
+        return switch (col_type) {
+            c.SQLITE_NULL => .null,
+            c.SQLITE_INTEGER => .{ .int = c.sqlite3_column_int64(stmt, @intCast(col)) },
+            c.SQLITE_FLOAT => .{ .float = c.sqlite3_column_double(stmt, @intCast(col)) },
+            c.SQLITE_TEXT => blk: {
+                const text = c.sqlite3_column_text(stmt, @intCast(col)) orelse break :blk Cell{ .null = {} };
+                const text_len = std.mem.len(text);
+                break :blk .{ .text = try allocator.dupe(u8, text[0..text_len]) };
+            },
+            c.SQLITE_BLOB => blk: {
+                const blob = c.sqlite3_column_blob(stmt, @intCast(col)) orelse break :blk Cell{ .null = {} };
+                const blob_len: usize = @intCast(c.sqlite3_column_bytes(stmt, @intCast(col)));
+                break :blk .{ .blob = try allocator.dupe(u8, @as([*]const u8, @ptrCast(blob))[0..blob_len]) };
+            },
+            else => .null,
+        };
     }
 
     /// Get last insert rowid
