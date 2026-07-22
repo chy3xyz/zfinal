@@ -1,3 +1,23 @@
+## [Unreleased]
+
+### Changed
+- **`zf` CLI modularization (phase 1–3)**: extracted `tools/zf/zf_shared.zig` (IO/FS/`safeWrite`/`appendJsonString`/`writeAiConfigs`), `tools/zf/zf_db.zig` (`ZfDb`), `cmd_migrate.zig` (migrate/seed), `cmd_openapi.zig`, `cmd_check.zig`, `cmd_crud.zig` (crud/admin + bootstrap), `cmd_fixture.zig`, `cmd_bench.zig`. `main.zig` is the dispatcher (~1.4k lines).
+
+### Added
+- **`zf g port store|cache|bus`**: generates `src/ports/{name}.zig` + matching `src/adapters/*` stubs aligned with L2/L3 in `doc/progressive_architecture.md` (`--json` / `--force`).
+- **RobustMQ JoinGroup / SyncGroup / Heartbeat**: wire builders + `KafkaConsumer.join` / `heartbeat`; `OffsetCommit` now carries generation/member from join. Multi-instance Kafka rebalance still NATS-first.
+- **RobustMQ OffsetCommit wire**: `KafkaWireFormat.buildOffsetCommitRequest` + `RobustMQTransport.offsetCommit` + `KafkaConsumer.commitLocal` / `commit`.
+
+### Fixed
+- **`write_timeout_ms` authenticity**: after Zig 0.17 removed `Operation.net_write`, the field was retained but ignored. `TimedWriter` now enforces a wall-clock deadline from the first response `drain` (reset per request). Idle watchdog + reverse-proxy timeouts remain complementary.
+- **Version / manifest drift**: `src/version.zig` is the single runtime/codegen source of truth (must match `build.zig.zon`); CLI + `zf crud:* --json` / `ZfTool` manifests no longer hardcode stale `0.13.11` / `0.9.x` strings.
+
+### Docs
+- Clarified regeneration semantics: existing files → `<path>.gen.new` (or `--force`); no automatic ai-edit-zone merge yet.
+- Refreshed `PRODUCTION_AUDIT.md` / `SECURITY.md` / agent docs to **0.20.3**.
+- `doc/robustmq.md`: JoinGroup status + single-process consume path; NATS-first for multi-instance.
+- `doc/codegen.md` / `doc/progressive_architecture.md`: ports codegen.
+
 ## [0.20.3] - 2026-07-22
 
 ### Added

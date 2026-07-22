@@ -1,4 +1,5 @@
 const std = @import("std");
+const fw_version = @import("../version.zig");
 
 /// In-process tool that lets an AI agent invoke the ZFinal code
 /// generator without shelling out to the `zf` binary. The same
@@ -96,7 +97,11 @@ pub const ZfTool = struct {
         try buf.appendSlice(self.allocator,
             \\{
             \\  "$schema": "https://zfinal.dev/schemas/manifest-1.json",
-            \\  "version": "0.9.2",
+            \\  "version": "
+        );
+        try buf.appendSlice(self.allocator, fw_version.semver);
+        try buf.appendSlice(self.allocator,
+            \\",
             \\  "generator": "ZfTool.manifestFromSql",
             \\  "tables": [
         );
@@ -167,7 +172,7 @@ pub const ZfTool = struct {
     fn manifestFromZentJson(self: ZfTool, src: []const u8) ![]u8 {
         const JsonField = struct {
             name: []const u8,
-            @"type": []const u8,
+            type: []const u8,
             index: ?bool = null,
         };
         const JsonEntity = struct {
@@ -188,7 +193,7 @@ pub const ZfTool = struct {
     fn manifestFromZentDsl(self: ZfTool, src: []const u8) ![]u8 {
         const JsonField = struct {
             name: []const u8,
-            @"type": []const u8,
+            type: []const u8,
             index: ?bool = null,
         };
         const JsonEntity = struct {
@@ -257,7 +262,7 @@ pub const ZfTool = struct {
             if (field_counts[ci] >= fields_storage[ci].len) continue;
             fields_storage[ci][field_counts[ci]] = .{
                 .name = fname,
-                .@"type" = typ,
+                .type = typ,
                 .index = if (indexed) true else null,
             };
             field_counts[ci] += 1;
@@ -327,7 +332,11 @@ fn emitZentManifest(allocator: std.mem.Allocator, module: []const u8, api_prefix
     try buf.appendSlice(allocator,
         \\{
         \\  "$schema": "https://zfinal.dev/schemas/zent-manifest-1.json",
-        \\  "version": "0.13.11",
+        \\  "version": "
+    );
+    try buf.appendSlice(allocator, fw_version.semver);
+    try buf.appendSlice(allocator,
+        \\",
         \\  "generator": "ZfTool.manifestFromZent",
         \\  "data_layer": "zent",
         \\  "ai_primary": true,
@@ -374,7 +383,7 @@ fn emitZentManifest(allocator: std.mem.Allocator, module: []const u8, api_prefix
             try buf.appendSlice(allocator, "\n        { \"name\": \"");
             try appendJsonString(allocator, &buf, f.name);
             try buf.appendSlice(allocator, "\", \"type\": \"");
-            try appendJsonString(allocator, &buf, f.@"type");
+            try appendJsonString(allocator, &buf, f.type);
             try buf.appendSlice(allocator, "\"");
             if (f.index orelse false) try buf.appendSlice(allocator, ", \"index\": true");
             try buf.appendSlice(allocator, " }");

@@ -27,8 +27,11 @@ pub const ServerConfig = struct {
     /// Per `net_read` deadline (ms) via `Io.operateTimeout` for receiveHead/body.
     /// 0 disables (rely on idle watchdog only). Default matches request_timeout_ms.
     read_timeout_ms: u64 = 30_000,
-    /// Per `net_write` deadline (ms) via `Io.operateTimeout` for response writes.
-    /// 0 disables. Default matches request_timeout_ms.
+    /// Per-response write deadline (ms), wall-clock from the first `drain`
+    /// of each request. Zig 0.17 removed `Operation.net_write`, so this is
+    /// enforced in user space rather than via `operateTimeout`. 0 disables.
+    /// Default matches request_timeout_ms. Prefer also terminating TLS/proxy
+    /// write timeouts at the reverse proxy.
     write_timeout_ms: u64 = 30_000,
     /// When true (default), force one-request-per-connection to avoid
     /// Zig `http.Server` keep-alive / discardBody bugs (ziglang/zig#25017).
@@ -207,6 +210,7 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
         last_activity_ms.store(monoMs(io), .monotonic);
         var request = http_srv.receiveHead() catch break;
         last_activity_ms.store(monoMs(io), .monotonic);
+        writer.resetWriteDeadline();
         dispatch(&request, server) catch break;
         last_activity_ms.store(monoMs(io), .monotonic);
         if (request.head.version != .@"HTTP/1.1") break;
@@ -287,14 +291,17 @@ const TimedReader = struct {
 };
 
 /// Stream writer backed by `Io.vtable.netWrite`.
-/// Note: Zig 0.17 removed `Operation.net_write`; per-write `write_timeout_ms`
-/// is no longer enforceable through `operateTimeout`. The field is retained
-/// for API compatibility but currently ignored.
+/// Enforces `write_timeout_ms` as a wall-clock deadline from the first
+/// `drain` of each response (call `resetWriteDeadline` per request).
+/// Zig 0.17 removed `Operation.net_write`, so `operateTimeout` cannot
+/// apply per-syscall write deadlines.
 const TimedWriter = struct {
     io: std.Io,
     interface: std.Io.Writer,
     stream: std.Io.net.Stream,
     timeout_ms: u64,
+    /// Absolute mono deadline (ms); 0 means "not started for this response".
+    write_deadline_ms: u64 = 0,
     err: ?anyerror = null,
 
     fn init(stream: std.Io.net.Stream, io: std.Io, buffer: []u8, timeout_ms: u64) TimedWriter {
@@ -311,8 +318,21 @@ const TimedWriter = struct {
         };
     }
 
+    fn resetWriteDeadline(self: *TimedWriter) void {
+        self.write_deadline_ms = 0;
+    }
+
     fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
         const w: *TimedWriter = @alignCast(@fieldParentPtr("interface", io_w));
+        if (w.timeout_ms > 0) {
+            const now = monoMs(w.io);
+            if (w.write_deadline_ms == 0) {
+                w.write_deadline_ms = now +% w.timeout_ms;
+            } else if (now >= w.write_deadline_ms) {
+                w.err = error.WriteTimedOut;
+                return error.WriteFailed;
+            }
+        }
         const n = w.io.vtable.netWrite(w.io.userdata, w.stream.socket.handle, io_w.buffered(), data, splat) catch |err| {
             w.err = err;
             return error.WriteFailed;

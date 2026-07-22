@@ -179,6 +179,121 @@ pub const RobustMQTransport = struct {
         return KafkaWireFormat.parseFetchValues(self.allocator, resp);
     }
 
+    /// Commit a single topic/partition offset for `group_id` (OffsetCommit API key 8).
+    /// Pass `generation_id` / `member_id` from `joinGroup`; `-1` / `""` is admin-only.
+    pub fn offsetCommit(
+        self: *Self,
+        group_id: []const u8,
+        generation_id: i32,
+        member_id: []const u8,
+        topic: []const u8,
+        partition: i32,
+        offset: i64,
+        metadata: []const u8,
+    ) !void {
+        try self.ensureConnected();
+        const corr = self.nextCorrelation();
+        const body = try KafkaWireFormat.buildOffsetCommitRequest(
+            self.allocator,
+            group_id,
+            generation_id,
+            member_id,
+            topic,
+            partition,
+            offset,
+            metadata,
+            corr,
+            self.client_id,
+        );
+        defer self.allocator.free(body);
+        try self.writeFrame(body);
+        const resp = try self.readFrame();
+        defer self.allocator.free(resp);
+        try KafkaWireFormat.checkOffsetCommitResponse(resp, corr);
+    }
+
+    /// JoinGroup (API key 11, v1). Caller owns `result` via `JoinGroupResult.deinit`.
+    pub fn joinGroup(
+        self: *Self,
+        group_id: []const u8,
+        member_id: []const u8,
+        session_timeout_ms: i32,
+        rebalance_timeout_ms: i32,
+        protocol_type: []const u8,
+        protocol_name: []const u8,
+        protocol_metadata: []const u8,
+    ) !KafkaWireFormat.JoinGroupResult {
+        try self.ensureConnected();
+        const corr = self.nextCorrelation();
+        const body = try KafkaWireFormat.buildJoinGroupRequest(
+            self.allocator,
+            group_id,
+            session_timeout_ms,
+            rebalance_timeout_ms,
+            member_id,
+            protocol_type,
+            protocol_name,
+            protocol_metadata,
+            corr,
+            self.client_id,
+        );
+        defer self.allocator.free(body);
+        try self.writeFrame(body);
+        const resp = try self.readFrame();
+        defer self.allocator.free(resp);
+        return try KafkaWireFormat.parseJoinGroupResponse(self.allocator, resp, corr);
+    }
+
+    /// SyncGroup (API key 14, v0). Leader sends assignments; followers send empty list.
+    pub fn syncGroup(
+        self: *Self,
+        group_id: []const u8,
+        generation_id: i32,
+        member_id: []const u8,
+        assignments: []const KafkaWireFormat.GroupAssignment,
+    ) !void {
+        try self.ensureConnected();
+        const corr = self.nextCorrelation();
+        const body = try KafkaWireFormat.buildSyncGroupRequest(
+            self.allocator,
+            group_id,
+            generation_id,
+            member_id,
+            assignments,
+            corr,
+            self.client_id,
+        );
+        defer self.allocator.free(body);
+        try self.writeFrame(body);
+        const resp = try self.readFrame();
+        defer self.allocator.free(resp);
+        try KafkaWireFormat.checkSyncGroupResponse(resp, corr);
+    }
+
+    /// Heartbeat (API key 12, v0) — keep membership alive between polls.
+    pub fn heartbeat(
+        self: *Self,
+        group_id: []const u8,
+        generation_id: i32,
+        member_id: []const u8,
+    ) !void {
+        try self.ensureConnected();
+        const corr = self.nextCorrelation();
+        const body = try KafkaWireFormat.buildHeartbeatRequest(
+            self.allocator,
+            group_id,
+            generation_id,
+            member_id,
+            corr,
+            self.client_id,
+        );
+        defer self.allocator.free(body);
+        try self.writeFrame(body);
+        const resp = try self.readFrame();
+        defer self.allocator.free(resp);
+        try KafkaWireFormat.checkHeartbeatResponse(resp, corr);
+    }
+
     fn nextCorrelation(self: *Self) i32 {
         const id = self.correlation_id;
         self.correlation_id +%= 1;
@@ -376,6 +491,10 @@ pub const KafkaConsumer = struct {
     transport: ?RobustMQTransport = null,
     io: ?std.Io = null,
     offsets: std.StringHashMap(i64),
+    /// From JoinGroup; `-1` until `join()`.
+    generation_id: i32 = -1,
+    /// Owned after successful `join()`; empty otherwise.
+    member_id: []u8 = &.{},
 
     pub const Subscription = struct {
         topic: []const u8,
@@ -409,6 +528,7 @@ pub const KafkaConsumer = struct {
 
     pub fn deinit(self: *Self) void {
         if (self.transport) |*t| t.deinit();
+        if (self.member_id.len > 0) self.allocator.free(self.member_id);
         var iter = self.subscriptions.iterator();
         while (iter.next()) |entry| {
             self.allocator.free(entry.value_ptr.topic);
@@ -481,9 +601,117 @@ pub const KafkaConsumer = struct {
             }
             if (values.len > 0) {
                 try self.offsets.put(topic, offset + @as(i64, @intCast(values.len)));
+                if (self.config.enable_auto_commit) {
+                    self.commitBroker(topic, 0, offset + @as(i64, @intCast(values.len))) catch |err| {
+                        std.log.warn("[KafkaConsumer] OffsetCommit {s} failed: {s}", .{ topic, @errorName(err) });
+                    };
+                }
             }
         }
         return delivered;
+    }
+
+    /// Update the in-process fetch cursor for a subscribed `topic` (partition 0 today).
+    pub fn commitLocal(self: *Self, topic: []const u8, offset: i64) !void {
+        const ptr = self.offsets.getPtr(topic) orelse return error.NotSubscribed;
+        ptr.* = offset;
+    }
+
+    pub fn getOffset(self: *Self, topic: []const u8) ?i64 {
+        return self.offsets.get(topic);
+    }
+
+    /// Local commit + best-effort broker OffsetCommit when online.
+    /// Call `join()` first so OffsetCommit carries a real generation/member id.
+    pub fn commit(self: *Self, topic: []const u8, partition: i32, offset: i64) !void {
+        try self.commitLocal(topic, offset);
+        try self.commitBroker(topic, partition, offset);
+    }
+
+    /// JoinGroup + SyncGroup for this consumer's subscriptions.
+    /// Single-member path assigns partition `0` of each subscribed topic to self —
+    /// enough for OffsetCommit identity. Multi-instance rebalance: prefer NATS
+    /// (`QueueNatsClient`) until a full range assigner lands.
+    pub fn join(self: *Self) !void {
+        if (self.config.offline) return;
+        if (self.config.group_id.len == 0) return error.GroupIdRequired;
+        if (self.subscriptions.count() == 0) return error.NoSubscriptions;
+        try self.ensureTransport();
+
+        var topics = std.ArrayList([]const u8).empty;
+        defer topics.deinit(self.allocator);
+        var it = self.subscriptions.keyIterator();
+        while (it.next()) |key| {
+            try topics.append(self.allocator, key.*);
+        }
+
+        const meta = try KafkaWireFormat.buildConsumerProtocolMetadata(self.allocator, topics.items);
+        defer self.allocator.free(meta);
+
+        var result = try self.transport.?.joinGroup(
+            self.config.group_id,
+            self.member_id,
+            @intCast(self.config.session_timeout_ms),
+            30000,
+            "consumer",
+            "range",
+            meta,
+        );
+        defer result.deinit(self.allocator);
+
+        if (self.member_id.len > 0) self.allocator.free(self.member_id);
+        self.member_id = try self.allocator.dupe(u8, result.member_id);
+        self.generation_id = result.generation_id;
+
+        if (result.isLeader()) {
+            const my_assign = try KafkaWireFormat.buildMemberAssignment(self.allocator, topics.items, &.{0});
+            defer self.allocator.free(my_assign);
+            const empty_assign = try KafkaWireFormat.buildMemberAssignment(self.allocator, &.{}, &.{});
+            defer self.allocator.free(empty_assign);
+
+            var assigns = std.ArrayList(KafkaWireFormat.GroupAssignment).empty;
+            defer assigns.deinit(self.allocator);
+            for (result.members) |m| {
+                const bytes = if (std.mem.eql(u8, m.member_id, self.member_id)) my_assign else empty_assign;
+                try assigns.append(self.allocator, .{ .member_id = m.member_id, .assignment = bytes });
+            }
+            try self.transport.?.syncGroup(
+                self.config.group_id,
+                self.generation_id,
+                self.member_id,
+                assigns.items,
+            );
+        } else {
+            try self.transport.?.syncGroup(
+                self.config.group_id,
+                self.generation_id,
+                self.member_id,
+                &.{},
+            );
+        }
+    }
+
+    /// Heartbeat to keep JoinGroup membership alive (no-op offline / before join).
+    pub fn heartbeat(self: *Self) !void {
+        if (self.config.offline) return;
+        if (self.generation_id < 0 or self.member_id.len == 0) return error.NotJoined;
+        try self.ensureTransport();
+        try self.transport.?.heartbeat(self.config.group_id, self.generation_id, self.member_id);
+    }
+
+    fn commitBroker(self: *Self, topic: []const u8, partition: i32, offset: i64) !void {
+        if (self.config.offline) return;
+        if (self.config.group_id.len == 0) return;
+        try self.ensureTransport();
+        try self.transport.?.offsetCommit(
+            self.config.group_id,
+            self.generation_id,
+            self.member_id,
+            topic,
+            partition,
+            offset,
+            "",
+        );
     }
 
     fn ensureTransport(self: *Self) !void {
@@ -533,7 +761,45 @@ pub const KafkaEventBridge = struct {
 pub const KafkaWireFormat = struct {
     const api_produce: i16 = 0;
     const api_fetch: i16 = 1;
+    const api_offset_commit: i16 = 8;
+    const api_join_group: i16 = 11;
+    const api_heartbeat: i16 = 12;
+    const api_sync_group: i16 = 14;
     const api_versions: i16 = 18;
+
+    pub const GroupAssignment = struct {
+        member_id: []const u8,
+        assignment: []const u8,
+    };
+
+    pub const JoinGroupMember = struct {
+        member_id: []u8,
+        metadata: []u8,
+    };
+
+    pub const JoinGroupResult = struct {
+        generation_id: i32,
+        protocol: []u8,
+        leader_id: []u8,
+        member_id: []u8,
+        members: []JoinGroupMember,
+
+        pub fn isLeader(self: JoinGroupResult) bool {
+            return std.mem.eql(u8, self.member_id, self.leader_id);
+        }
+
+        pub fn deinit(self: *JoinGroupResult, allocator: std.mem.Allocator) void {
+            allocator.free(self.protocol);
+            allocator.free(self.leader_id);
+            allocator.free(self.member_id);
+            for (self.members) |m| {
+                allocator.free(m.member_id);
+                allocator.free(m.metadata);
+            }
+            allocator.free(self.members);
+            self.* = undefined;
+        }
+    };
 
     pub fn buildApiVersionsRequest(allocator: std.mem.Allocator, correlation_id: i32, client_id: []const u8) ![]u8 {
         var buf = std.ArrayList(u8).empty;
@@ -605,6 +871,232 @@ pub const KafkaWireFormat = struct {
         try appendString(&buf, allocator, ""); // rack_id
 
         return buf.toOwnedSlice(allocator);
+    }
+
+    /// OffsetCommitRequest v2 (non-flexible) — one topic / one partition.
+    /// `generation_id` should come from JoinGroup; use -1 only for experiments.
+    pub fn buildOffsetCommitRequest(
+        allocator: std.mem.Allocator,
+        group_id: []const u8,
+        generation_id: i32,
+        member_id: []const u8,
+        topic: []const u8,
+        partition: i32,
+        offset: i64,
+        metadata: []const u8,
+        correlation_id: i32,
+        client_id: []const u8,
+    ) ![]u8 {
+        var buf = std.ArrayList(u8).empty;
+        errdefer buf.deinit(allocator);
+        try appendRequestHeader(&buf, allocator, api_offset_commit, 2, correlation_id, client_id);
+        try appendString(&buf, allocator, group_id);
+        try appendI32(&buf, allocator, generation_id);
+        try appendString(&buf, allocator, member_id);
+        try appendI64(&buf, allocator, -1); // retention_time_ms: broker default
+        try appendI32(&buf, allocator, 1); // topics
+        try appendString(&buf, allocator, topic);
+        try appendI32(&buf, allocator, 1); // partitions
+        try appendI32(&buf, allocator, partition);
+        try appendI64(&buf, allocator, offset);
+        try appendString(&buf, allocator, metadata);
+        return buf.toOwnedSlice(allocator);
+    }
+
+    pub fn checkOffsetCommitResponse(resp: []const u8, expected_corr: i32) !void {
+        if (resp.len < 6) return error.InvalidResponse;
+        const corr = readI32(resp[0..4]);
+        if (corr != expected_corr) return error.CorrelationMismatch;
+    }
+
+    /// ConsumerProtocolSubscription (version 0) used as JoinGroup protocol metadata.
+    pub fn buildConsumerProtocolMetadata(allocator: std.mem.Allocator, topics: []const []const u8) ![]u8 {
+        var buf = std.ArrayList(u8).empty;
+        errdefer buf.deinit(allocator);
+        try appendI16(&buf, allocator, 0); // version
+        try appendI32(&buf, allocator, @intCast(topics.len));
+        for (topics) |t| try appendString(&buf, allocator, t);
+        try appendBytes(&buf, allocator, ""); // user_data
+        return buf.toOwnedSlice(allocator);
+    }
+
+    /// ConsumerProtocolAssignment (version 0) — same partition list for every topic.
+    pub fn buildMemberAssignment(
+        allocator: std.mem.Allocator,
+        topics: []const []const u8,
+        partitions: []const i32,
+    ) ![]u8 {
+        var buf = std.ArrayList(u8).empty;
+        errdefer buf.deinit(allocator);
+        try appendI16(&buf, allocator, 0); // version
+        try appendI32(&buf, allocator, @intCast(topics.len));
+        for (topics) |t| {
+            try appendString(&buf, allocator, t);
+            try appendI32(&buf, allocator, @intCast(partitions.len));
+            for (partitions) |p| try appendI32(&buf, allocator, p);
+        }
+        try appendBytes(&buf, allocator, ""); // user_data
+        return buf.toOwnedSlice(allocator);
+    }
+
+    /// JoinGroupRequest v1 (non-flexible).
+    pub fn buildJoinGroupRequest(
+        allocator: std.mem.Allocator,
+        group_id: []const u8,
+        session_timeout_ms: i32,
+        rebalance_timeout_ms: i32,
+        member_id: []const u8,
+        protocol_type: []const u8,
+        protocol_name: []const u8,
+        protocol_metadata: []const u8,
+        correlation_id: i32,
+        client_id: []const u8,
+    ) ![]u8 {
+        var buf = std.ArrayList(u8).empty;
+        errdefer buf.deinit(allocator);
+        try appendRequestHeader(&buf, allocator, api_join_group, 1, correlation_id, client_id);
+        try appendString(&buf, allocator, group_id);
+        try appendI32(&buf, allocator, session_timeout_ms);
+        try appendI32(&buf, allocator, rebalance_timeout_ms);
+        try appendString(&buf, allocator, member_id);
+        try appendString(&buf, allocator, protocol_type);
+        try appendI32(&buf, allocator, 1); // GroupProtocols count
+        try appendString(&buf, allocator, protocol_name);
+        try appendBytes(&buf, allocator, protocol_metadata);
+        return buf.toOwnedSlice(allocator);
+    }
+
+    pub fn parseJoinGroupResponse(
+        allocator: std.mem.Allocator,
+        resp: []const u8,
+        expected_corr: i32,
+    ) !JoinGroupResult {
+        if (resp.len < 8) return error.InvalidResponse;
+        const corr = readI32(resp[0..4]);
+        if (corr != expected_corr) return error.CorrelationMismatch;
+        var off: usize = 4;
+        // v1: throttle_time_ms
+        if (off + 4 > resp.len) return error.InvalidResponse;
+        off += 4;
+        if (off + 2 > resp.len) return error.InvalidResponse;
+        const err_code = readI16(resp[off..][0..2]);
+        off += 2;
+        if (err_code != 0) return error.BrokerError;
+        if (off + 4 > resp.len) return error.InvalidResponse;
+        const generation_id = readI32(resp[off..][0..4]);
+        off += 4;
+        const protocol = try dupeString(allocator, resp, &off);
+        errdefer allocator.free(protocol);
+        const leader_id = try dupeString(allocator, resp, &off);
+        errdefer allocator.free(leader_id);
+        const member_id = try dupeString(allocator, resp, &off);
+        errdefer allocator.free(member_id);
+        if (off + 4 > resp.len) return error.InvalidResponse;
+        const member_count = readI32(resp[off..][0..4]);
+        off += 4;
+        if (member_count < 0) return error.InvalidResponse;
+        var members = try allocator.alloc(JoinGroupMember, @intCast(member_count));
+        var filled: usize = 0;
+        errdefer {
+            for (members[0..filled]) |m| {
+                allocator.free(m.member_id);
+                allocator.free(m.metadata);
+            }
+            allocator.free(members);
+        }
+        while (filled < members.len) : (filled += 1) {
+            const mid = try dupeString(allocator, resp, &off);
+            errdefer allocator.free(mid);
+            const meta = try dupeBytes(allocator, resp, &off);
+            members[filled] = .{ .member_id = mid, .metadata = meta };
+        }
+        return .{
+            .generation_id = generation_id,
+            .protocol = protocol,
+            .leader_id = leader_id,
+            .member_id = member_id,
+            .members = members,
+        };
+    }
+
+    /// SyncGroupRequest v0.
+    pub fn buildSyncGroupRequest(
+        allocator: std.mem.Allocator,
+        group_id: []const u8,
+        generation_id: i32,
+        member_id: []const u8,
+        assignments: []const GroupAssignment,
+        correlation_id: i32,
+        client_id: []const u8,
+    ) ![]u8 {
+        var buf = std.ArrayList(u8).empty;
+        errdefer buf.deinit(allocator);
+        try appendRequestHeader(&buf, allocator, api_sync_group, 0, correlation_id, client_id);
+        try appendString(&buf, allocator, group_id);
+        try appendI32(&buf, allocator, generation_id);
+        try appendString(&buf, allocator, member_id);
+        try appendI32(&buf, allocator, @intCast(assignments.len));
+        for (assignments) |a| {
+            try appendString(&buf, allocator, a.member_id);
+            try appendBytes(&buf, allocator, a.assignment);
+        }
+        return buf.toOwnedSlice(allocator);
+    }
+
+    pub fn checkSyncGroupResponse(resp: []const u8, expected_corr: i32) !void {
+        if (resp.len < 6) return error.InvalidResponse;
+        const corr = readI32(resp[0..4]);
+        if (corr != expected_corr) return error.CorrelationMismatch;
+        const err_code = readI16(resp[4..6]);
+        if (err_code != 0) return error.BrokerError;
+    }
+
+    /// HeartbeatRequest v0.
+    pub fn buildHeartbeatRequest(
+        allocator: std.mem.Allocator,
+        group_id: []const u8,
+        generation_id: i32,
+        member_id: []const u8,
+        correlation_id: i32,
+        client_id: []const u8,
+    ) ![]u8 {
+        var buf = std.ArrayList(u8).empty;
+        errdefer buf.deinit(allocator);
+        try appendRequestHeader(&buf, allocator, api_heartbeat, 0, correlation_id, client_id);
+        try appendString(&buf, allocator, group_id);
+        try appendI32(&buf, allocator, generation_id);
+        try appendString(&buf, allocator, member_id);
+        return buf.toOwnedSlice(allocator);
+    }
+
+    pub fn checkHeartbeatResponse(resp: []const u8, expected_corr: i32) !void {
+        if (resp.len < 6) return error.InvalidResponse;
+        const corr = readI32(resp[0..4]);
+        if (corr != expected_corr) return error.CorrelationMismatch;
+        const err_code = readI16(resp[4..6]);
+        if (err_code != 0) return error.BrokerError;
+    }
+
+    fn dupeString(allocator: std.mem.Allocator, buf: []const u8, off: *usize) ![]u8 {
+        if (off.* + 2 > buf.len) return error.InvalidResponse;
+        const len = readI16(buf[off.*..][0..2]);
+        off.* += 2;
+        if (len < 0) return try allocator.dupe(u8, "");
+        if (off.* + @as(usize, @intCast(len)) > buf.len) return error.InvalidResponse;
+        const s = try allocator.dupe(u8, buf[off.* .. off.* + @as(usize, @intCast(len))]);
+        off.* += @intCast(len);
+        return s;
+    }
+
+    fn dupeBytes(allocator: std.mem.Allocator, buf: []const u8, off: *usize) ![]u8 {
+        if (off.* + 4 > buf.len) return error.InvalidResponse;
+        const len = readI32(buf[off.*..][0..4]);
+        off.* += 4;
+        if (len < 0) return try allocator.dupe(u8, "");
+        if (off.* + @as(usize, @intCast(len)) > buf.len) return error.InvalidResponse;
+        const s = try allocator.dupe(u8, buf[off.* .. off.* + @as(usize, @intCast(len))]);
+        off.* += @intCast(len);
+        return s;
     }
 
     pub fn checkProduceResponse(resp: []const u8, expected_corr: i32) !void {
@@ -802,6 +1294,11 @@ pub const KafkaWireFormat = struct {
         try buf.appendSlice(allocator, s);
     }
 
+    fn appendBytes(buf: *std.ArrayList(u8), allocator: std.mem.Allocator, s: []const u8) !void {
+        try appendI32(buf, allocator, @intCast(s.len));
+        try buf.appendSlice(allocator, s);
+    }
+
     fn appendI8(buf: *std.ArrayList(u8), allocator: std.mem.Allocator, v: i8) !void {
         try buf.append(allocator, @bitCast(v));
     }
@@ -950,6 +1447,145 @@ test "KafkaWireFormat produce request" {
     // api_key = 0
     try std.testing.expectEqual(@as(u8, 0), payload[0]);
     try std.testing.expectEqual(@as(u8, 0), payload[1]);
+}
+
+test "KafkaWireFormat offset commit request" {
+    const allocator = std.testing.allocator;
+    const payload = try KafkaWireFormat.buildOffsetCommitRequest(
+        allocator,
+        "zfinal-group",
+        -1,
+        "",
+        "orders",
+        0,
+        42,
+        "",
+        9,
+        "zfinal",
+    );
+    defer allocator.free(payload);
+    try std.testing.expect(payload.len > 20);
+    // api_key = 8
+    try std.testing.expectEqual(@as(u8, 0), payload[0]);
+    try std.testing.expectEqual(@as(u8, 8), payload[1]);
+}
+
+test "KafkaWireFormat join group request" {
+    const allocator = std.testing.allocator;
+    const meta = try KafkaWireFormat.buildConsumerProtocolMetadata(allocator, &.{"orders"});
+    defer allocator.free(meta);
+    const payload = try KafkaWireFormat.buildJoinGroupRequest(
+        allocator,
+        "zfinal-group",
+        45000,
+        30000,
+        "",
+        "consumer",
+        "range",
+        meta,
+        3,
+        "zfinal",
+    );
+    defer allocator.free(payload);
+    try std.testing.expect(payload.len > 20);
+    // api_key = 11
+    try std.testing.expectEqual(@as(u8, 0), payload[0]);
+    try std.testing.expectEqual(@as(u8, 11), payload[1]);
+}
+
+test "KafkaWireFormat sync group and heartbeat request" {
+    const allocator = std.testing.allocator;
+    const assign = try KafkaWireFormat.buildMemberAssignment(allocator, &.{"orders"}, &.{0});
+    defer allocator.free(assign);
+    const sync = try KafkaWireFormat.buildSyncGroupRequest(
+        allocator,
+        "zfinal-group",
+        1,
+        "member-1",
+        &.{.{ .member_id = "member-1", .assignment = assign }},
+        4,
+        "zfinal",
+    );
+    defer allocator.free(sync);
+    try std.testing.expectEqual(@as(u8, 0), sync[0]);
+    try std.testing.expectEqual(@as(u8, 14), sync[1]);
+
+    const hb = try KafkaWireFormat.buildHeartbeatRequest(
+        allocator,
+        "zfinal-group",
+        1,
+        "member-1",
+        5,
+        "zfinal",
+    );
+    defer allocator.free(hb);
+    try std.testing.expectEqual(@as(u8, 0), hb[0]);
+    try std.testing.expectEqual(@as(u8, 12), hb[1]);
+}
+
+test "KafkaWireFormat parseJoinGroupResponse v1" {
+    const allocator = std.testing.allocator;
+    // corr(4) + throttle(4) + err(2) + gen(4) + protocol + leader + member + members=1
+    var buf = std.ArrayList(u8).empty;
+    defer buf.deinit(allocator);
+    var tmp: [4]u8 = undefined;
+    writeI32(&tmp, 99);
+    try buf.appendSlice(allocator, &tmp);
+    writeI32(&tmp, 0); // throttle
+    try buf.appendSlice(allocator, &tmp);
+    var t2: [2]u8 = undefined;
+    writeI16(&t2, 0); // error
+    try buf.appendSlice(allocator, &t2);
+    writeI32(&tmp, 7); // generation
+    try buf.appendSlice(allocator, &tmp);
+    // protocol "range"
+    writeI16(&t2, 5);
+    try buf.appendSlice(allocator, &t2);
+    try buf.appendSlice(allocator, "range");
+    // leader "m1"
+    writeI16(&t2, 2);
+    try buf.appendSlice(allocator, &t2);
+    try buf.appendSlice(allocator, "m1");
+    // member "m1"
+    writeI16(&t2, 2);
+    try buf.appendSlice(allocator, &t2);
+    try buf.appendSlice(allocator, "m1");
+    writeI32(&tmp, 1); // members
+    try buf.appendSlice(allocator, &tmp);
+    writeI16(&t2, 2);
+    try buf.appendSlice(allocator, &t2);
+    try buf.appendSlice(allocator, "m1");
+    writeI32(&tmp, 0); // empty metadata
+    try buf.appendSlice(allocator, &tmp);
+
+    var result = try KafkaWireFormat.parseJoinGroupResponse(allocator, buf.items, 99);
+    defer result.deinit(allocator);
+    try std.testing.expectEqual(@as(i32, 7), result.generation_id);
+    try std.testing.expect(result.isLeader());
+    try std.testing.expectEqual(@as(usize, 1), result.members.len);
+}
+
+test "KafkaConsumer join offline is no-op" {
+    const allocator = std.testing.allocator;
+    var consumer = KafkaConsumer.init(allocator, .{});
+    defer consumer.deinit();
+    try consumer.subscribe("t", struct {
+        fn h(_: KafkaMessage) void {}
+    }.h);
+    try consumer.join(); // offline
+    try std.testing.expectEqual(@as(i32, -1), consumer.generation_id);
+}
+
+test "KafkaConsumer commitLocal requires subscribe" {
+    const allocator = std.testing.allocator;
+    var consumer = KafkaConsumer.init(allocator, .{});
+    defer consumer.deinit();
+    try std.testing.expectError(error.NotSubscribed, consumer.commitLocal("t", 1));
+    try consumer.subscribe("t", struct {
+        fn h(_: KafkaMessage) void {}
+    }.h);
+    try consumer.commitLocal("t", 7);
+    try std.testing.expectEqual(@as(i64, 7), consumer.getOffset("t").?);
 }
 
 test "KafkaWireFormat parseFetchValues finds embedded batch" {

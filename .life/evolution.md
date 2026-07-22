@@ -4,6 +4,51 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+## 2026-07-23 — ports codegen + RobustMQ JoinGroup
+
+**Session**: `zf g port` + Kafka consumer group membership
+**Changes**:
+1. `tools/zf/cmd_port.zig` + `zf g port store|cache|bus` wired in `main.zig` (`--json`/`--force`)
+2. RobustMQ: JoinGroup/SyncGroup/Heartbeat wire + `KafkaConsumer.join`/`heartbeat`; OffsetCommit uses generation/member
+3. Docs: `codegen.md`, `progressive_architecture.md`, `robustmq.md`, CHANGELOG
+**Tests**: `zig build install-zf` + `zf g port bus --json` smoke + `zig build test` (224 passed; 11 skipped) + `zig build test-zf`
+
+---
+
+## 2026-07-23 — P1: zf split phase3 (crud/fixture/bench)
+
+**Session**: Continue modularizing `tools/zf/main.zig`
+**Changes**:
+1. `cmd_crud.zig` — `handleCrud` / `handleCrudFromSql` / `handleCrudZent` / `handleCrudFromDsn` / `handleAdmin` + helpers (`writeGeneratedFiles`, `emitJsonManifest`, `bootstrapProject`, `modulePath`, `singularize`)
+2. `cmd_fixture.zig` / `cmd_bench.zig` — fixture + HTTP bench handlers
+3. `zf_shared.zig` — `appendJsonString` + `writeAiConfigs` (shared by scaffold + CRUD bootstrap)
+4. `main.zig` dispatcher ~2754 → ~1372 lines
+**Tests**: `zig build install-zf` (recompiled) + `zig build test` (220 passed; 11 skipped) + `zig build test-zf` (26 passed) + crud:sql smoke
+
+---
+
+## 2026-07-23 — P1: zf split phase2 (migrate/openapi/check) + RobustMQ OffsetCommit
+
+**Session**: Continue improvement backlog
+**Changes**:
+1. `cmd_migrate.zig` / `cmd_openapi.zig` / `cmd_check.zig` — extract from `main.zig` (with `zf_shared`/`zf_db`)
+2. RobustMQ: OffsetCommit wire + `commitLocal`/`commit`; docs nail NATS-first L3 consume
+3. CHANGELOG / PRODUCTION_AUDIT residual gaps updated
+**Tests**: `zig build install-zf` + `zig build test` + `zig build test-zf`
+
+---
+
+## 2026-07-22 — P0 hardening: version SSoT + write timeout + audit refresh
+
+**Session**: Execute improvement backlog P0 (+ write-timeout authenticity)
+**Changes**:
+1. `src/version.zig` — single semver/tag source; build options + manifests consume it; zon sync test
+2. `TimedWriter` — wall-clock `write_timeout_ms` from first drain per request (Zig dropped `net_write`)
+3. Docs: regeneration = `.gen.new` / `--force`; `PRODUCTION_AUDIT` / `SECURITY` / agent docs → 0.20.3
+**Tests**: `zig build test` + `zig build test-zf`
+
+---
+
 ## 2026-07-20 — v0.13.10: ZFinal × zent (e-commerce / social)
 
 **Session**: Introduce zent like zigmodu — orthogonal ORM for graph-heavy domains

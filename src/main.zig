@@ -3,11 +3,15 @@ pub const io_instance = @import("io_instance.zig");
 
 const std = @import("std");
 
+/// Framework semver / tag — keep in sync with `build.zig.zon` `.version`.
+pub const version = @import("version.zig");
+
 test {
     std.testing.refAllDecls(@This());
     _ = @import("aichat/aichat_test.zig");
     _ = @import("aichat/zf_tool.zig");
     _ = @import("auth/jwt.zig");
+    _ = @import("version.zig");
 }
 
 // Export core modules

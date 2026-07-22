@@ -322,6 +322,7 @@ main.zig 只组装 adapters → ports → service → routes
 | `zf new` / `examples/hello` | L0 |
 | `examples/production` | L1 |
 | 本文 L2/L3 + `scale_to_millions.md` | 扩展目标 |
+| `zf g port store\|cache\|bus` | 生成 `src/ports` + `src/adapters` 脚手架 |
 | `architecture_best_practices.md` | 全程规范 |
 | `PRODUCTION_AUDIT.md` | L1+ 部署契约 |
 

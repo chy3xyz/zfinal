@@ -1,6 +1,14 @@
 //! ZFinal - A high-performance Zig web framework inspired by JFinal.
 
 const std = @import("std");
+const fw_version = @import("src/version.zig");
+const package_zon = @import("build.zig.zon");
+
+comptime {
+    if (!std.mem.eql(u8, fw_version.semver, package_zon.version)) {
+        @compileError("src/version.zig semver must match build.zig.zon .version");
+    }
+}
 
 fn addExample(b: *std.Build, zfinal_mod: *std.Build.Module, name: []const u8, root_file: []const u8, desc: []const u8) void {
     const example_mod = b.createModule(.{
@@ -225,11 +233,18 @@ pub fn build(b: *std.Build) void {
     const run_pb_step = b.step("run-pb", "Run PocketBase demo");
     run_pb_step.dependOn(&run_pb.step);
 
-    // CLI tool (zf)
+    // CLI tool (zf) — version derived from src/version.zig (must match build.zig.zon)
     const zf_opts = b.addOptions();
     zf_opts.addOption(bool, "enable_pg", enable_pg);
     zf_opts.addOption(bool, "enable_my", enable_mysql);
-    zf_opts.addOption([]const u8, "version", "v0.20.3"); // current framework version
+    zf_opts.addOption([]const u8, "version", fw_version.tag);
+    zf_opts.addOption([]const u8, "semver", fw_version.semver);
+
+    const version_mod = b.createModule(.{
+        .root_source_file = b.path("src/version.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
 
     const zf_mod = b.createModule(.{
         .root_source_file = b.path("tools/zf/main.zig"),
@@ -237,6 +252,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "zf_cfg", .module = zf_opts.createModule() },
+            .{ .name = "zfinal_version", .module = version_mod },
         },
     });
     // Expose codegen as a named module so admin_templates.zig can
@@ -258,6 +274,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
+        zent_cg.addImport("zfinal_version", version_mod);
         zf_mod.addImport("zent_codegen", zent_cg);
     }
     {
@@ -356,6 +373,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
+        zent_cg_mod.addImport("zfinal_version", version_mod);
 
         const openapi_mod = b.createModule(.{
             .root_source_file = b.path("tools/zf/openapi.zig"),
@@ -372,6 +390,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "admin_templates", .module = admin_templates_mod },
                 .{ .name = "zent_codegen", .module = zent_cg_mod },
                 .{ .name = "openapi", .module = openapi_mod },
+                .{ .name = "zfinal_version", .module = version_mod },
             },
         });
         zf_test_mod.link_libc = true;

@@ -57,10 +57,42 @@ Skipped automatically when env is unset.
 
 ## Scope / limits
 
-- Implements ApiVersions + Produce + Fetch; **RecordBatch value decode is implemented**
-  (`parseFetchValues` / `parseRecordBatchValues`). Consumer group protocol
-  (JoinGroup / SyncGroup / OffsetCommit) is still incomplete.
-- Prefer `QueueRobustMQClient.publish` for L3 `ports/bus` until group consume matures;
-  for mature consume prefer NATS (`QueueNatsClient`).
+| Capability | Status |
+|------------|--------|
+| ApiVersions + Produce + Fetch | Done |
+| RecordBatch value decode | Done (`parseFetchValues`) |
+| Local offset cursor + `commitLocal` | Done |
+| OffsetCommit wire (API key 8) | Done — pass generation/member from `join()` |
+| JoinGroup / SyncGroup / Heartbeat | Done (single-member / partition-0 assign) |
 
-See also: [progressive_architecture.md](progressive_architecture.md), [scale_to_millions.md](scale_to_millions.md).
+### L3 consume guidance (NATS-first for multi-instance)
+
+- **Publish** to RobustMQ/Kafka: `QueueRobustMQClient` / `KafkaProducer` — production-ready.
+- **Single-process Kafka consume**: `subscribe` → `join()` → `poll` / `commit` (+ optional `heartbeat`).
+- **Consume across instances**: prefer **`QueueNatsClient`** (queue groups) until a full range rebalance assigner lands. `join()` today assigns partition `0` to the leader only.
+
+```zig
+var consumer = zfinal.KafkaConsumer.initWithIo(allocator, zfinal.io_instance.io, .{
+    .bootstrap_servers = "127.0.0.1:9092",
+    .group_id = "orders-workers",
+});
+defer consumer.deinit();
+try consumer.subscribe("orders.created", onMsg);
+try consumer.join(); // JoinGroup + SyncGroup
+consumer.start();
+_ = try consumer.poll();
+try consumer.heartbeat();
+```
+
+```zig
+// Multi-instance bus consume — use NATS
+var nats = try zfinal.QueueNatsClient.connect(allocator, "nats://127.0.0.1:4222");
+defer nats.deinit();
+
+// Kafka publish remains fine on RobustMQ
+var kafka = zfinal.QueueRobustMQClient.connect(allocator, "127.0.0.1:9092");
+defer kafka.deinit();
+try kafka.publish("orders.created", "{\"id\":1}");
+```
+
+See also: [nats.md](nats.md), [progressive_architecture.md](progressive_architecture.md), [scale_to_millions.md](scale_to_millions.md).

@@ -2,19 +2,19 @@
   "project": "zfinal",
   "title": "ZFinal Web Framework",
   "description": "Production-hardened Zig web framework inspired by JFinal. Fiber-based async server, ActiveRecord ORM, plugin system, 17 utility kits.",
-  "version": "0.13.10",
+  "version": "0.20.3",
   "birth": "2024-12-03",
   "zig_version": "0.17.0-dev.1422+e863bf3be",
   "fingerprint": {
     "algorithm": "sha256",
-    "source_hash": "v0.13.10",
-    "computed_at": "2026-07-20"
+    "source_hash": "v0.20.3",
+    "computed_at": "2026-07-22"
   },
   "metrics": {
     "source_files": 85,
-    "tests": 197,
-    "tests_pass": 190,
-    "tests_skip": 7,
+    "tests": 231,
+    "tests_pass": 220,
+    "tests_skip": 11,
     "tests_fail": 0,
     "plugins_stable": 23,
     "plugins_experimental": 0,

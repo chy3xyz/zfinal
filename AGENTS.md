@@ -43,7 +43,9 @@ Pick **one stack per module**. Do not mix drivers in one transaction. Details: `
 ```
 
 Generated files have `// @generated` header — safe to edit when header says
-"AI: edit directly". Regeneration preserves hand-edited code.
+"AI: edit directly". Re-running generators does **not** merge ai-edit-zones:
+existing files are left alone and new output goes to `<path>.gen.new`
+(use `--force` to overwrite). Review with `diff`, then merge by hand.
 
 ## ❌ NEVER
 
@@ -77,7 +79,7 @@ src/modules/<sub>/<name>/
 
 ```bash
 zig build                  # framework + all examples
-zig build test             # 142 unit tests (0 leaks)
+zig build test             # 231 unit tests (baseline: 220 passed; 11 skipped; 0 failed)
 zig build test -Ddriver_pg=true -Ddriver_mysql=true  # all drivers
 zig build install-zf       # CLI tool → zig-out/bin/zf
 zig build run-hello        # hello-world demo

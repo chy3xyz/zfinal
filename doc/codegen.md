@@ -9,8 +9,20 @@ zf crud:sql schema.sql       # Generate from SQL file
 zf crud:dsn postgresql://... # Generate from live DB
 zf g model User             # Generate model stub
 zf g handler User           # Generate handler stub
+zf g port store|cache|bus   # L2/L3 ports + adapter stubs (see progressive_architecture.md)
 zf check                    # Audit AI compliance
 ```
+
+## Ports codegen (L2/L3)
+
+```bash
+zf g port store --json   # → src/ports/store.zig + memory_store / pg_store adapters
+zf g port cache --json   # → src/ports/cache.zig + memory_cache / redis_cache
+zf g port bus --json     # → src/ports/bus.zig + memory_bus / nats_bus / robustmq_bus
+```
+
+Edit only `// ── ai-edit-zone` blocks; wire adapters in `main.zig` as in
+[progressive_architecture.md](progressive_architecture.md).
 
 ## gen + ext Pattern
 

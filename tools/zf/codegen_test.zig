@@ -486,6 +486,8 @@ test "zent_codegen: parse DSL and emit ai-edit-zones" {
     try std.testing.expect(std.mem.indexOf(u8, manifest, "\"data_layer\": \"zent\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, manifest, "\"ai_primary\": true") != null);
     try std.testing.expect(std.mem.indexOf(u8, manifest, "\"purpose\":") != null);
+    const fw_ver = @import("zfinal_version");
+    try std.testing.expect(std.mem.indexOf(u8, manifest, fw_ver.semver) != null);
 }
 
 test "zent_codegen: parse JSON schema" {

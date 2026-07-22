@@ -230,7 +230,7 @@ pub fn parseZentDsl(allocator: std.mem.Allocator, src: []const u8) !Schema {
 
 const JsonField = struct {
     name: []const u8,
-    @"type": []const u8,
+    type: []const u8,
     index: ?bool = null,
     default: ?[]const u8 = null,
 };
@@ -267,7 +267,7 @@ pub fn parseZentJson(allocator: std.mem.Allocator, src: []const u8) !Schema {
             .list_by = if (je.list_by) |lb| try allocator.dupe(u8, lb) else null,
         };
         for (je.fields) |jf| {
-            const typ = FieldType.fromToken(jf.@"type") orelse return error.UnknownFieldType;
+            const typ = FieldType.fromToken(jf.type) orelse return error.UnknownFieldType;
             try ent.fields.append(allocator, .{
                 .name = try allocator.dupe(u8, jf.name),
                 .typ = typ,
@@ -660,8 +660,9 @@ pub fn emitJsonManifest(allocator: std.mem.Allocator, schema_path: []const u8, s
     defer aw.deinit();
     const w = &aw.writer;
 
+    const fw_ver = @import("zfinal_version");
     try w.writeAll("{\n  \"$schema\": \"https://zfinal.dev/schemas/zent-manifest-1.json\",\n");
-    try w.writeAll("  \"version\": \"0.13.11\",\n  \"generator\": \"zf crud:zent\",\n");
+    try w.print("  \"version\": \"{s}\",\n  \"generator\": \"zf crud:zent\",\n", .{fw_ver.semver});
     try w.print("  \"schema_path\": \"{s}\",\n", .{schema_path});
     try w.print("  \"module\": \"{s}\",\n", .{schema.module});
     try w.print("  \"api_prefix\": \"{s}\",\n", .{schema.api_prefix});
