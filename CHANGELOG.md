@@ -1,3 +1,10 @@
+## [0.20.1] - 2026-07-08
+
+### Fixed
+- **PostgreSQL / MySQL driver compilation**: restored `-Ddriver_pg=true -Ddriver_mysql=true` to compile cleanly. Fixed c_uint/c_int type mismatches, `PQexecParams` result format argument, opaque `PGresult` return type, stale `entry.name[0.. :0].*` syntax, and `readInt` buffer syntax.
+- **MySQL TEXT/BLOB truncation**: `mysql_stmt_fetch` returning `MYSQL_DATA_TRUNCATED` no longer continues into a buffer overread; now returns typed `error.DataTruncated`.
+- **Metrics race**: `recordError` now locks `error_mutex` (std.Io.Mutex) before mutating `recent_errors`, preventing concurrent append corruption.
+
 ## [0.20.0] - 2026-07-08
 
 ### Added

@@ -115,7 +115,9 @@ pub const PostgresDB = struct {
         // Release any cached prepared statements (DEALLOCATE on server).
         if (self.stmt_cache) |*cache| {
             for (cache.items) |entry| {
-                self.releaseCached(entry.name[0.. :0].*);
+                const name_z = std.fmt.allocPrint(self.allocator, "{s}\x00", .{entry.name}) catch continue;
+                defer self.allocator.free(name_z);
+                self.releaseCached(name_z[0..name_z.len - 1 :0]) catch {};
                 self.allocator.free(entry.name);
                 self.allocator.free(entry.sql);
             }
@@ -190,7 +192,7 @@ pub const PostgresDB = struct {
         // in their native wire format (i64 for INT8, f64 for FLOAT8, etc.)
         // and we decode directly into the matching Cell variant. Saves the
         // server-side to_text() and the client-side parseInt() round-trip.
-        var result_formats = [_]c_int{1};
+        const result_format: c_int = 1;
         const res = c.PQexecParams(
             cxn,
             sql.ptr,
@@ -199,7 +201,7 @@ pub const PostgresDB = struct {
             bind.values.ptr,
             bind.lengths.ptr,
             bind.formats.ptr,
-            &result_formats,
+            result_format,
         );
         defer c.PQclear(res);
 
@@ -239,7 +241,7 @@ pub const PostgresDB = struct {
                 self.allocator.free(cells);
             }
             for (0..n_cols) |ci| {
-                cells[ci] = try readPgCell(self.allocator, res, @intCast(ri), @intCast(ci), col_oids[ci]);
+                cells[ci] = try readPgCell(self.allocator, res.?, @intCast(ri), @intCast(ci), col_oids[ci]);
             }
             try result_set.addRow(cells);
         }
@@ -266,7 +268,7 @@ pub const PostgresDB = struct {
         defer freeParams(self.allocator, bind);
 
         // resultFormats[0] = 1 → binary output for typed reads.
-        var result_formats = [_]c_int{1};
+        const result_format: c_int = 1;
         const res = c.PQexecParams(
             cxn,
             sql.ptr,
@@ -275,7 +277,7 @@ pub const PostgresDB = struct {
             bind.values.ptr,
             bind.lengths.ptr,
             bind.formats.ptr,
-            &result_formats,
+            result_format,
         );
 
         if (res == null) {
@@ -476,7 +478,7 @@ pub const PostgresDB = struct {
         param_lengths: []const c_int,
         param_formats: []const c_int,
         result_format: c_int,
-    ) !c.PGresult {
+    ) !*c.PGresult {
         const cxn = self.conn orelse return error.ConnectionFailed;
         const res = c.PQexecPrepared(
             cxn,
@@ -648,36 +650,36 @@ pub const PostgresDB = struct {
         // typically little-endian on x86/aarch64. We use std.mem.nativeToBig
         // for ints (network byte order = big).
         switch (oid) {
-            c.INT8OID, c.BIGSERIALOID => {
+            c.ZF_INT8OID => {
                 const v = c.PQgetvalue(res, row, col);
-                const big = std.mem.readInt(i64, v[0..8].*, .big);
+                const big = std.mem.readInt(i64, v[0..8], .big);
                 return .{ .int = big };
             },
-            c.INT4OID => {
+            c.ZF_INT4OID => {
                 const v = c.PQgetvalue(res, row, col);
-                const big = std.mem.readInt(i32, v[0..4].*, .big);
+                const big = std.mem.readInt(i32, v[0..4], .big);
                 return .{ .int = big };
             },
-            c.INT2OID => {
+            c.ZF_INT2OID => {
                 const v = c.PQgetvalue(res, row, col);
-                const big = std.mem.readInt(i16, v[0..2].*, .big);
+                const big = std.mem.readInt(i16, v[0..2], .big);
                 return .{ .int = big };
             },
-            c.FLOAT8OID => {
+            c.ZF_FLOAT8OID => {
                 const v = c.PQgetvalue(res, row, col);
-                const bits = std.mem.readInt(u64, v[0..8].*, .big);
+                const bits = std.mem.readInt(u64, v[0..8], .big);
                 return .{ .float = @bitCast(bits) };
             },
-            c.FLOAT4OID => {
+            c.ZF_FLOAT4OID => {
                 const v = c.PQgetvalue(res, row, col);
-                const bits = std.mem.readInt(u32, v[0..4].*, .big);
+                const bits = std.mem.readInt(u32, v[0..4], .big);
                 return .{ .float = @as(f32, @bitCast(bits)) };
             },
-            c.BOOLOID => {
+            c.ZF_BOOLOID => {
                 const v = c.PQgetvalue(res, row, col);
                 return .{ .bool = v[0] != 0 };
             },
-            c.BYTEAOID => {
+            c.ZF_BYTEAOID => {
                 const v = c.PQgetvalue(res, row, col);
                 const len: usize = @intCast(c.PQgetlength(res, row, col));
                 return .{ .blob = try allocator.dupe(u8, v[0..len]) };

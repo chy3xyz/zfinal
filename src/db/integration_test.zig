@@ -32,14 +32,15 @@ fn tryOpenPG(allocator: std.mem.Allocator) !?DB {
     const db_name = getEnv(allocator, "ZF_PG_DATABASE", "zfinal_test") orelse return null;
     defer allocator.free(db_name);
 
-    return DB.init(allocator, DBConfig{
+    const db = DB.init(allocator, DBConfig{
         .db_type = .postgres,
         .host = host,
         .port = port,
         .database = db_name,
         .username = user,
         .password = pwd,
-    }) catch null;
+    }) catch return null;
+    return db.*;
 }
 
 fn tryOpenMY(allocator: std.mem.Allocator) !?DB {
@@ -56,14 +57,15 @@ fn tryOpenMY(allocator: std.mem.Allocator) !?DB {
     const db_name = getEnv(allocator, "ZF_MY_DATABASE", "zfinal_test") orelse return null;
     defer allocator.free(db_name);
 
-    return DB.init(allocator, DBConfig{
+    const db = DB.init(allocator, DBConfig{
         .db_type = .mysql,
         .host = host,
         .port = port,
         .database = db_name,
         .username = user,
         .password = pwd,
-    }) catch null;
+    }) catch return null;
+    return db.*;
 }
 
 fn expectRow(result: anytype) ?*const @import("result.zig").Row {

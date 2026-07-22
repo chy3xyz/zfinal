@@ -288,7 +288,12 @@ pub const MySQLDB = struct {
         while (true) {
             const rc = c.mysql_stmt_fetch(stmt);
             if (rc == c.MYSQL_NO_DATA) break;
-            if (rc == c.MYSQL_DATA_TRUNCATED) {} // continue (TEXT/BLOB truncation noted, not fatal)
+            if (rc == c.MYSQL_DATA_TRUNCATED) {
+                // TEXT/BLOB value exceeded the fixed 4 KiB buffer. Treat as
+                // an error: the caller likely needs a streaming or larger
+                // buffer path. Continuing would slice past text_buf below.
+                return error.DataTruncated;
+            }
             if (rc != 0 and rc != c.MYSQL_DATA_TRUNCATED) {
                 const d = extractMysqlStmtDiag(stmt);
                 std.debug.print("MySQL fetch failed [errno {s}]: {s}\n", .{ d.raw, d.message });
@@ -689,7 +694,7 @@ pub const MySQLDB = struct {
         // reads. For text protocol we parseInt/parseFloat here once.
         var col_types = try allocator.alloc(c_int, n_cols);
         defer allocator.free(col_types);
-        for (0..n_cols) |i| col_types[i] = fields[i].type;
+        for (0..n_cols) |i| col_types[i] = @intCast(fields[i].type);
 
         var result_set = ResultSet.init(allocator, columns);
         errdefer result_set.deinit();
@@ -830,7 +835,7 @@ pub const MySQLDB = struct {
     /// Map MySQL field type → MYSQL_BIND buffer_type for binary fetch.
     /// Numeric types ask libmysqlclient for native binary; everything else
     /// falls back to MYSQL_TYPE_STRING (text protocol).
-    fn mysqlBindType(ft: c_int) c_int {
+    fn mysqlBindType(ft: c_uint) c_uint {
         return switch (ft) {
             c.MYSQL_TYPE_TINY,
             c.MYSQL_TYPE_SHORT,

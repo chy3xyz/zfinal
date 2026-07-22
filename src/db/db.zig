@@ -17,6 +17,7 @@ fn monoNowNs() u64 {
     return @intCast(@as(i128, ts.sec) * std.time.ns_per_s + ts.nsec);
 }
 const SQLiteDB = @import("drivers/sqlite.zig").SQLiteDB;
+const pg_c = if (build_opts.enable_pg) @import("c_pg") else struct {};
 const build_opts = @import("build_options");
 
 const PostgresDB = if (build_opts.enable_pg)
@@ -582,7 +583,7 @@ fn pgExecCached(
     }
 
     const res = try d.execCached(name, values, lengths, formats, 0); // 0 = text result
-    d.c.PQclear(res);
+    pg_c.PQclear(res);
 }
 
 /// Returns true if `err` is a deadlock-style error that may succeed on

@@ -32,8 +32,9 @@ pub const Metrics = struct {
     route_latency_count: [4]std.atomic.Value(u64) = .{
         .init(0), .init(0), .init(0), .init(0),
     },
-    /// Ring buffer for recent errors (last N errors). Access via recordError only.
+    /// Ring buffer for recent errors (last N errors). Protected by `error_mutex`.
     recent_errors: std.ArrayList(ErrorEntry),
+    error_mutex: std.Io.Mutex = .init,
     max_error_entries: usize = 50,
     allocator: std.mem.Allocator,
 
@@ -111,6 +112,9 @@ pub const Metrics = struct {
 
     /// Record an error (best-effort, may drop entries under contention).
     pub fn recordError(self: *Metrics, message: []const u8, path: []const u8) void {
+        self.error_mutex.lock();
+        defer self.error_mutex.unlock();
+
         // Best-effort: if allocation fails, skip recording.
         const msg_copy = self.allocator.dupe(u8, message) catch return;
         const path_copy = self.allocator.dupe(u8, path) catch {

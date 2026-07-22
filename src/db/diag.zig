@@ -141,6 +141,7 @@ pub fn toError(code: ErrorCode) DbError {
 /// Unified DB error set. Driver functions may return any subset of
 /// these (compatibility with `error{ExecFailed,QueryFailed,...}`).
 pub const DbError = error{
+    DataTruncated,
     ExecFailed,
     QueryFailed,
     StmtInitFailed,

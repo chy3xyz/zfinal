@@ -229,7 +229,7 @@ pub fn build(b: *std.Build) void {
     const zf_opts = b.addOptions();
     zf_opts.addOption(bool, "enable_pg", enable_pg);
     zf_opts.addOption(bool, "enable_my", enable_mysql);
-    zf_opts.addOption([]const u8, "version", "v0.20.0"); // current framework version
+    zf_opts.addOption([]const u8, "version", "v0.20.1"); // current framework version
 
     const zf_mod = b.createModule(.{
         .root_source_file = b.path("tools/zf/main.zig"),
