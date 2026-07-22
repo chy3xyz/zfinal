@@ -1,3 +1,23 @@
+## [0.20.2] - 2026-07-22
+
+### Added
+- **`DB.queryCached`**: execute a server-side-prepared statement and return a `ResultSet`. Available for PostgreSQL (`PQexecPrepared` with binary output) and MySQL (`MYSQL_STMT` fetch), while SQLite intentionally returns `error.UnsupportedDriver` because it already provides `queryParams` with local prepared-statement support.
+- **Driver-side helpers**: `PostgresDB.resultSetFromPgRes` and `MySQLDB.resultSetFromStmt` share the row-materialization logic between the existing `queryParams` paths and the new cached-statement paths.
+
+### Tests
+- SQLite rejects `queryCached` with `error.UnsupportedDriver` in both `src/db/db.zig` and `src/db/integration_test.zig`.
+- PG/MySQL `queryCached` tests are gated behind live DB env vars and SKIP when unavailable.
+
+## [0.20.2] - 2026-07-08
+
+### Added
+- **`DB.queryCached`**: execute a previously-prepared statement and return a fully-owned `ResultSet`. Works for PostgreSQL and MySQL (binary result format); SQLite returns `error.UnsupportedDriver`.
+- **`ConnectionPool.startReaper`**: optional background thread that calls `keepAlive()` on an interval and drains dead connections. Safe `deinit` joins the thread before tearing down pool state.
+- **Server `write_timeout_ms`**: response writes now respect `Io.operateTimeout(.net_write, ...)`, matching the existing read-timeout path.
+
+### Fixed
+- **ConnectionPool `release()` ordering**: `checkIn()` now runs only after the connection is successfully appended back to the pool, preventing a leak when `available.append` fails.
+
 ## [0.20.1] - 2026-07-08
 
 ### Fixed

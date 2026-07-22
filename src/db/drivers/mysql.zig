@@ -220,6 +220,13 @@ pub const MySQLDB = struct {
             return diag.toError(d.code);
         }
 
+        return resultSetFromStmt(self, stmt);
+    }
+
+    /// Build a ResultSet from an executed prepared statement handle.
+    /// The statement remains open and is not closed here; callers that
+    /// own a temporary statement must close it themselves after this call.
+    fn resultSetFromStmt(self: *MySQLDB, stmt: *c.MYSQL_STMT) !ResultSet {
         // Fetch result metadata
         const meta = c.mysql_stmt_result_metadata(stmt) orelse {
             return ResultSet.init(self.allocator, &.{});
@@ -385,6 +392,32 @@ pub const MySQLDB = struct {
             return diag.toError(d.code);
         }
         self.last_affected = c.mysql_stmt_affected_rows(stmt);
+    }
+
+    /// Execute a previously-prepared statement and return the result set.
+    /// `MYSQL_DATA_TRUNCATED` during fetch is surfaced as `error.DataTruncated`.
+    pub fn queryCached(
+        self: *MySQLDB,
+        name: []const u8,
+        params: []const SqlParam,
+    ) !ResultSet {
+        const stmt = self.lookupCached(name) orelse return error.PrepareFailed;
+
+        var bind = try buildMysqlBind(self.allocator, params);
+        defer freeMysqlBind(self.allocator, &bind);
+
+        if (c.mysql_stmt_bind_param(stmt, bind.bind.items.ptr)) {
+            const d = extractMysqlStmtDiag(stmt);
+            std.debug.print("MySQL queryCached bind failed [errno {s}]: {s}\n", .{ d.raw, d.message });
+            return diag.toError(d.code);
+        }
+        if (c.mysql_stmt_execute(stmt) != 0) {
+            const d = extractMysqlStmtDiag(stmt);
+            std.debug.print("MySQL queryCached execute failed [errno {s}]: {s}\n", .{ d.raw, d.message });
+            return diag.toError(d.code);
+        }
+
+        return resultSetFromStmt(self, stmt);
     }
 
     /// Close a cached statement and remove from cache.

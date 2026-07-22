@@ -52,6 +52,9 @@ const DriverStub = struct {
     pub fn queryParams(_: *@This(), _: [:0]const u8, _: []const SqlParam) !ResultSet {
         return error.DriverNotEnabled;
     }
+    pub fn queryCached(_: *@This(), _: [:0]const u8, _: []const SqlParam) !ResultSet {
+        return error.DriverNotEnabled;
+    }
     pub fn lastInsertId(_: *@This()) !i64 {
         return error.DriverNotEnabled;
     }
@@ -411,6 +414,38 @@ pub const DB = struct {
         }
     }
 
+    /// Execute a previously-prepared statement and return a `ResultSet`.
+    ///
+    /// For MySQL, `params` are bound via `MYSQL_BIND`. For PG, the params
+    /// are converted from `SqlParam` to the c-string format expected by
+    /// `PQexecPrepared`. The returned `ResultSet` is fully owned by the
+    /// caller and must be `deinit()`ed.
+    ///
+    /// SQLite returns `error.UnsupportedDriver` because it already exposes
+    /// `queryParams` with local prepared-statement support.
+    pub fn queryCached(
+        self: *DB,
+        name: [:0]const u8,
+        params: []const SqlParam,
+    ) !ResultSet {
+        try self.guard();
+        const start = monoNowNs();
+        const result = switch (self.driver) {
+            .postgres => |*d| if (build_opts.enable_pg)
+                try d.queryCached(name, params)
+            else
+                error.DriverNotEnabled,
+            .mysql => |*d| if (build_opts.enable_mysql)
+                try d.queryCached(name, params)
+            else
+                error.DriverNotEnabled,
+            .sqlite => error.UnsupportedDriver,
+        };
+        const dur = monoNowNs() - start;
+        self.logIfSlow(name, dur);
+        return result;
+    }
+
     /// DEALLOCATE / close a cached prepared statement. After this,
     /// `name` must be `prepareCached`d again before reuse.
     pub fn releaseCached(self: *DB, name: [:0]const u8) void {
@@ -661,4 +696,15 @@ fn scalarFromCell(comptime T: type, cell: Cell, allocator: std.mem.Allocator) ?T
 
 test {
     _ = @import("integration_test.zig");
+}
+
+test "db: queryCached returns UnsupportedDriver on SQLite" {
+    const a = std.testing.allocator;
+    var db = try DB.init(a, DBConfig.sqliteMemory());
+    defer db.destroy();
+
+    try std.testing.expectError(
+        error.UnsupportedDriver,
+        db.queryCached("stmt", &.{}),
+    );
 }

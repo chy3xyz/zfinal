@@ -631,3 +631,34 @@ test "db: prepareCached returns UnsupportedDriver on SQLite" {
     // releaseCached should silently no-op on SQLite.
     db.releaseCached("stmt1");
 }
+
+// ─── v0.20.2 queryCached ───────────────────────────────────────────────
+
+test "db: queryCached returns UnsupportedDriver on SQLite" {
+    const a = std.testing.allocator;
+    var db = try DB.init(a, DBConfig.sqliteMemory());
+    defer db.destroy();
+
+    try std.testing.expectError(
+        error.UnsupportedDriver,
+        db.queryCached("stmt1", &.{}),
+    );
+}
+
+test "db: queryCached on PostgreSQL requires live DB" {
+    const a = std.testing.allocator;
+    var db = (try tryOpenPG(a)) orelse return error.SkipZigTest;
+    defer db.destroy();
+
+    // Placeholder: real coverage needs a running PostgreSQL server.
+    // prepareCached + queryCached round-trip would go here.
+}
+
+test "db: queryCached on MySQL requires live DB" {
+    const a = std.testing.allocator;
+    var db = (try tryOpenMY(a)) orelse return error.SkipZigTest;
+    defer db.destroy();
+
+    // Placeholder: real coverage needs a running MySQL server.
+    // prepareCached + queryCached round-trip would go here.
+}

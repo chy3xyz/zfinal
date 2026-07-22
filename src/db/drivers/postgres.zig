@@ -204,13 +204,22 @@ pub const PostgresDB = struct {
             result_format,
         );
         defer c.PQclear(res);
+        const res_ptr = res orelse return error.ConnectionFailed;
 
-        if (c.PQresultStatus(res) != c.PGRES_TUPLES_OK) {
-            const d = extractPgDiag(res);
+        if (c.PQresultStatus(res_ptr) != c.PGRES_TUPLES_OK) {
+            const d = extractPgDiag(res_ptr);
             std.debug.print("PostgreSQL query failed [{s}]: {s}\n", .{ d.raw, d.message });
             return diag.toError(d.code);
         }
 
+        return resultSetFromPgRes(self, res_ptr);
+    }
+
+    /// Convert a materialized PGresult into a fully-owned ResultSet.
+    /// The PGresult remains owned by the caller and must be PQclear'd.
+    /// ResultSet copies all column names and cell payloads, so it is safe
+    /// to clear `res` immediately after this call returns.
+    fn resultSetFromPgRes(self: *PostgresDB, res: *c.PGresult) !ResultSet {
         const n_cols: usize = @intCast(c.PQnfields(res));
         const n_rows: usize = @intCast(c.PQntuples(res));
 
@@ -241,7 +250,7 @@ pub const PostgresDB = struct {
                 self.allocator.free(cells);
             }
             for (0..n_cols) |ci| {
-                cells[ci] = try readPgCell(self.allocator, res.?, @intCast(ri), @intCast(ci), col_oids[ci]);
+                cells[ci] = try readPgCell(self.allocator, res, @intCast(ri), @intCast(ci), col_oids[ci]);
             }
             try result_set.addRow(cells);
         }
@@ -493,9 +502,33 @@ pub const PostgresDB = struct {
         return res orelse return error.ConnectionFailed;
     }
 
+    /// Execute a previously-prepared statement and return the result set.
+    /// Uses binary result format (`result_format = 1`) for typed cell reads.
+    /// The returned `ResultSet` owns all row/column memory; the underlying
+    /// `PGresult` is cleared before returning.
+    pub fn queryCached(
+        self: *PostgresDB,
+        name: [:0]const u8,
+        params: []const SqlParam,
+    ) !ResultSet {
+        const bind = try buildParams(self.allocator, params);
+        defer freeParams(self.allocator, bind);
+
+        const res = try self.execCached(name, bind.values, bind.lengths, bind.formats, 1);
+        defer c.PQclear(res);
+
+        if (c.PQresultStatus(res) != c.PGRES_TUPLES_OK) {
+            const d = extractPgDiag(res);
+            std.debug.print("PostgreSQL queryCached failed [{s}]: {s}\n", .{ d.raw, d.message });
+            return diag.toError(d.code);
+        }
+
+        return resultSetFromPgRes(self, res);
+    }
+
     /// DEALLOCATE a server-side prepared statement. After this call,
-    /// `execCached(name, ...)` will fail until `prepareCached(name, ...)`
-    /// is called again.
+    /// `execCached(name, ...)` / `queryCached(name, ...)` will fail until
+    /// `prepareCached(name, ...)` is called again.
     pub fn releaseCached(self: *PostgresDB, name: [:0]const u8) !void {
         const cxn = self.conn orelse return error.ConnectionFailed;
         const dealloc_sql = try std.fmt.allocPrint(self.allocator, "DEALLOCATE \"{s}\"", .{name});

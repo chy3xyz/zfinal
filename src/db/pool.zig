@@ -20,6 +20,10 @@ pub const ConnectionPool = struct {
     max_connections: usize,
     current_connections: usize,
     acquire_timeout_ms: u64,
+    /// Background keep-alive interval. 0 means disabled (caller must call keepAlive()).
+    reaper_interval_ms: u64 = 0,
+    reaper_thread: ?std.Thread = null,
+    reaper_stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     pub fn init(allocator: std.mem.Allocator, config: DBConfig, max_connections: usize) !*ConnectionPool {
         var pool = try allocator.create(ConnectionPool);
@@ -63,6 +67,14 @@ pub const ConnectionPool = struct {
     }
 
     pub fn deinit(self: *ConnectionPool) void {
+        // Signal and join the background reaper if it was started.
+        if (self.reaper_thread) |t| {
+            self.reaper_stop.store(true, .monotonic);
+            mutex_init.broadcastCond(&self.cond);
+            t.join();
+            self.reaper_thread = null;
+        }
+
         mutex_init.lockMut(&self.mutex);
         for (self.connections.items) |conn| {
             conn.deinit();
@@ -77,6 +89,23 @@ pub const ConnectionPool = struct {
         mutex_init.destroyMutex(&self.mutex);
         mutex_init.destroyCond(&self.cond);
         self.allocator.destroy(self);
+    }
+
+    /// Start a background thread that runs `keepAlive()` every
+    /// `interval_ms`. Call once after init. Calling more than once is a no-op.
+    pub fn startReaper(self: *ConnectionPool, interval_ms: u64) !void {
+        if (self.reaper_thread != null) return;
+        self.reaper_interval_ms = interval_ms;
+        self.reaper_thread = try std.Thread.spawn(.{}, reaperLoop, .{self});
+    }
+
+    fn reaperLoop(self: *ConnectionPool) void {
+        while (!self.reaper_stop.load(.monotonic)) {
+            self.keepAlive();
+            const step_ms = @min(self.reaper_interval_ms, 1000);
+            if (step_ms == 0) break;
+            std.time.sleep(step_ms * std.time.ns_per_ms);
+        }
     }
 
     pub fn acquire(self: *ConnectionPool) !*DB {
@@ -133,12 +162,14 @@ pub const ConnectionPool = struct {
     }
 
     pub fn release(self: *ConnectionPool, conn: *DB) !void {
-        conn.checkIn(); // mark as available BEFORE putting back in pool
         mutex_init.lockMut(&self.mutex);
-        defer mutex_init.unlockMut(&self.mutex);
+        defer {
+            mutex_init.signalCond(&self.cond);
+            mutex_init.unlockMut(&self.mutex);
+        }
 
         try self.available.append(self.allocator, conn);
-        mutex_init.signalCond(&self.cond);
+        conn.checkIn(); // mark as available only after it is back in the pool
     }
 
     pub fn keepAlive(self: *ConnectionPool) void {

@@ -27,6 +27,9 @@ pub const ServerConfig = struct {
     /// Per `net_read` deadline (ms) via `Io.operateTimeout` for receiveHead/body.
     /// 0 disables (rely on idle watchdog only). Default matches request_timeout_ms.
     read_timeout_ms: u64 = 30_000,
+    /// Per `net_write` deadline (ms) via `Io.operateTimeout` for response writes.
+    /// 0 disables. Default matches request_timeout_ms.
+    write_timeout_ms: u64 = 30_000,
     /// When true (default), force one-request-per-connection to avoid
     /// Zig `http.Server` keep-alive / discardBody bugs (ziglang/zig#25017).
     /// Set false only after full body-drain coverage + upstream fix + soak tests.
@@ -195,7 +198,7 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
     var read_buf: [4096]u8 = undefined;
     var write_buf: [4096]u8 = undefined;
     var reader = TimedReader.init(conn, io, &read_buf, server.config.read_timeout_ms);
-    var writer = conn.writer(io, &write_buf);
+    var writer = TimedWriter.init(conn, io, &write_buf, server.config.write_timeout_ms);
     var http_srv = http.Server.init(&reader.interface, &writer.interface);
     var req_count: usize = 0;
 
@@ -279,6 +282,72 @@ const TimedReader = struct {
             r.interface.end += n - data_size;
             return data_size;
         }
+        return n;
+    }
+};
+
+/// Stream writer that applies `Io.operateTimeout` on each `net_write`.
+const TimedWriter = struct {
+    io: std.Io,
+    interface: std.Io.Writer,
+    stream: std.Io.net.Stream,
+    timeout_ms: u64,
+    err: ?anyerror = null,
+
+    const max_iovecs_len = 8;
+
+    fn init(stream: std.Io.net.Stream, io: std.Io, buffer: []u8, timeout_ms: u64) TimedWriter {
+        return .{
+            .io = io,
+            .interface = .{
+                .vtable = &.{
+                    .stream = streamImpl,
+                    .writeVec = writeVec,
+                },
+                .buffer = buffer,
+            },
+            .stream = stream,
+            .timeout_ms = timeout_ms,
+        };
+    }
+
+    fn streamImpl(io_w: *std.Io.Writer, io_r: *std.Io.Reader, limit: std.Io.Limit) std.Io.Writer.StreamError!usize {
+        const src = limit.slice(try io_r.readableSliceGreedy(1));
+        var data: [1][]const u8 = .{src};
+        const n = try writeVec(io_w, &data);
+        io_r.advance(n);
+        return n;
+    }
+
+    fn writeVec(io_w: *std.Io.Writer, data: []const []const u8) std.Io.Writer.Error!usize {
+        const w: *TimedWriter = @alignCast(@fieldParentPtr("interface", io_w));
+        var iovecs_buffer: [max_iovecs_len][]const u8 = undefined;
+        const src_n, const data_size = try io_w.readableVector(&iovecs_buffer, data);
+        const src = iovecs_buffer[0..src_n];
+        std.debug.assert(src[0].len > 0);
+
+        const timeout: std.Io.Timeout = if (w.timeout_ms == 0)
+            .none
+        else
+            .{ .duration = .{
+                .raw = .fromMilliseconds(@intCast(w.timeout_ms)),
+                .clock = .awake,
+            } };
+
+        const n = (w.io.operateTimeout(.{
+            .net_write = .{
+                .socket_handle = w.stream.socket.handle,
+                .data = src,
+            },
+        }, timeout) catch |err| {
+            w.err = err;
+            return error.WriteFailed;
+        }).net_write catch |err| {
+            w.err = err;
+            return error.WriteFailed;
+        };
+
+        if (n > data_size) return data_size;
         return n;
     }
 };
