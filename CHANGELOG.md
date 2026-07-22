@@ -134,6 +134,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-07-08
+
+### Added
+- **`PostgresDB.queryIter(sql, params) !PgIter`** — incremental
+  query iterator using `PQsetSingleRowMode`. Single-row mode is set
+  BEFORE the query, then `PQgetResult` is called repeatedly until
+  NULL. Memory usage is O(1) per row. `PgIter.deinit()` drains the
+  required trailing `PQgetResult` call to release connection state.
+- **`Row.intAt(idx) -> i64`** / **`Row.floatAt(idx) -> f64`** /
+  **`Row.boolAt(idx) -> bool`** — hot-loop helpers that return the
+  typed value directly without the error-union + optional wrapper of
+  `getInt`/`getFloat`/`getBool`. Panics on null / type mismatch
+  (caller is responsible for schema validation). In `zig build
+  run-db-bench`, `intAt` is ~1.0–1.2x faster than `Row.getInt` and
+  matches or beats the legacy `getText + parseInt` path.
+- **`benchmark/db_decode.zig`** — micro-benchmark comparing three
+  numeric-read paths: `Row.getInt` (error-union), `Row.intAt`
+  (direct), legacy `getText + parseInt`. Run via `zig build
+  run-db-bench`.
+- **`docker/test-compose.yml`** + **`docker/run-live-tests.sh`** —
+  live PG + MySQL test environment. Bring up with `docker compose
+  -f docker/test-compose.yml up -d`, then run `run-live-tests.sh` to
+  execute the integration suite against live servers. Detected via
+  `ZF_PG_*` / `ZF_MY_*` env vars (already supported by
+  `integration_test.zig`).
+
+### Tests
+- 3 new unit tests in `result.zig` for `intAt` / `floatAt` / `boolAt`.
+- Total: **208 passed; 9 skipped; 0 failed** (was 205 / 9 / 0).
+
+### Deferred (no change)
+- gRPC support (Roadmap v1.0 item) — still v1.0.
+
 ## [0.16.0] - 2026-07-08
 
 ### Added (Unix socket + streaming)

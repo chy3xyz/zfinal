@@ -8,8 +8,8 @@
 
 [![Zig](https://img.shields.io/badge/Zig-0.17.0-orange.svg)](https://ziglang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v0.15.0-blue.svg)](CHANGELOG.md)
-[![Tests](https://img.shields.io/badge/tests-203%20passed%20%C2%B7%2019%20codegen%20%C2%B7%200%20failed-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/version-v0.17.0-blue.svg)](CHANGELOG.md)
+[![Tests](https://img.shields.io/badge/tests-208%20passed%20%C2%B7%2019%20codegen%20%C2%B7%200%20failed-brightgreen.svg)]()
 [![Drivers](https://img.shields.io/badge/drivers-SQLite%20%C2%B7%20PostgreSQL%20%C2%B7%20MySQL-blue.svg)]()
 [![Production](https://img.shields.io/badge/production--score-9.8%2F10%20(contractual)-brightgreen.svg)](PRODUCTION_AUDIT.md)
 
@@ -107,7 +107,7 @@ zig build run-standalone-admin   # Single-binary admin (all HTML @embedFile'd)
 ### Add ZFinal to your project
 
 ```bash
-zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.15.0.tar.gz
+zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.17.0.tar.gz
 ```
 
 In your `build.zig.zon`:
@@ -115,7 +115,7 @@ In your `build.zig.zon`:
 ```zon
 .dependencies = .{
     .zfinal = .{
-        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.15.0.tar.gz",
+        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.17.0.tar.gz",
         .hash = "...",  // auto-filled by `zig fetch`
     },
 },
@@ -592,10 +592,39 @@ For detailed benchmarks: `zig build run-bench`
 - 7 new `result.zig` unit tests; baseline **203 passed, 9 skipped,
   0 failed + 19 codegen tests**.
 
+### v0.16.0 — Unix Socket + Incremental Result Iteration ✅
+
+- **`DBConfig.unix_socket: ?[]const u8`** — connect via local Unix
+  domain socket (PG: `host=/path` in conninfo; MySQL: 7th arg of
+  `mysql_real_connect`).
+- **`SQLiteDB.queryIter` + `SQLiteIter.next()`** — stream rows one at
+  a time via `sqlite3_step`. O(1) memory per row.
+- **`MySQLDB.queryIter` + `MySQLIter.next()`** — same for MySQL via
+  `mysql_stmt_fetch`.
+- **PG iterator** deferred to v0.17.
+
+### v0.17.0 — PG Iterator + Hot-Path Read Helpers ✅
+
+- **`PostgresDB.queryIter` + `PgIter.next()`** — incremental query
+  using `PQsetSingleRowMode` + repeated `PQgetResult` calls.
+  `PgIter.deinit()` drains the required trailing `PQgetResult` call.
+- **`Row.intAt(idx) -> i64`** / **`Row.floatAt(idx) -> f64`** /
+  **`Row.boolAt(idx) -> bool`** — hot-loop helpers that return the
+  typed value directly without the error-union wrapper. Panics on
+  null/type mismatch. In the `zig build run-db-bench` micro-bench,
+  `intAt` matches or beats the legacy `getText + parseInt` path.
+- **`benchmark/db_decode.zig`** + `zig build run-db-bench` —
+  compares three numeric-read paths. Honest finding: for in-process
+  SQLite the typed path is competitive with parseInt (~1.0–1.2x for
+  `intAt`). Real wins are PG/MySQL wire format (server skips
+  to_text) and zero-allocation numeric decode.
+- **`docker/test-compose.yml`** + `docker/run-live-tests.sh` —
+  live PG + MySQL test environment for the integration suite.
+
 ### v1.0 — Stable Release
 
 - [ ] Stable API surface (no breaking changes without major version)
-- [ ] Comprehensive integration test suite (currently 203 — adding
+- [ ] Comprehensive integration test suite (currently 208 — adding
       PG/MySQL live runs against Docker containers)
 - [ ] Production deployment guide (with v0.14.0 SSL/TLS + v0.15.0
       binary decode tuning notes)
@@ -627,6 +656,6 @@ MIT — see [LICENSE](LICENSE) for details.
 
 Made with ❤️ by the ZFinal Team
 
-**ZFinal v0.15.0** — Zig 的 AI 极速开发框架
+**ZFinal v0.17.0** — Zig 的 AI 极速开发框架
 
 </div>

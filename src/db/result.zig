@@ -101,6 +101,48 @@ pub const Row = struct {
             .blob => null,
         };
     }
+
+    /// Hot-loop helper: read a cell as i64 directly, without the error-union
+    /// + optional wrapper of `getInt`. The caller is responsible for type
+    /// safety — this panics on out-of-bounds, null, or non-int cells.
+    ///
+    /// Use this in tight sum/filter/aggregate loops where you've already
+    /// validated the schema and want the fastest possible per-row read.
+    /// In our internal benchmark this beats the legacy `getText + parseInt`
+    /// path because it skips the formatter + parser entirely.
+    pub fn intAt(self: *const Row, index: usize) i64 {
+        return switch (self.cells[index]) {
+            .int => |v| v,
+            .bool => |b| if (b) 1 else 0,
+            .float => |v| @intFromFloat(v),
+            .null => @panic("Row.intAt called on NULL cell"),
+            .text, .blob => @panic("Row.intAt called on non-numeric cell"),
+        };
+    }
+
+    /// Hot-loop helper: read a cell as f64 directly. Same caveats as
+    /// `intAt` — panics on null or non-numeric cells.
+    pub fn floatAt(self: *const Row, index: usize) f64 {
+        return switch (self.cells[index]) {
+            .float => |v| v,
+            .int => |v| @floatFromInt(v),
+            .bool => |b| if (b) 1.0 else 0.0,
+            .null => @panic("Row.floatAt called on NULL cell"),
+            .text, .blob => @panic("Row.floatAt called on non-numeric cell"),
+        };
+    }
+
+    /// Hot-loop helper: read a cell as bool directly. Same caveats as
+    /// `intAt` — panics on null cells.
+    pub fn boolAt(self: *const Row, index: usize) bool {
+        return switch (self.cells[index]) {
+            .bool => |b| b,
+            .int => |v| v != 0,
+            .float => |v| v != 0.0,
+            .null => @panic("Row.boolAt called on NULL cell"),
+            .text, .blob => @panic("Row.boolAt called on non-bool cell"),
+        };
+    }
 };
 
 /// Parse "t"/"true"/"1"/"f"/"false"/"0" (case-sensitive variants for
@@ -416,4 +458,64 @@ test "Cell: blob payload freed by Row.deinit (no leak)" {
 
     _ = result.next();
     try std.testing.expectEqualStrings("raw bytes", result.currentRow().?.getText(0).?);
+}
+
+test "Cell: intAt returns i64 directly without error-union overhead" {
+    const allocator = std.testing.allocator;
+    var columns = try allocator.alloc([]const u8, 2);
+    columns[0] = try allocator.dupe(u8, "n");
+    columns[1] = try allocator.dupe(u8, "b");
+    var result = ResultSet.init(allocator, columns);
+    defer result.deinit();
+
+    var cells = try allocator.alloc(Cell, 2);
+    cells[0] = .{ .int = 99 };
+    cells[1] = .{ .bool = true };
+    try result.addRow(cells);
+
+    _ = result.next();
+    const row = result.currentRow().?;
+    try std.testing.expectEqual(@as(i64, 99), row.intAt(0));
+    try std.testing.expectEqual(@as(i64, 1), row.intAt(1)); // bool→int
+}
+
+test "Cell: floatAt returns f64 directly" {
+    const allocator = std.testing.allocator;
+    var columns = try allocator.alloc([]const u8, 2);
+    columns[0] = try allocator.dupe(u8, "f");
+    columns[1] = try allocator.dupe(u8, "i");
+    var result = ResultSet.init(allocator, columns);
+    defer result.deinit();
+
+    var cells = try allocator.alloc(Cell, 2);
+    cells[0] = .{ .float = 2.5 };
+    cells[1] = .{ .int = 4 };
+    try result.addRow(cells);
+
+    _ = result.next();
+    const row = result.currentRow().?;
+    try std.testing.expectApproxEqAbs(@as(f64, 2.5), row.floatAt(0), 1e-9);
+    try std.testing.expectEqual(@as(f64, 4.0), row.floatAt(1));
+}
+
+test "Cell: boolAt returns bool directly" {
+    const allocator = std.testing.allocator;
+    var columns = try allocator.alloc([]const u8, 3);
+    columns[0] = try allocator.dupe(u8, "a");
+    columns[1] = try allocator.dupe(u8, "b");
+    columns[2] = try allocator.dupe(u8, "c");
+    var result = ResultSet.init(allocator, columns);
+    defer result.deinit();
+
+    var cells = try allocator.alloc(Cell, 3);
+    cells[0] = .{ .bool = true };
+    cells[1] = .{ .int = 0 };
+    cells[2] = .{ .int = 1 };
+    try result.addRow(cells);
+
+    _ = result.next();
+    const row = result.currentRow().?;
+    try std.testing.expectEqual(true, row.boolAt(0));
+    try std.testing.expectEqual(false, row.boolAt(1));
+    try std.testing.expectEqual(true, row.boolAt(2));
 }

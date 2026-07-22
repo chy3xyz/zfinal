@@ -295,6 +295,27 @@ pub fn build(b: *std.Build) void {
     const run_bench_step = b.step("run-bench", "Run benchmark tool");
     run_bench_step.dependOn(&run_bench_cmd.step);
 
+    // DB result decoding micro-benchmark (v0.15.0 vs legacy text parseInt)
+    {
+        const db_bench_mod = b.createModule(.{
+            .root_source_file = b.path("benchmark/db_decode.zig"),
+            .target = target,
+            .optimize = .ReleaseFast, // bench must be optimized to be meaningful
+            .imports = &.{.{ .name = "zfinal", .module = zfinal_mod }},
+        });
+        db_bench_mod.link_libc = true;
+        db_bench_mod.linkSystemLibrary("sqlite3", .{});
+        const db_bench_exe = b.addExecutable(.{
+            .name = "zbench-db",
+            .root_module = db_bench_mod,
+        });
+        b.installArtifact(db_bench_exe);
+        const run_db_bench_cmd = b.addRunArtifact(db_bench_exe);
+        run_db_bench_cmd.step.dependOn(b.getInstallStep());
+        const run_db_bench_step = b.step("run-db-bench", "Run DB result decoding benchmark (v0.15.0 typed vs legacy)");
+        run_db_bench_step.dependOn(&run_db_bench_cmd.step);
+    }
+
     // NATS integration test — disabled (NATS v0.1.0 incompatible with Zig 0.17-dev.704)
     // TODO: re-enable when NATS releases a 0.17-compatible version
     //const nats_test_step = b.step("test-nats", "Run NATS integration test (requires nats-server)");

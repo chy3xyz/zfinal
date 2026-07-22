@@ -1,6 +1,7 @@
 const std = @import("std");
 const DBConfig = @import("../config.zig").DBConfig;
 const Cell = @import("../result.zig").Cell;
+const Row = @import("../result.zig").Row;
 const ResultSet = @import("../result.zig").ResultSet;
 const SqlParam = @import("../sql_param.zig").SqlParam;
 const diag = @import("../diag.zig");
@@ -221,6 +222,194 @@ pub const PostgresDB = struct {
 
         return result_set;
     }
+
+    /// Open an incremental query iterator. Uses libpq's single-row mode
+    /// (set BEFORE the query) so `PQgetResult` returns one row at a time
+    /// instead of materializing the full result set.
+    ///
+    /// Memory usage is O(1) per row. Caller MUST call `iter.deinit()`
+    /// to consume any trailing status from the connection, even if the
+    /// iteration was aborted early.
+    pub fn queryIter(self: *PostgresDB, sql: [:0]const u8, params: []const SqlParam) !PgIter {
+        const cxn = self.conn orelse return error.ConnectionFailed;
+
+        // Enable single-row mode for the NEXT query. Returns 1 on success.
+        if (c.PQsetSingleRowMode(cxn) != 1) {
+            return error.QueryFailed;
+        }
+
+        const bind = try buildParams(self.allocator, params);
+        defer freeParams(self.allocator, bind);
+
+        // resultFormats[0] = 1 → binary output for typed reads.
+        var result_formats = [_]c_int{1};
+        const res = c.PQexecParams(
+            cxn,
+            sql.ptr,
+            @intCast(params.len),
+            null,
+            bind.values.ptr,
+            bind.lengths.ptr,
+            bind.formats.ptr,
+            &result_formats,
+        );
+
+        if (res == null) {
+            // Connection-level failure during query.
+            const d = extractPgDiag(null);
+            std.debug.print("PostgreSQL queryIter PQexec returned NULL: {s}\n", .{d.message});
+            return diag.toError(d.code);
+        }
+
+        const n_cols: usize = @intCast(c.PQnfields(res));
+
+        // Cache column OIDs for typed reads.
+        var col_oids = try self.allocator.alloc(c.Oid, n_cols);
+        errdefer self.allocator.free(col_oids);
+        for (0..n_cols) |i| {
+            col_oids[i] = c.PQftype(res, @intCast(i));
+        }
+
+        // Build column name slice (borrowed from res — must dup).
+        var col_names = try self.allocator.alloc([]const u8, n_cols);
+        errdefer {
+            for (col_names) |n| self.allocator.free(n);
+            self.allocator.free(col_names);
+        }
+        for (0..n_cols) |i| {
+            col_names[i] = try self.allocator.dupe(u8, std.mem.span(c.PQfname(res, @intCast(i))));
+        }
+
+        return .{
+            .conn = cxn,
+            .current_res = res,
+            .n_cols = n_cols,
+            .col_names = col_names,
+            .col_oids = col_oids,
+            .allocator = self.allocator,
+            .done = false,
+            .err = null,
+        };
+    }
+
+    /// Incremental query iterator. Holds the live libpq connection open
+    /// and yields one Row at a time via repeated `PQgetResult` calls.
+    ///
+    /// libpq requires that we keep calling `PQgetResult` after the last
+    /// row to consume the trailing status (including errors). `deinit()`
+    /// does this automatically.
+    pub const PgIter = struct {
+        conn: *c.PGconn,
+        current_res: ?*c.PGresult,
+        n_cols: usize,
+        col_names: [][]const u8,
+        col_oids: []c.Oid,
+        allocator: std.mem.Allocator,
+        done: bool,
+        err: ?anyerror = null,
+
+        /// Fetch the next row. Returns null when iteration completes.
+        /// On error the iterator is poisoned — caller should still deinit.
+        pub fn next(self: *PgIter) !?Row {
+            if (self.done) return null;
+            if (self.err) |e| return e;
+
+            // First call: current_res was set by queryIter (first row OR NULL).
+            // Subsequent calls: current_res is null, call PQgetResult to advance.
+            const res = self.current_res orelse blk: {
+                const next_res = c.PQgetResult(self.conn);
+                if (next_res == null) {
+                    // No more rows. We still need to consume the final
+                    // PQgetResult call to drain libpq's trailing status.
+                    // Caller does this in deinit().
+                    self.done = true;
+                    return null;
+                }
+                break :blk next_res;
+            };
+
+            const status = c.PQresultStatus(res);
+            if (status == c.PGRES_TUPLES_OK) {
+                // Single row is in `res` (n_tuples == 1 typically).
+                const n_tuples = c.PQntuples(res);
+                if (n_tuples == 0) {
+                    // Empty single-row response — treat as completion.
+                    c.PQclear(res);
+                    self.current_res = null;
+                    self.done = true;
+                    return null;
+                }
+                var cells = try self.allocator.alloc(Cell, self.n_cols);
+                errdefer {
+                    for (cells) |cell| switch (cell) {
+                        .text => |t| self.allocator.free(t),
+                        .blob => |b| self.allocator.free(b),
+                        else => {},
+                    };
+                    self.allocator.free(cells);
+                }
+                for (0..self.n_cols) |ci| {
+                    cells[ci] = try readPgCell(self.allocator, res, 0, @intCast(ci), self.col_oids[ci]);
+                }
+                // Clear this res, advance to next via PQgetResult on next .next() call.
+                c.PQclear(res);
+                self.current_res = null;
+                return Row{ .cells = cells, .allocator = self.allocator };
+            } else if (status == c.PGRES_SINGLE_TUPLE) {
+                // Older libpq versions return this for single-row mode.
+                var cells = try self.allocator.alloc(Cell, self.n_cols);
+                errdefer {
+                    for (cells) |cell| switch (cell) {
+                        .text => |t| self.allocator.free(t),
+                        .blob => |b| self.allocator.free(b),
+                        else => {},
+                    };
+                    self.allocator.free(cells);
+                }
+                for (0..self.n_cols) |ci| {
+                    cells[ci] = try readPgCell(self.allocator, res, 0, @intCast(ci), self.col_oids[ci]);
+                }
+                c.PQclear(res);
+                self.current_res = null;
+                return Row{ .cells = cells, .allocator = self.allocator };
+            } else {
+                // Error or unexpected status. Capture and finalize.
+                const d = extractPgDiag(res);
+                std.debug.print("PostgreSQL queryIter error [{s}]: {s}\n", .{ d.raw, d.message });
+                c.PQclear(res);
+                self.current_res = null;
+                self.done = true;
+                self.err = diag.toError(d.code);
+                return self.err;
+            }
+        }
+
+        pub fn columns(self: *const PgIter) []const []const u8 {
+            return self.col_names;
+        }
+
+        /// Finalize the iterator. Drains any remaining PQgetResult calls
+        /// (required by libpq to release connection state), frees column
+        /// names + OID cache. Idempotent.
+        pub fn deinit(self: *PgIter) void {
+            // Drain any pending PQgetResult calls until null is returned,
+            // plus one more to consume trailing status (libpq requires this).
+            if (!self.done) {
+                // Caller exited early without exhausting — drain.
+                while (true) {
+                    const r = c.PQgetResult(self.conn);
+                    if (r == null) break;
+                    c.PQclear(r);
+                }
+            }
+            // Final drain call (after null result) — required by libpq.
+            _ = c.PQgetResult(self.conn);
+
+            for (self.col_names) |n| self.allocator.free(n);
+            if (self.col_names.len > 0) self.allocator.free(self.col_names);
+            if (self.col_oids.len > 0) self.allocator.free(self.col_oids);
+        }
+    };
 
     pub fn affectedRows(self: *PostgresDB) i64 {
         return self.last_affected;
