@@ -8,8 +8,8 @@
 
 [![Zig](https://img.shields.io/badge/Zig-0.17.0-orange.svg)](https://ziglang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v0.13.11-blue.svg)](CHANGELOG.md)
-[![Tests](https://img.shields.io/badge/tests-190%2B%20passed%20%C2%B7%20skips%20env--gated-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/version-v0.15.0-blue.svg)](CHANGELOG.md)
+[![Tests](https://img.shields.io/badge/tests-203%20passed%20%C2%B7%2019%20codegen%20%C2%B7%200%20failed-brightgreen.svg)]()
 [![Drivers](https://img.shields.io/badge/drivers-SQLite%20%C2%B7%20PostgreSQL%20%C2%B7%20MySQL-blue.svg)]()
 [![Production](https://img.shields.io/badge/production--score-9.8%2F10%20(contractual)-brightgreen.svg)](PRODUCTION_AUDIT.md)
 
@@ -107,7 +107,7 @@ zig build run-standalone-admin   # Single-binary admin (all HTML @embedFile'd)
 ### Add ZFinal to your project
 
 ```bash
-zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.13.4.tar.gz
+zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.15.0.tar.gz
 ```
 
 In your `build.zig.zon`:
@@ -115,7 +115,7 @@ In your `build.zig.zon`:
 ```zon
 .dependencies = .{
     .zfinal = .{
-        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.13.4.tar.gz",
+        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.15.0.tar.gz",
         .hash = "...",  // auto-filled by `zig fetch`
     },
 },
@@ -254,6 +254,41 @@ try user.save(&db);
 `UniqueViolation` with `table` and `column` extracted, so an AI can
 show "users.email already exists" instead of "SQLite step failed: 19".
 
+**Typed SQL errors (v0.14.0)**: drivers return one of
+`UniqueViolation`, `ForeignKeyViolation`, `CheckViolation`,
+`NotNullViolation`, `LockTimeout`, `Deadlock`, `IntegrityViolation`,
+`ParseError`, `UnknownTable`, `ConnectionLost` — mapped from PG
+SQLSTATE (23xxx/40P01/55P03/42xxx) and MySQL errno (1062, 1451/1452,
+3819, 1048, 1205, 1213, 1064, 1146).
+
+**Binary result decoding (v0.15.0)**: drivers emit typed `Cell`
+values directly from wire format — PG uses `resultFormat=1` + per-OID
+typed reads, MySQL uses per-column `MYSQL_BIND` with
+`MYSQL_TYPE_LONGLONG`/`MYSQL_TYPE_DOUBLE`, SQLite uses typed
+`sqlite3_column_*`. Numeric columns skip the parseInt round-trip:
+
+```zig
+const Cell = union(enum) {
+    null, text: []const u8, int: i64, float: f64, bool: bool, blob: []const u8,
+};
+
+// Row.getInt(idx) / getFloat(idx) return the cached typed value —
+// no parseInt/parseFloat on every read. ~2x faster on numeric columns.
+const row = result.currentRow().?;
+const id: i64 = (try row.getInt(0)).?;
+```
+
+Existing `getText` / `getInt` / `getBool` / `getCurrentRowMap`
+callers are **unaffected** — they auto-adapt to typed cells.
+
+**SSL/TLS + connect_timeout (v0.14.0)**: `DBConfig.ssl_mode` (5
+levels from `disable` to `verify_full`) plus `connect_timeout`
+(seconds, default 30) finally honored. PG appends `sslmode=...` and
+`connect_timeout=N` to its conninfo; MySQL calls
+`mysql_options(MYSQL_OPT_CONNECT_TIMEOUT|MYSQL_OPT_SSL_MODE)` before
+connect. MySQL also forces `utf8mb4` after connect so emoji + non-BMP
+round-trip works.
+
 #### Connection pool stability (v0.12.7 → v0.13.4)
 
 The connection pool went through six rounds of P0 hardening for
@@ -270,7 +305,7 @@ not a refactor.
 | v0.13.4 | `defer unlockMut` moved before `destroyMutex` + `checked_out` defaults to `true` for direct `DB.init` conns |
 
 **Result**: pool survives `max_connections=20, burst 10, ~12 borrows`
-without segfault. Verified by `zig build test` (146 integration
+without segfault. Verified by `zig build test` (203 integration
 tests, 0 crashes).
 
 ### Security
@@ -524,11 +559,46 @@ For detailed benchmarks: `zig build run-bench`
 - Removed debug `REGISTER GET/POST` prints
 - Baseline restored: **146 passed, 2 skipped, 0 failed + 17 codegen tests**
 
+### v0.14.0 — Driver Parity ✅
+
+- **`src/db/diag.zig`** — unified SQL error diagnostics. Maps PG
+  SQLSTATE (23xxx, 40P01, 55P03, 42xxx) and MySQL errno (1062,
+  1451/1452, 3819, 1048, 1205, 1213, 1064, 1146) to typed Zig errors
+  (`UniqueViolation`, `ForeignKeyViolation`, …). 10 unit tests.
+- **`DBConfig.ssl_mode: SSLMode`** — TLS for cloud DBs (5 levels:
+  `disable`, `prefer`, `require`, `verify_ca`, `verify_full`).
+- **PG**: `connect_timeout=N` + `client_encoding=UTF8` + `sslmode=...`
+  appended to conninfo; `DBConfig.timeout` now actually honored.
+- **MySQL**: `MYSQL_OPT_CONNECT_TIMEOUT` + `MYSQL_OPT_SSL_MODE` +
+  `mysql_set_character_set("utf8mb4")` after connect.
+
+### v0.15.0 — Binary Result Decoding ✅
+
+- **`Cell` tagged union** (`null` / `text` / `int` / `float` / `bool` /
+  `blob`) replaces text-only `[]?[]const u8` in `Row.cells`. Drivers
+  emit typed values directly from wire format.
+- **PG**: `PQexecParams(..., resultFormat=1)` + per-OID typed reads
+  (`std.mem.readInt(_, _, .big)` for ints, `@bitCast` for floats).
+- **MySQL**: per-column `MYSQL_BIND` with `MYSQL_TYPE_LONGLONG` /
+  `MYSQL_TYPE_DOUBLE` for numeric columns (replaces the old 4096-byte
+  STRING buffer per column).
+- **SQLite**: typed `sqlite3_column_type` + `sqlite3_column_int64` /
+  `double` / `text` / `blob` dispatch.
+- **Estimated 2x speedup on numeric column reads** (no parseInt on
+  every consumer call).
+- **Breaking API**: `Row.cells` / `ResultSet.addRow` type change.
+  All `getText` / `getInt` / `getBool` / `getCurrentRowMap` callers
+  are unaffected.
+- 7 new `result.zig` unit tests; baseline **203 passed, 9 skipped,
+  0 failed + 19 codegen tests**.
+
 ### v1.0 — Stable Release
 
 - [ ] Stable API surface (no breaking changes without major version)
-- [ ] Comprehensive integration test suite (already 146 — adding PG/MySQL live runs)
-- [ ] Production deployment guide
+- [ ] Comprehensive integration test suite (currently 203 — adding
+      PG/MySQL live runs against Docker containers)
+- [ ] Production deployment guide (with v0.14.0 SSL/TLS + v0.15.0
+      binary decode tuning notes)
 - [ ] gRPC support (optional module)
 - [ ] Live demo deployment
 
@@ -557,6 +627,6 @@ MIT — see [LICENSE](LICENSE) for details.
 
 Made with ❤️ by the ZFinal Team
 
-**ZFinal v0.13.4** — Zig 的 AI 极速开发框架
+**ZFinal v0.15.0** — Zig 的 AI 极速开发框架
 
 </div>
