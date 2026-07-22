@@ -112,8 +112,8 @@ pub const Metrics = struct {
 
     /// Record an error (best-effort, may drop entries under contention).
     pub fn recordError(self: *Metrics, message: []const u8, path: []const u8) void {
-        self.error_mutex.lock();
-        defer self.error_mutex.unlock();
+        self.error_mutex.lockUncancelable(getIo());
+        defer self.error_mutex.unlock(getIo());
 
         // Best-effort: if allocation fails, skip recording.
         const msg_copy = self.allocator.dupe(u8, message) catch return;

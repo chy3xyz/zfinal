@@ -19,6 +19,44 @@ const framework_skill_names = [_][]const u8{
     "zfinal-evolve.md",
 };
 const sqlite_c = @import("c_sqlite3");
+const pg_c = if (zf_cfg.enable_pg) @import("c_pg") else PgDriverStub;
+const mysql_c = if (zf_cfg.enable_my) @import("c_mysql") else MySqlDriverStub;
+
+// Stubs so the zf CLI compiles when PostgreSQL / MySQL drivers are not enabled.
+// The real code paths check zf_cfg.enable_* at runtime and return clear errors.
+const PgDriverStub = struct {
+    pub const PGconn = opaque {};
+    pub const PGresult = opaque {};
+    pub const CONNECTION_OK: c_int = 0;
+    pub const CONNECTION_BAD: c_int = 1;
+    pub const PGRES_COMMAND_OK: c_int = 0;
+    pub const PGRES_TUPLES_OK: c_int = 0;
+    pub fn PQconnectdb(_: [*:0]const u8) ?*PGconn { return null; }
+    pub fn PQstatus(_: ?*PGconn) c_int { return CONNECTION_BAD; }
+    pub fn PQerrorMessage(_: ?*PGconn) [*:0]const u8 { return "PG not enabled"; }
+    pub fn PQfinish(_: ?*PGconn) void {}
+    pub fn PQexec(_: ?*PGconn, _: [*:0]const u8) ?*PGresult { return null; }
+    pub fn PQresultStatus(_: ?*PGresult) c_int { return 0; }
+    pub fn PQclear(_: ?*PGresult) void {}
+    pub fn PQntuples(_: ?*PGresult) c_int { return 0; }
+    pub fn PQgetvalue(_: ?*PGresult, _: c_int, _: c_int) [*:0]const u8 { return ""; }
+    pub fn PQgetisnull(_: ?*PGresult, _: c_int, _: c_int) c_int { return 1; }
+};
+
+const MySqlDriverStub = struct {
+    pub const MYSQL = opaque {};
+    pub const MYSQL_RES = opaque {};
+    pub fn mysql_init(_: ?*MYSQL) ?*MYSQL { return null; }
+    pub fn mysql_real_connect(_: ?*MYSQL, _: ?[*:0]const u8, _: ?[*:0]const u8, _: ?[*:0]const u8, _: ?[*:0]const u8, _: c_uint, _: ?[*:0]const u8, _: c_ulong) ?*MYSQL { return null; }
+    pub fn mysql_error(_: ?*MYSQL) [*:0]const u8 { return "MySQL not enabled"; }
+    pub fn mysql_close(_: ?*MYSQL) void {}
+    pub fn mysql_query(_: ?*MYSQL, _: [*:0]const u8) c_int { return 1; }
+    pub fn mysql_store_result(_: ?*MYSQL) ?*MYSQL_RES { return null; }
+    pub fn mysql_free_result(_: ?*MYSQL_RES) void {}
+    pub fn mysql_num_rows(_: ?*MYSQL_RES) c_ulong { return 0; }
+    pub fn mysql_fetch_row(_: ?*MYSQL_RES) ?[*]?[*:0]const u8 { return null; }
+    pub fn mysql_fetch_lengths(_: ?*MYSQL_RES) ?[*]c_ulong { return null; }
+};
 
 // External libc getenv for env var access (Zig 0.17 std doesn't expose it).
 extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
@@ -439,12 +477,13 @@ fn createProject(allocator: std.mem.Allocator, project_name: []const u8, clean: 
 
     std.debug.print("\nCreating project: {s}\n", .{project_name});
 
+    const app_name = std.fs.path.basename(project_name);
+
     // Root: build.zig + build.zig.zon + CLAUDE.md
-    const build_zig_content = try std.fmt.allocPrint(allocator, templates.build_zig, .{ "../zfinal/src/main.zig", project_name });
+    const build_zig_content = try std.fmt.allocPrint(allocator, templates.build_zig, .{app_name});
     defer allocator.free(build_zig_content);
     try writeFile(project_dir, "build.zig", build_zig_content);
 
-    const app_name = std.fs.path.basename(project_name);
     const build_zon_content = try std.fmt.allocPrint(allocator, templates.build_zig_zon, .{app_name});
     defer allocator.free(build_zon_content);
     try writeFile(project_dir, "build.zig.zon", build_zon_content);
@@ -968,49 +1007,588 @@ fn handleMigrate(allocator: std.mem.Allocator, action: []const u8, name: []const
     }
 }
 
-/// Apply all pending migrations. Default DB path: ./zf.db (override with
-/// env var ZFINAL_DB or --db flag if supported later).
-fn migrateRun(allocator: std.mem.Allocator) !void {
-    const db_path = "zf.db";
-    var db: ?*sqlite_c.sqlite3 = null;
-    const rc = sqlite_c.sqlite3_open(db_path.ptr, &db);
-    if (rc != sqlite_c.SQLITE_OK) {
-        std.debug.print("Failed to open database: {s}\n", .{db_path});
-        return;
-    }
-    defer _ = sqlite_c.sqlite3_close(db);
+// ─────────────────────────────────────────────────────────────────────────────
+// ZfDb — minimal unified DB handle for zf migrate/seed.
+// Supports SQLite (default), PostgreSQL and MySQL selected via env vars.
+// ─────────────────────────────────────────────────────────────────────────────
 
-    try ensureMigrationsTable(db);
+const DriverTag = enum { sqlite, postgres, mysql };
+
+fn driverTagFromEnv() DriverTag {
+    const raw = std.c.getenv("ZFINAL_DB_TYPE") orelse return .sqlite;
+    const s = std.mem.sliceTo(raw, 0);
+    if (std.mem.eql(u8, s, "postgres") or std.mem.eql(u8, s, "pg") or std.mem.eql(u8, s, "postgresql")) return .postgres;
+    if (std.mem.eql(u8, s, "mysql") or std.mem.eql(u8, s, "my")) return .mysql;
+    return .sqlite;
+}
+
+fn allocZ(allocator: std.mem.Allocator, s: []const u8) ![:0]const u8 {
+    const buf = try allocator.allocSentinel(u8, s.len, 0);
+    @memcpy(buf, s);
+    return buf;
+}
+
+fn getEnvZ(allocator: std.mem.Allocator, name: [*:0]const u8, default: []const u8) ![:0]const u8 {
+    const raw = std.c.getenv(name);
+    const slice = if (raw) |r| std.mem.sliceTo(r, 0) else default;
+    return allocZ(allocator, slice);
+}
+
+fn escapeSqlString(allocator: std.mem.Allocator, s: []const u8) ![:0]const u8 {
+    const count = std.mem.count(u8, s, "'");
+    const buf = try allocator.allocSentinel(u8, s.len + count, 0);
+    var i: usize = 0;
+    for (s) |c| {
+        if (c == '\'') {
+            buf[i] = '\'';
+            i += 1;
+        }
+        buf[i] = c;
+        i += 1;
+    }
+    return buf[0..i :0];
+}
+
+fn formatSqlZ(allocator: std.mem.Allocator, comptime fmt: []const u8, args: anytype) ![:0]const u8 {
+    const s = try std.fmt.allocPrint(allocator, fmt, args);
+    defer allocator.free(s);
+    return allocZ(allocator, s);
+}
+
+const PgDsnParts = struct {
+    host: []const u8,
+    port: u16,
+    user: []const u8,
+    password: []const u8,
+    database: []const u8,
+
+    fn deinit(self: PgDsnParts, allocator: std.mem.Allocator) void {
+        allocator.free(self.host);
+        allocator.free(self.user);
+        allocator.free(self.password);
+        allocator.free(self.database);
+    }
+};
+
+fn parsePgDsn(allocator: std.mem.Allocator, url: []const u8) !PgDsnParts {
+    var rest = url;
+    if (std.mem.startsWith(u8, rest, "postgresql://")) {
+        rest = rest["postgresql://".len..];
+    } else if (std.mem.startsWith(u8, rest, "postgres://")) {
+        rest = rest["postgres://".len..];
+    } else {
+        return error.InvalidDsn;
+    }
+
+    var user: []const u8 = try allocator.dupe(u8, "postgres");
+    errdefer allocator.free(user);
+    var password: []const u8 = try allocator.dupe(u8, "");
+    errdefer allocator.free(password);
+    var host: []const u8 = try allocator.dupe(u8, "localhost");
+    errdefer allocator.free(host);
+    var port: u16 = 5432;
+    var database: []const u8 = try allocator.dupe(u8, "");
+    errdefer allocator.free(database);
+
+    if (std.mem.indexOfScalar(u8, rest, '@')) |at_pos| {
+        const up = rest[0..at_pos];
+        rest = rest[at_pos + 1 ..];
+        allocator.free(user);
+        allocator.free(password);
+        if (std.mem.indexOfScalar(u8, up, ':')) |colon| {
+            user = try allocator.dupe(u8, up[0..colon]);
+            password = try allocator.dupe(u8, up[colon + 1 ..]);
+        } else {
+            user = try allocator.dupe(u8, up);
+            password = try allocator.dupe(u8, "");
+        }
+    }
+
+    if (std.mem.indexOfScalar(u8, rest, '/')) |slash| {
+        const hp = rest[0..slash];
+        allocator.free(database);
+        database = try allocator.dupe(u8, rest[slash + 1 ..]);
+        if (std.mem.indexOfScalar(u8, hp, ':')) |colon| {
+            allocator.free(host);
+            host = try allocator.dupe(u8, hp[0..colon]);
+            port = std.fmt.parseInt(u16, hp[colon + 1 ..], 10) catch 5432;
+        } else if (hp.len > 0) {
+            allocator.free(host);
+            host = try allocator.dupe(u8, hp);
+        }
+    } else {
+        allocator.free(database);
+        database = try allocator.dupe(u8, rest);
+    }
+
+    return .{
+        .host = host,
+        .port = port,
+        .user = user,
+        .password = password,
+        .database = database,
+    };
+}
+
+fn buildPgConninfo(allocator: std.mem.Allocator) ![:0]const u8 {
+    const dsn = std.c.getenv("ZFINAL_PG_DSN");
+    if (dsn) |d| {
+        const s = std.mem.sliceTo(d, 0);
+        if (std.mem.startsWith(u8, s, "postgres://") or std.mem.startsWith(u8, s, "postgresql://")) {
+            var parsed = try parsePgDsn(allocator, s);
+            defer parsed.deinit(allocator);
+            return allocPgConninfo(allocator, parsed.host, parsed.port, parsed.user, parsed.password, parsed.database);
+        }
+        return allocZ(allocator, s);
+    }
+
+    const host = try getEnvZ(allocator, "ZF_PG_HOST", "localhost");
+    defer allocator.free(host);
+    const port_str = try getEnvZ(allocator, "ZF_PG_PORT", "5432");
+    defer allocator.free(port_str);
+    const port = std.fmt.parseInt(u16, port_str[0..port_str.len], 10) catch 5432;
+    const user = try getEnvZ(allocator, "ZF_PG_USER", "postgres");
+    defer allocator.free(user);
+    const database = try getEnvZ(allocator, "ZF_PG_DATABASE", "zfinal");
+    defer allocator.free(database);
+    const password: []const u8 = blk: {
+        const raw = std.c.getenv("ZF_PG_PASSWORD");
+        break :blk if (raw) |r| std.mem.sliceTo(r, 0) else "";
+    };
+    return allocPgConninfo(allocator, host, port, user, password, database);
+}
+
+fn allocPgConninfo(allocator: std.mem.Allocator, host: []const u8, port: u16, user: []const u8, password: []const u8, database: []const u8) ![:0]const u8 {
+    var buf: [1024]u8 = undefined;
+    const s = try std.fmt.bufPrint(&buf, "host={s} port={d} dbname={s} user={s} password={s} client_encoding=UTF8", .{ host, port, database, user, password });
+    return allocZ(allocator, s);
+}
+
+const MyDsnParts = struct {
+    host: [:0]const u8,
+    port: u16,
+    user: [:0]const u8,
+    password: [:0]const u8,
+    database: [:0]const u8,
+
+    fn deinit(self: MyDsnParts, allocator: std.mem.Allocator) void {
+        allocator.free(self.host);
+        allocator.free(self.user);
+        allocator.free(self.password);
+        allocator.free(self.database);
+    }
+};
+
+fn parseMyDsn(allocator: std.mem.Allocator, url: []const u8) !MyDsnParts {
+    var rest = url;
+    if (std.mem.startsWith(u8, rest, "mysql://")) {
+        rest = rest["mysql://".len..];
+    } else {
+        return error.InvalidDsn;
+    }
+
+    var user: [:0]const u8 = try allocZ(allocator, "root");
+    errdefer allocator.free(user);
+    var password: [:0]const u8 = try allocZ(allocator, "");
+    errdefer allocator.free(password);
+    var host: [:0]const u8 = try allocZ(allocator, "localhost");
+    errdefer allocator.free(host);
+    var port: u16 = 3306;
+    var database: [:0]const u8 = try allocZ(allocator, "");
+    errdefer allocator.free(database);
+
+    if (std.mem.indexOfScalar(u8, rest, '@')) |at_pos| {
+        const up = rest[0..at_pos];
+        rest = rest[at_pos + 1 ..];
+        allocator.free(user);
+        allocator.free(password);
+        if (std.mem.indexOfScalar(u8, up, ':')) |colon| {
+            user = try allocZ(allocator, up[0..colon]);
+            password = try allocZ(allocator, up[colon + 1 ..]);
+        } else {
+            user = try allocZ(allocator, up);
+            password = try allocZ(allocator, "");
+        }
+    }
+
+    if (std.mem.indexOfScalar(u8, rest, '/')) |slash| {
+        const hp = rest[0..slash];
+        allocator.free(database);
+        database = try allocZ(allocator, rest[slash + 1 ..]);
+        if (std.mem.indexOfScalar(u8, hp, ':')) |colon| {
+            allocator.free(host);
+            host = try allocZ(allocator, hp[0..colon]);
+            port = std.fmt.parseInt(u16, hp[colon + 1 ..], 10) catch 3306;
+        } else if (hp.len > 0) {
+            allocator.free(host);
+            host = try allocZ(allocator, hp);
+        }
+    } else {
+        allocator.free(database);
+        database = try allocZ(allocator, rest);
+    }
+
+    return .{
+        .host = host,
+        .port = port,
+        .user = user,
+        .password = password,
+        .database = database,
+    };
+}
+
+fn buildMyConfig(allocator: std.mem.Allocator) !MyDsnParts {
+    const dsn = std.c.getenv("ZFINAL_MY_DSN");
+    if (dsn) |d| {
+        return parseMyDsn(allocator, std.mem.sliceTo(d, 0));
+    }
+
+    const host = try getEnvZ(allocator, "ZF_MY_HOST", "localhost");
+    errdefer allocator.free(host);
+    const port_str = try getEnvZ(allocator, "ZF_MY_PORT", "3306");
+    const port = std.fmt.parseInt(u16, port_str[0..port_str.len], 10) catch 3306;
+    allocator.free(port_str);
+    const user = try getEnvZ(allocator, "ZF_MY_USER", "root");
+    errdefer allocator.free(user);
+    const database = try getEnvZ(allocator, "ZF_MY_DATABASE", "zfinal");
+    errdefer allocator.free(database);
+    const password: [:0]const u8 = blk: {
+        const raw = std.c.getenv("ZF_MY_PASSWORD");
+        const slice = if (raw) |r| std.mem.sliceTo(r, 0) else "";
+        break :blk try allocZ(allocator, slice);
+    };
+    errdefer allocator.free(password);
+    return .{
+        .host = host,
+        .port = port,
+        .user = user,
+        .password = password,
+        .database = database,
+    };
+}
+
+const SqliteDb = struct {
+    db: *sqlite_c.sqlite3,
+    allocator: std.mem.Allocator,
+
+    fn open(allocator: std.mem.Allocator, path: [:0]const u8) !SqliteDb {
+        var db: ?*sqlite_c.sqlite3 = null;
+        const rc = sqlite_c.sqlite3_open(path.ptr, &db);
+        if (rc != sqlite_c.SQLITE_OK or db == null) {
+            std.debug.print("Failed to open SQLite database: {s}\n", .{path});
+            return error.DbOpenFailed;
+        }
+        return .{ .db = db.?, .allocator = allocator };
+    }
+
+    fn close(self: SqliteDb) void {
+        _ = sqlite_c.sqlite3_close(self.db);
+    }
+
+    fn exec(self: SqliteDb, sql: [:0]const u8) !void {
+        var err_msg: [*c]u8 = null;
+        if (sqlite_c.sqlite3_exec(self.db, sql.ptr, null, null, &err_msg) != sqlite_c.SQLITE_OK) {
+            std.debug.print("SQLite exec error: {s}\n", .{if (err_msg) |e| std.mem.sliceTo(e, 0) else "(no message)"});
+            return error.SqlExecFailed;
+        }
+    }
+
+    fn queryExists(self: SqliteDb, sql: [:0]const u8) !bool {
+        var stmt: ?*sqlite_c.sqlite3_stmt = null;
+        if (sqlite_c.sqlite3_prepare_v2(self.db, sql.ptr, -1, &stmt, null) != sqlite_c.SQLITE_OK) return false;
+        defer _ = sqlite_c.sqlite3_finalize(stmt);
+        return sqlite_c.sqlite3_step(stmt) == sqlite_c.SQLITE_ROW;
+    }
+
+    fn queryText(self: SqliteDb, allocator: std.mem.Allocator, sql: [:0]const u8) !?[]const u8 {
+        var stmt: ?*sqlite_c.sqlite3_stmt = null;
+        if (sqlite_c.sqlite3_prepare_v2(self.db, sql.ptr, -1, &stmt, null) != sqlite_c.SQLITE_OK) return null;
+        defer _ = sqlite_c.sqlite3_finalize(stmt);
+        if (sqlite_c.sqlite3_step(stmt) != sqlite_c.SQLITE_ROW) return null;
+        const raw = sqlite_c.sqlite3_column_text(stmt, 0) orelse return null;
+        return try allocator.dupe(u8, std.mem.sliceTo(raw, 0));
+    }
+
+    fn ensureMigrationsTable(self: SqliteDb) !void {
+        const sql =
+            \\CREATE TABLE IF NOT EXISTS _zfinal_migrations (
+            \\  version TEXT PRIMARY KEY,
+            \\  filename TEXT NOT NULL,
+            \\  applied_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            \\  checksum INTEGER NOT NULL
+            \\);
+        ;
+        try self.exec(sql);
+    }
+
+    fn ensureSeedsTable(self: SqliteDb) !void {
+        const sql =
+            \\CREATE TABLE IF NOT EXISTS _zfinal_seeds (
+            \\  name TEXT PRIMARY KEY,
+            \\  filename TEXT NOT NULL,
+            \\  applied_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            \\  checksum INTEGER NOT NULL
+            \\);
+        ;
+        try self.exec(sql);
+    }
+};
+
+const PostgresDb = struct {
+    conn: *pg_c.PGconn,
+    allocator: std.mem.Allocator,
+
+    fn open(allocator: std.mem.Allocator, conninfo: [:0]const u8) !PostgresDb {
+        if (!zf_cfg.enable_pg) {
+            std.debug.print("PostgreSQL support not enabled. Rebuild with: zig build install-zf -Denable-pg\n", .{});
+            return error.PgNotEnabled;
+        }
+        const conn = pg_c.PQconnectdb(conninfo.ptr) orelse return error.PgConnectFailed;
+        if (pg_c.PQstatus(conn) != pg_c.CONNECTION_OK) {
+            std.debug.print("PostgreSQL connect failed: {s}\n", .{pg_c.PQerrorMessage(conn)});
+            pg_c.PQfinish(conn);
+            return error.PgConnectFailed;
+        }
+        return .{ .conn = conn, .allocator = allocator };
+    }
+
+    fn close(self: PostgresDb) void {
+        pg_c.PQfinish(self.conn);
+    }
+
+    fn exec(self: PostgresDb, sql: [:0]const u8) !void {
+        const res = pg_c.PQexec(self.conn, sql.ptr) orelse return error.SqlExecFailed;
+        defer pg_c.PQclear(res);
+        if (pg_c.PQresultStatus(res) != pg_c.PGRES_COMMAND_OK) {
+            std.debug.print("PostgreSQL exec error: {s}\n", .{pg_c.PQerrorMessage(self.conn)});
+            return error.SqlExecFailed;
+        }
+    }
+
+    fn queryExists(self: PostgresDb, sql: [:0]const u8) !bool {
+        const res = pg_c.PQexec(self.conn, sql.ptr) orelse return false;
+        defer pg_c.PQclear(res);
+        if (pg_c.PQresultStatus(res) != pg_c.PGRES_TUPLES_OK) return false;
+        return pg_c.PQntuples(res) > 0;
+    }
+
+    fn queryText(self: PostgresDb, allocator: std.mem.Allocator, sql: [:0]const u8) !?[]const u8 {
+        const res = pg_c.PQexec(self.conn, sql.ptr) orelse return null;
+        defer pg_c.PQclear(res);
+        if (pg_c.PQresultStatus(res) != pg_c.PGRES_TUPLES_OK) return null;
+        if (pg_c.PQntuples(res) == 0) return null;
+        if (pg_c.PQgetisnull(res, 0, 0) != 0) return null;
+        const raw = pg_c.PQgetvalue(res, 0, 0);
+        return try allocator.dupe(u8, std.mem.sliceTo(raw, 0));
+    }
+
+    fn ensureMigrationsTable(self: PostgresDb) !void {
+        const sql =
+            \\CREATE TABLE IF NOT EXISTS _zfinal_migrations (
+            \\  version TEXT PRIMARY KEY,
+            \\  filename TEXT NOT NULL,
+            \\  applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            \\  checksum BIGINT NOT NULL
+            \\);
+        ;
+        try self.exec(sql);
+    }
+
+    fn ensureSeedsTable(self: PostgresDb) !void {
+        const sql =
+            \\CREATE TABLE IF NOT EXISTS _zfinal_seeds (
+            \\  name TEXT PRIMARY KEY,
+            \\  filename TEXT NOT NULL,
+            \\  applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            \\  checksum BIGINT NOT NULL
+            \\);
+        ;
+        try self.exec(sql);
+    }
+};
+
+const MySqlDb = struct {
+    conn: *mysql_c.MYSQL,
+    allocator: std.mem.Allocator,
+
+    fn open(allocator: std.mem.Allocator, host: [:0]const u8, port: u16, user: [:0]const u8, password: ?[:0]const u8, database: [:0]const u8) !MySqlDb {
+        if (!zf_cfg.enable_my) {
+            std.debug.print("MySQL support not enabled. Rebuild with: zig build install-zf -Denable-mysql\n", .{});
+            return error.MyNotEnabled;
+        }
+        const conn = mysql_c.mysql_init(null) orelse return error.MyConnectFailed;
+        const pw_ptr = if (password) |p| p.ptr else null;
+        if (mysql_c.mysql_real_connect(conn, host.ptr, user.ptr, pw_ptr, database.ptr, port, null, 0) == null) {
+            std.debug.print("MySQL connect failed: {s}\n", .{mysql_c.mysql_error(conn)});
+            mysql_c.mysql_close(conn);
+            return error.MyConnectFailed;
+        }
+        return .{ .conn = conn, .allocator = allocator };
+    }
+
+    fn close(self: MySqlDb) void {
+        mysql_c.mysql_close(self.conn);
+    }
+
+    fn exec(self: MySqlDb, sql: [:0]const u8) !void {
+        if (mysql_c.mysql_query(self.conn, sql.ptr) != 0) {
+            std.debug.print("MySQL exec error: {s}\n", .{mysql_c.mysql_error(self.conn)});
+            return error.SqlExecFailed;
+        }
+        const res = mysql_c.mysql_store_result(self.conn);
+        if (res) |r| mysql_c.mysql_free_result(r);
+    }
+
+    fn queryExists(self: MySqlDb, sql: [:0]const u8) !bool {
+        if (mysql_c.mysql_query(self.conn, sql.ptr) != 0) return false;
+        const res = mysql_c.mysql_store_result(self.conn) orelse return false;
+        defer mysql_c.mysql_free_result(res);
+        return mysql_c.mysql_num_rows(res) > 0;
+    }
+
+    fn queryText(self: MySqlDb, allocator: std.mem.Allocator, sql: [:0]const u8) !?[]const u8 {
+        if (mysql_c.mysql_query(self.conn, sql.ptr) != 0) return null;
+        const res = mysql_c.mysql_store_result(self.conn) orelse return null;
+        defer mysql_c.mysql_free_result(res);
+        const row = mysql_c.mysql_fetch_row(res) orelse return null;
+        const lengths = mysql_c.mysql_fetch_lengths(res) orelse return null;
+        const raw = row[0] orelse return null;
+        return try allocator.dupe(u8, raw[0..lengths[0]]);
+    }
+
+    fn ensureMigrationsTable(self: MySqlDb) !void {
+        const sql =
+            \\CREATE TABLE IF NOT EXISTS _zfinal_migrations (
+            \\  version VARCHAR(255) PRIMARY KEY,
+            \\  filename VARCHAR(255) NOT NULL,
+            \\  applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            \\  checksum BIGINT NOT NULL
+            \\);
+        ;
+        try self.exec(sql);
+    }
+
+    fn ensureSeedsTable(self: MySqlDb) !void {
+        const sql =
+            \\CREATE TABLE IF NOT EXISTS _zfinal_seeds (
+            \\  name VARCHAR(255) PRIMARY KEY,
+            \\  filename VARCHAR(255) NOT NULL,
+            \\  applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            \\  checksum BIGINT NOT NULL
+            \\);
+        ;
+        try self.exec(sql);
+    }
+};
+
+const ZfDb = union(DriverTag) {
+    sqlite: SqliteDb,
+    postgres: PostgresDb,
+    mysql: MySqlDb,
+
+    pub fn deinit(self: *ZfDb) void {
+        switch (self.*) {
+            .sqlite => |impl| impl.close(),
+            .postgres => |impl| impl.close(),
+            .mysql => |impl| impl.close(),
+        }
+    }
+
+    pub fn exec(self: ZfDb, sql: [:0]const u8) !void {
+        switch (self) {
+            .sqlite => |impl| return impl.exec(sql),
+            .postgres => |impl| return impl.exec(sql),
+            .mysql => |impl| return impl.exec(sql),
+        }
+    }
+
+    pub fn queryExists(self: ZfDb, sql: [:0]const u8) !bool {
+        switch (self) {
+            .sqlite => |impl| return impl.queryExists(sql),
+            .postgres => |impl| return impl.queryExists(sql),
+            .mysql => |impl| return impl.queryExists(sql),
+        }
+    }
+
+    pub fn queryText(self: ZfDb, allocator: std.mem.Allocator, sql: [:0]const u8) !?[]const u8 {
+        switch (self) {
+            .sqlite => |impl| return impl.queryText(allocator, sql),
+            .postgres => |impl| return impl.queryText(allocator, sql),
+            .mysql => |impl| return impl.queryText(allocator, sql),
+        }
+    }
+
+    pub fn ensureMigrationsTable(self: ZfDb) !void {
+        switch (self) {
+            .sqlite => |impl| return impl.ensureMigrationsTable(),
+            .postgres => |impl| return impl.ensureMigrationsTable(),
+            .mysql => |impl| return impl.ensureMigrationsTable(),
+        }
+    }
+
+    pub fn ensureSeedsTable(self: ZfDb) !void {
+        switch (self) {
+            .sqlite => |impl| return impl.ensureSeedsTable(),
+            .postgres => |impl| return impl.ensureSeedsTable(),
+            .mysql => |impl| return impl.ensureSeedsTable(),
+        }
+    }
+};
+
+fn openZfinalDb(allocator: std.mem.Allocator) !ZfDb {
+    switch (driverTagFromEnv()) {
+        .sqlite => {
+            const path = try getEnvZ(allocator, "ZFINAL_DB_PATH", "zf.db");
+            defer allocator.free(path);
+            return ZfDb{ .sqlite = try SqliteDb.open(allocator, path) };
+        },
+        .postgres => {
+            const conninfo = try buildPgConninfo(allocator);
+            defer allocator.free(conninfo);
+            return ZfDb{ .postgres = try PostgresDb.open(allocator, conninfo) };
+        },
+        .mysql => {
+            var cfg = try buildMyConfig(allocator);
+            defer cfg.deinit(allocator);
+            const pw: ?[:0]const u8 = if (cfg.password.len > 0) cfg.password else null;
+            return ZfDb{ .mysql = try MySqlDb.open(allocator, cfg.host, cfg.port, cfg.user, pw, cfg.database) };
+        },
+    }
+}
+
+test "ZfDb helpers compile and default to SQLite" {
+    const allocator = std.testing.allocator;
+    const escaped = try escapeSqlString(allocator, "it's a test");
+    defer allocator.free(escaped);
+    try std.testing.expectEqualStrings("it''s a test", escaped);
+    try std.testing.expect(driverTagFromEnv() == .sqlite);
+}
+
+/// Apply all pending migrations. Driver and connection details are read from
+/// environment variables (see `openZfinalDb`).
+fn migrateRun(allocator: std.mem.Allocator) !void {
+    var db = try openZfinalDb(allocator);
+    defer db.deinit();
+
+    try db.ensureMigrationsTable();
     try applyMigrations(allocator, db, "migrations", false);
 }
 
 /// Revert the most recent migration.
 fn migrateDown(allocator: std.mem.Allocator) !void {
-    const db_path = "zf.db";
-    var db: ?*sqlite_c.sqlite3 = null;
-    const rc = sqlite_c.sqlite3_open(db_path.ptr, &db);
-    if (rc != sqlite_c.SQLITE_OK) {
-        std.debug.print("Failed to open database: {s}\n", .{db_path});
-        return;
-    }
-    defer _ = sqlite_c.sqlite3_close(db);
+    var db = try openZfinalDb(allocator);
+    defer db.deinit();
 
-    try ensureMigrationsTable(db);
+    try db.ensureMigrationsTable();
     try applyMigrations(allocator, db, "migrations", true);
 }
 
 /// Print applied + pending migrations.
 fn migrateStatus(allocator: std.mem.Allocator) !void {
-    const db_path = "zf.db";
-    var db: ?*sqlite_c.sqlite3 = null;
-    const rc = sqlite_c.sqlite3_open(db_path.ptr, &db);
-    if (rc != sqlite_c.SQLITE_OK) {
-        std.debug.print("Failed to open database: {s}\n", .{db_path});
-        return;
-    }
-    defer _ = sqlite_c.sqlite3_close(db);
+    var db = try openZfinalDb(allocator);
+    defer db.deinit();
 
-    try ensureMigrationsTable(db);
+    try db.ensureMigrationsTable();
     try printMigrationStatus(allocator, db, "migrations");
 }
 
@@ -1075,73 +1653,36 @@ fn seedNew(allocator: std.mem.Allocator, name: []const u8) !void {
 
 /// Apply all pending seeds.
 fn seedRun(allocator: std.mem.Allocator) !void {
-    const db_path = "zf.db";
-    var db: ?*sqlite_c.sqlite3 = null;
-    const rc = sqlite_c.sqlite3_open(db_path.ptr, &db);
-    if (rc != sqlite_c.SQLITE_OK) {
-        std.debug.print("Failed to open database: {s}\n", .{db_path});
-        return;
-    }
-    defer _ = sqlite_c.sqlite3_close(db);
+    var db = try openZfinalDb(allocator);
+    defer db.deinit();
 
-    try ensureSeedsTable(db);
+    try db.ensureSeedsTable();
     try applySeeds(allocator, db, "seeds");
 }
 
 /// Show applied + pending seeds.
 fn seedList(allocator: std.mem.Allocator) !void {
-    const db_path = "zf.db";
-    var db: ?*sqlite_c.sqlite3 = null;
-    const rc = sqlite_c.sqlite3_open(db_path.ptr, &db);
-    if (rc != sqlite_c.SQLITE_OK) {
-        std.debug.print("Failed to open database: {s}\n", .{db_path});
-        return;
-    }
-    defer _ = sqlite_c.sqlite3_close(db);
+    var db = try openZfinalDb(allocator);
+    defer db.deinit();
 
-    try ensureSeedsTable(db);
+    try db.ensureSeedsTable();
     try printSeedStatus(allocator, db, "seeds");
 }
 
 /// Reset the seeds tracking table — allows re-running all seeds.
 fn seedReset(allocator: std.mem.Allocator) !void {
-    const db_path = "zf.db";
-    var db: ?*sqlite_c.sqlite3 = null;
-    const rc = sqlite_c.sqlite3_open(db_path.ptr, &db);
-    if (rc != sqlite_c.SQLITE_OK) {
-        std.debug.print("Failed to open database: {s}\n", .{db_path});
-        return;
-    }
-    defer _ = sqlite_c.sqlite3_close(db);
-    _ = allocator;
+    var db = try openZfinalDb(allocator);
+    defer db.deinit();
     const drop_sql = "DELETE FROM _zfinal_seeds;";
-    if (sqlite_c.sqlite3_exec(db, drop_sql.ptr, null, null, null) == sqlite_c.SQLITE_OK) {
-        std.debug.print("✓ Seeds tracking reset. Run `zf seed run` to re-apply.\n", .{});
-    } else {
-        const e = sqlite_c.sqlite3_errmsg(db);
-        std.debug.print("✗ Reset failed: {s}\n", .{if (e) |s| std.mem.sliceTo(s, 0) else "(unknown)"});
-    }
-}
-
-/// Create _zfinal_seeds tracking table.
-fn ensureSeedsTable(db: ?*sqlite_c.sqlite3) !void {
-    const sql =
-        \\CREATE TABLE IF NOT EXISTS _zfinal_seeds (
-        \\  name TEXT PRIMARY KEY,
-        \\  filename TEXT NOT NULL,
-        \\  applied_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        \\  checksum INTEGER NOT NULL
-        \\);
-    ;
-    var err_msg: [*c]u8 = null;
-    if (sqlite_c.sqlite3_exec(db, sql.ptr, null, null, &err_msg) != sqlite_c.SQLITE_OK) {
-        std.debug.print("ensureSeedsTable error\n", .{});
-        return error.SeedInitFailed;
-    }
+    db.exec(drop_sql) catch {
+        std.debug.print("✗ Reset failed.\n", .{});
+        return error.SeedResetFailed;
+    };
+    std.debug.print("✓ Seeds tracking reset. Run `zf seed run` to re-apply.\n", .{});
 }
 
 /// Apply pending seeds in `dir` (sorted by filename = timestamp prefix).
-fn applySeeds(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, dir: []const u8) !void {
+fn applySeeds(allocator: std.mem.Allocator, db: ZfDb, dir: []const u8) !void {
     var d = std.Io.Dir.cwd().openDir(io, dir, .{}) catch {
         std.debug.print("⚠️  seeds dir not found: {s}\n", .{dir});
         return;
@@ -1179,25 +1720,18 @@ fn applySeeds(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, dir: []const
         defer allocator.free(sql_z);
         @memcpy(sql_z, content);
         std.debug.print("  → seeding {s}\n", .{name_no_ext});
-        var err_msg: [*c]u8 = null;
-        if (sqlite_c.sqlite3_exec(db, sql_z.ptr, null, null, &err_msg) != sqlite_c.SQLITE_OK) {
-            const e: [*c]const u8 = err_msg orelse "(no message)";
-            std.debug.print("  ✗ failed: {s} — {s}\n", .{ name_no_ext, e });
+        db.exec(sql_z) catch {
+            std.debug.print("  ✗ failed: {s}\n", .{name_no_ext});
             return error.SeedApplyFailed;
-        }
+        };
         const checksum = std.hash.Crc32.hash(content);
-        const record_sql =
-            \\INSERT INTO _zfinal_seeds (name, filename, checksum)
-            \\VALUES (?, ?, ?);
-        ;
-        var stmt: ?*sqlite_c.sqlite3_stmt = null;
-        if (sqlite_c.sqlite3_prepare_v2(db, record_sql.ptr, -1, &stmt, null) == sqlite_c.SQLITE_OK) {
-            _ = sqlite_c.sqlite3_bind_text(stmt, 1, name_no_ext.ptr, @intCast(name_no_ext.len), null);
-            _ = sqlite_c.sqlite3_bind_text(stmt, 2, name.ptr, @intCast(name.len), null);
-            _ = sqlite_c.sqlite3_bind_int64(stmt, 3, @intCast(checksum));
-            _ = sqlite_c.sqlite3_step(stmt);
-            _ = sqlite_c.sqlite3_finalize(stmt);
-        }
+        const escaped_name = try escapeSqlString(allocator, name_no_ext);
+        defer allocator.free(escaped_name);
+        const escaped_filename = try escapeSqlString(allocator, name);
+        defer allocator.free(escaped_filename);
+        const record_sql = try formatSqlZ(allocator, "INSERT INTO _zfinal_seeds (name, filename, checksum) VALUES ('{s}', '{s}', {d});", .{ escaped_name, escaped_filename, checksum });
+        defer allocator.free(record_sql);
+        try db.exec(record_sql);
         std.debug.print("  ✓ seeded {s}\n", .{name_no_ext});
         applied_count += 1;
     }
@@ -1205,22 +1739,16 @@ fn applySeeds(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, dir: []const
 }
 
 /// Check if a seed name has already been applied.
-fn seedApplied(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, name: []const u8) !bool {
-    var buf: [256]u8 = undefined;
-    if (name.len > buf.len) return false;
-    @memcpy(buf[0..name.len], name);
-    buf[name.len] = 0;
-    _ = allocator;
-    const sql = "SELECT 1 FROM _zfinal_seeds WHERE name = ?;";
-    var stmt: ?*sqlite_c.sqlite3_stmt = null;
-    if (sqlite_c.sqlite3_prepare_v2(db, sql.ptr, -1, &stmt, null) != sqlite_c.SQLITE_OK) return false;
-    defer _ = sqlite_c.sqlite3_finalize(stmt);
-    _ = sqlite_c.sqlite3_bind_text(stmt, 1, &buf, @intCast(name.len), null);
-    return sqlite_c.sqlite3_step(stmt) == sqlite_c.SQLITE_ROW;
+fn seedApplied(allocator: std.mem.Allocator, db: ZfDb, name: []const u8) !bool {
+    const escaped = try escapeSqlString(allocator, name);
+    defer allocator.free(escaped);
+    const sql = try formatSqlZ(allocator, "SELECT 1 FROM _zfinal_seeds WHERE name = '{s}';", .{escaped});
+    defer allocator.free(sql);
+    return try db.queryExists(sql);
 }
 
 /// Show applied (✓) and pending (○) seeds.
-fn printSeedStatus(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, dir: []const u8) !void {
+fn printSeedStatus(allocator: std.mem.Allocator, db: ZfDb, dir: []const u8) !void {
     std.debug.print("\n── Seeds Status ──\n", .{});
     var d = std.Io.Dir.cwd().openDir(io, dir, .{}) catch {
         std.debug.print("⚠️  seeds dir not found: {s}\n", .{dir});
@@ -1260,27 +1788,8 @@ fn printSeedStatus(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, dir: []
     if (pending > 0) std.debug.print("Run `zf seed run` to apply.\n", .{});
 }
 
-/// Create the _zfinal_migrations tracking table if missing.
-fn ensureMigrationsTable(db: ?*sqlite_c.sqlite3) !void {
-    const sql =
-        \\CREATE TABLE IF NOT EXISTS _zfinal_migrations (
-        \\  version TEXT PRIMARY KEY,
-        \\  filename TEXT NOT NULL,
-        \\  applied_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        \\  checksum INTEGER NOT NULL
-        \\);
-    ;
-    var err_msg: [*c]u8 = null;
-    const rc = sqlite_c.sqlite3_exec(db, sql.ptr, null, null, &err_msg);
-    if (rc != sqlite_c.SQLITE_OK) {
-        const e: [*c]const u8 = err_msg orelse "(no message)";
-        std.debug.print("ensureMigrationsTable error: {s}\n", .{e});
-        return error.MigrationInitFailed;
-    }
-}
-
 /// Apply or revert all migrations in `dir` (sorted by timestamp prefix).
-fn applyMigrations(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, dir: []const u8, revert: bool) !void {
+fn applyMigrations(allocator: std.mem.Allocator, db: ZfDb, dir: []const u8, revert: bool) !void {
     var d = std.Io.Dir.cwd().openDir(io, dir, .{}) catch {
         std.debug.print("⚠️  migrations dir not found: {s}\n", .{dir});
         return;
@@ -1324,26 +1833,18 @@ fn applyMigrations(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, dir: []
             defer allocator.free(sql_z);
             @memcpy(sql_z, up_sql);
             std.debug.print("  → applying {s}\n", .{version_trimmed});
-            var err_msg: [*c]u8 = null;
-            const exec_rc = sqlite_c.sqlite3_exec(db, sql_z.ptr, null, null, &err_msg);
-            if (exec_rc != sqlite_c.SQLITE_OK) {
-                const e: [*c]const u8 = err_msg orelse "(no message)";
-                std.debug.print("  ✗ failed: {s} — {s}\n", .{ version_trimmed, e });
+            db.exec(sql_z) catch {
+                std.debug.print("  ✗ failed: {s}\n", .{version_trimmed});
                 return error.MigrationApplyFailed;
-            }
+            };
             const checksum = std.hash.Crc32.hash(up_sql);
-            const record_sql =
-                \\INSERT INTO _zfinal_migrations (version, filename, checksum)
-                \\VALUES (?, ?, ?);
-            ;
-            var stmt: ?*sqlite_c.sqlite3_stmt = null;
-            if (sqlite_c.sqlite3_prepare_v2(db, record_sql.ptr, -1, &stmt, null) == sqlite_c.SQLITE_OK) {
-                _ = sqlite_c.sqlite3_bind_text(stmt, 1, version_trimmed.ptr, @intCast(version_trimmed.len), null);
-                _ = sqlite_c.sqlite3_bind_text(stmt, 2, version.ptr, @intCast(version.len), null);
-                _ = sqlite_c.sqlite3_bind_int64(stmt, 3, @intCast(checksum));
-                _ = sqlite_c.sqlite3_step(stmt);
-                _ = sqlite_c.sqlite3_finalize(stmt);
-            }
+            const escaped_version = try escapeSqlString(allocator, version_trimmed);
+            defer allocator.free(escaped_version);
+            const escaped_filename = try escapeSqlString(allocator, version);
+            defer allocator.free(escaped_filename);
+            const record_sql = try formatSqlZ(allocator, "INSERT INTO _zfinal_migrations (version, filename, checksum) VALUES ('{s}', '{s}', {d});", .{ escaped_version, escaped_filename, checksum });
+            defer allocator.free(record_sql);
+            try db.exec(record_sql);
             std.debug.print("  ✓ applied  {s}\n", .{version_trimmed});
         }
     } else {
@@ -1363,24 +1864,21 @@ fn applyMigrations(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, dir: []
         defer allocator.free(down_z);
         @memcpy(down_z, down_sql);
         std.debug.print("  ← reverting {s}\n", .{latest.version});
-        if (sqlite_c.sqlite3_exec(db, down_z.ptr, null, null, null) != sqlite_c.SQLITE_OK) {
-            const err = sqlite_c.sqlite3_errmsg(db);
-            std.debug.print("  ✗ revert failed: {s}\n", .{if (err) |e| std.mem.sliceTo(e, 0) else "(no message)"});
+        db.exec(down_z) catch {
+            std.debug.print("  ✗ revert failed: {s}\n", .{latest.version});
             return error.MigrationRevertFailed;
-        }
-        const del_sql = "DELETE FROM _zfinal_migrations WHERE version = ?;";
-        var stmt: ?*sqlite_c.sqlite3_stmt = null;
-        if (sqlite_c.sqlite3_prepare_v2(db, del_sql.ptr, -1, &stmt, null) == sqlite_c.SQLITE_OK) {
-            _ = sqlite_c.sqlite3_bind_text(stmt, 1, latest.version.ptr, @intCast(latest.version.len), null);
-            _ = sqlite_c.sqlite3_step(stmt);
-            _ = sqlite_c.sqlite3_finalize(stmt);
-        }
+        };
+        const escaped_version = try escapeSqlString(allocator, latest.version);
+        defer allocator.free(escaped_version);
+        const del_sql = try formatSqlZ(allocator, "DELETE FROM _zfinal_migrations WHERE version = '{s}';", .{escaped_version});
+        defer allocator.free(del_sql);
+        try db.exec(del_sql);
         std.debug.print("  ✓ reverted {s}\n", .{latest.version});
     }
 }
 
 /// Show applied (✓) and pending (○) migrations.
-fn printMigrationStatus(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, dir: []const u8) !void {
+fn printMigrationStatus(allocator: std.mem.Allocator, db: ZfDb, dir: []const u8) !void {
     var d = std.Io.Dir.cwd().openDir(io, dir, .{}) catch {
         std.debug.print("⚠️  migrations dir not found: {s}\n", .{dir});
         return;
@@ -1426,44 +1924,36 @@ fn printMigrationStatus(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, di
 }
 
 /// Check if a migration version is already applied.
-fn migrationApplied(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3, version: []const u8) !bool {
-    _ = allocator;
-    // Use a sentinel-terminated copy of version for safe bind_text.
-    var buf: [256]u8 = undefined;
-    if (version.len > buf.len) return false;
-    @memcpy(buf[0..version.len], version);
-    buf[version.len] = 0;
-    const sql = "SELECT 1 FROM _zfinal_migrations WHERE version = ?;";
-    var stmt: ?*sqlite_c.sqlite3_stmt = null;
-    if (sqlite_c.sqlite3_prepare_v2(db, sql.ptr, -1, &stmt, null) != sqlite_c.SQLITE_OK) return false;
-    defer _ = sqlite_c.sqlite3_finalize(stmt);
-    _ = sqlite_c.sqlite3_bind_text(stmt, 1, &buf, @intCast(version.len), null);
-    return sqlite_c.sqlite3_step(stmt) == sqlite_c.SQLITE_ROW;
+fn migrationApplied(allocator: std.mem.Allocator, db: ZfDb, version: []const u8) !bool {
+    const escaped = try escapeSqlString(allocator, version);
+    defer allocator.free(escaped);
+    const sql = try formatSqlZ(allocator, "SELECT 1 FROM _zfinal_migrations WHERE version = '{s}';", .{escaped});
+    defer allocator.free(sql);
+    return try db.queryExists(sql);
 }
 
 const AppliedMigration = struct { version: []const u8, filename: []const u8, _owned: []u8 };
 
 /// Find the most recently applied migration (latest version).
 /// Caller must free `result._owned` after use.
-fn findLatestApplied(allocator: std.mem.Allocator, db: ?*sqlite_c.sqlite3) !?AppliedMigration {
-    const sql = "SELECT version, filename FROM _zfinal_migrations ORDER BY applied_at DESC LIMIT 1;";
-    var stmt: ?*sqlite_c.sqlite3_stmt = null;
-    if (sqlite_c.sqlite3_prepare_v2(db, sql.ptr, -1, &stmt, null) != sqlite_c.SQLITE_OK) return null;
-    defer _ = sqlite_c.sqlite3_finalize(stmt);
-    if (sqlite_c.sqlite3_step(stmt) != sqlite_c.SQLITE_ROW) return null;
-    const version_src = sqlite_c.sqlite3_column_text(stmt, 0) orelse return null;
-    const filename_src = sqlite_c.sqlite3_column_text(stmt, 1) orelse return null;
-    const version_slice = std.mem.sliceTo(version_src, 0);
-    const filename_slice = std.mem.sliceTo(filename_src, 0);
-    const version_len: usize = version_slice.len;
-    const filename_len: usize = filename_slice.len;
-    const owned = try allocator.alloc(u8, version_len + filename_len + 1);
-    @memcpy(owned[0..version_len], version_src[0..version_len]);
-    @memcpy(owned[version_len .. version_len + filename_len], filename_src[0..filename_len]);
-    owned[version_len + filename_len] = 0;
+fn findLatestApplied(allocator: std.mem.Allocator, db: ZfDb) !?AppliedMigration {
+    const version_sql = "SELECT version FROM _zfinal_migrations ORDER BY applied_at DESC LIMIT 1;";
+    const filename_sql = "SELECT filename FROM _zfinal_migrations ORDER BY applied_at DESC LIMIT 1;";
+    const version = (try db.queryText(allocator, version_sql)) orelse return null;
+    errdefer allocator.free(version);
+    const filename = (try db.queryText(allocator, filename_sql)) orelse {
+        allocator.free(version);
+        return null;
+    };
+    const owned = try allocator.alloc(u8, version.len + filename.len + 1);
+    @memcpy(owned[0..version.len], version);
+    @memcpy(owned[version.len .. version.len + filename.len], filename);
+    owned[version.len + filename.len] = 0;
+    allocator.free(version);
+    allocator.free(filename);
     return .{
-        .version = owned[0..version_len],
-        .filename = owned[version_len..][0..filename_len],
+        .version = owned[0..version.len],
+        .filename = owned[version.len..][0..filename.len],
         ._owned = owned,
     };
 }
@@ -2434,7 +2924,7 @@ fn bootstrapProject(allocator: std.mem.Allocator) !void {
     const cwd = std.Io.Dir.cwd();
 
     // build.zig
-    const build_zig_content = try std.fmt.allocPrint(allocator, templates.build_zig, .{ "../zfinal/src/main.zig", "app" });
+    const build_zig_content = try std.fmt.allocPrint(allocator, templates.build_zig, .{"app"});
     defer allocator.free(build_zig_content);
     try writeFile(cwd, "build.zig", build_zig_content);
 

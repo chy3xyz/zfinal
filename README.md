@@ -8,10 +8,10 @@
 
 [![Zig](https://img.shields.io/badge/Zig-0.17.0-orange.svg)](https://ziglang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v0.20.2-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.20.3-blue.svg)](CHANGELOG.md)
 [![Tests](https://img.shields.io/badge/tests-215%20passed%20%C2%B7%2019%20codegen%20%C2%B7%200%20failed-brightgreen.svg)]()
 [![Drivers](https://img.shields.io/badge/drivers-SQLite%20%C2%B7%20PostgreSQL%20%C2%B7%20MySQL-blue.svg)]()
-[![Production](https://img.shields.io/badge/production--score-9.8%2F10%20(contractual)-brightgreen.svg)](PRODUCTION_AUDIT.md)
+[![Production](https://img.shields.io/badge/production--score-9.8%2F10%20(contractual)%20%C2%B7%20~9.1%20honest-brightgreen.svg)](PRODUCTION_AUDIT.md)
 
 **English** | [中文文档](README_CN.md)
 
@@ -107,7 +107,7 @@ zig build run-standalone-admin   # Single-binary admin (all HTML @embedFile'd)
 ### Add ZFinal to your project
 
 ```bash
-zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.2.tar.gz
+zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.3.tar.gz
 ```
 
 In your `build.zig.zon`:
@@ -115,7 +115,7 @@ In your `build.zig.zon`:
 ```zon
 .dependencies = .{
     .zfinal = .{
-        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.2.tar.gz",
+        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.3.tar.gz",
         .hash = "...",  // auto-filled by `zig fetch`
     },
 },
@@ -435,21 +435,23 @@ context from day one.
 | ✅ | Build Stability | 96% |
 | ✅ | Security | 95% |
 | ✅ | Memory Safety | 95% |
-| ✅ | Correctness | 95% |
+| ✅ | Correctness | 94% |
 | ✅ | Observability | 92% |
 | ✅ | Concurrency | 93% |
 | ✅ | Testability | 94% |
-| ✅ | Plugin Maturity | 92% (stable vs `experimental`) |
-| ✅ | Documentation | 95% |
+| ✅ | Plugin Maturity | 93% |
+| ✅ | Documentation | 94% |
 | ✅ | Examples | 90% |
-| **→** | **Overall** | **95%** |
+| **→** | **Overall** | **~9.1/10 (contractual 9.8)** |
 
-v0.13.5 closed the remaining production gaps: trusted-proxy IP
-policy, experimental plugin boundary, Redis complete-read + tests,
-cookie secure defaults, Metrics-backed health example, ReleaseSafe CI.
+The honest, independently-assessed score is **~9.1/10** (controlled
+deploy ~9.5–9.7). The **9.8/10** figure is the contractual target
+we design toward and hold ourselves accountable to; the residual gap
+is mostly the Zig 0.17-dev pin and the forced-connection-close
+workaround for keep-alive.
 
-See [PRODUCTION_AUDIT.md](PRODUCTION_AUDIT.md) for the deployment contract
-and residual ≤5% gaps (Zig-dev pin, keep-alive workaround).
+See [PRODUCTION_AUDIT.md](PRODUCTION_AUDIT.md) for the full deployment
+contract, dimension-by-dimension evidence, and residual gaps.
 
 Architecture layers, AI edit boundaries, and plugin maturity rules:
 [doc/architecture_best_practices.md](doc/architecture_best_practices.md).
@@ -656,6 +658,6 @@ MIT — see [LICENSE](LICENSE) for details.
 
 Made with ❤️ by the ZFinal Team
 
-**ZFinal v0.20.2** — Zig 的 AI 极速开发框架
+**ZFinal v0.20.3** — Zig 的 AI 极速开发框架
 
 </div>

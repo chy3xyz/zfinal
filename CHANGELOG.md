@@ -1,3 +1,16 @@
+## [0.20.3] - 2026-07-22
+
+### Added
+- **`zf new` now generates standalone projects** that depend on the remote zfinal tarball (`https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.3.tar.gz`) instead of a local relative path. Generated `build.zig` uses `b.dependency("zfinal", ...)` and the driver option names (`driver_pg` / `driver_mysql`) match the framework's `build.zig`.
+- **`zf migrate` / `zf seed` multi-driver support**: the CLI now supports SQLite, PostgreSQL, and MySQL for migration and seed operations. Driver selection is controlled by the `ZFINAL_DB_TYPE` environment variable (`sqlite`, `postgres`/`pg`, `mysql`/`my`; default `sqlite`).
+  - SQLite: `ZFINAL_DB_PATH` (default `zf.db`).
+  - PostgreSQL: `ZFINAL_PG_DSN` or `ZF_PG_HOST/PORT/USER/PASSWORD/DATABASE`.
+  - MySQL: `ZFINAL_MY_DSN` or `ZF_MY_HOST/PORT/USER/PASSWORD/DATABASE`.
+- Internal `ZfDb` abstraction in `tools/zf/main.zig` unifies `exec`, `queryExists`, `queryText`, and tracking-table creation across the three drivers.
+
+### Fixed
+- **Zig 0.17-dev API compatibility**: updated `Metrics.recordError` to acquire `error_mutex` via `std.Io.Mutex.lockUncancelable`/`unlock` with the global Io instance, and rewrote the server's `TimedWriter` to use the new `Writer.VTable.drain` + `Io.vtable.netWrite` path after `Operation.net_write` was removed from the standard library. This restores compilation on the latest Zig 0.17.0-dev snapshots.
+
 ## [0.20.2] - 2026-07-22
 
 ### Added

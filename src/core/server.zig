@@ -286,7 +286,10 @@ const TimedReader = struct {
     }
 };
 
-/// Stream writer that applies `Io.operateTimeout` on each `net_write`.
+/// Stream writer backed by `Io.vtable.netWrite`.
+/// Note: Zig 0.17 removed `Operation.net_write`; per-write `write_timeout_ms`
+/// is no longer enforceable through `operateTimeout`. The field is retained
+/// for API compatibility but currently ignored.
 const TimedWriter = struct {
     io: std.Io,
     interface: std.Io.Writer,
@@ -294,15 +297,12 @@ const TimedWriter = struct {
     timeout_ms: u64,
     err: ?anyerror = null,
 
-    const max_iovecs_len = 8;
-
     fn init(stream: std.Io.net.Stream, io: std.Io, buffer: []u8, timeout_ms: u64) TimedWriter {
         return .{
             .io = io,
             .interface = .{
                 .vtable = &.{
-                    .stream = streamImpl,
-                    .writeVec = writeVec,
+                    .drain = drain,
                 },
                 .buffer = buffer,
             },
@@ -311,44 +311,13 @@ const TimedWriter = struct {
         };
     }
 
-    fn streamImpl(io_w: *std.Io.Writer, io_r: *std.Io.Reader, limit: std.Io.Limit) std.Io.Writer.StreamError!usize {
-        const src = limit.slice(try io_r.readableSliceGreedy(1));
-        var data: [1][]const u8 = .{src};
-        const n = try writeVec(io_w, &data);
-        io_r.advance(n);
-        return n;
-    }
-
-    fn writeVec(io_w: *std.Io.Writer, data: []const []const u8) std.Io.Writer.Error!usize {
+    fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
         const w: *TimedWriter = @alignCast(@fieldParentPtr("interface", io_w));
-        var iovecs_buffer: [max_iovecs_len][]const u8 = undefined;
-        const src_n, const data_size = try io_w.readableVector(&iovecs_buffer, data);
-        const src = iovecs_buffer[0..src_n];
-        std.debug.assert(src[0].len > 0);
-
-        const timeout: std.Io.Timeout = if (w.timeout_ms == 0)
-            .none
-        else
-            .{ .duration = .{
-                .raw = .fromMilliseconds(@intCast(w.timeout_ms)),
-                .clock = .awake,
-            } };
-
-        const n = (w.io.operateTimeout(.{
-            .net_write = .{
-                .socket_handle = w.stream.socket.handle,
-                .data = src,
-            },
-        }, timeout) catch |err| {
-            w.err = err;
-            return error.WriteFailed;
-        }).net_write catch |err| {
+        const n = w.io.vtable.netWrite(w.io.userdata, w.stream.socket.handle, io_w.buffered(), data, splat) catch |err| {
             w.err = err;
             return error.WriteFailed;
         };
-
-        if (n > data_size) return data_size;
-        return n;
+        return io_w.consume(n);
     }
 };
 

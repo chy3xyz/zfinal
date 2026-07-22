@@ -8,23 +8,18 @@ pub const build_zig =
     \\    const target = b.standardTargetOptions(.{{}});
     \\    const optimize = b.standardOptimizeOption(.{{}});
     \\
-    \\    // ZFinal framework — addModule directly (same build graph, no sub-build)
-    \\    const zfinal_mod = b.addModule("zfinal", .{{
-    \\        .root_source_file = b.path("{s}"),
+    \\    // Driver options (match zfinal's build.zig option names)
+    \\    const use_mysql = b.option(bool, "driver_mysql", "Enable MySQL driver (libmysqlclient)") orelse false;
+    \\    const use_pg = b.option(bool, "driver_pg", "Enable PostgreSQL driver (libpq)") orelse false;
+    \\
+    \\    // Remote zfinal dependency — projects are standalone, not tied to a local clone
+    \\    const zfinal_dep = b.dependency("zfinal", .{{
     \\        .target = target,
     \\        .optimize = optimize,
+    \\        .driver_pg = use_pg,
+    \\        .driver_mysql = use_mysql,
     \\    }});
-    \\    zfinal_mod.link_libc = true;
-    \\    zfinal_mod.linkSystemLibrary("sqlite3", .{{}});
-    \\
-    \\    // Inject driver options into zfinal's build_options
-    \\    const use_mysql = b.option(bool, "driver-mysql", "Enable MySQL driver (libmysqlclient)") orelse false;
-    \\    const use_pg = b.option(bool, "driver-pg", "Enable PostgreSQL driver (libpq)") orelse false;
-    \\    const zfinal_opts = b.addOptions();
-    \\    zfinal_opts.addOption([]const u8, "log_level", "info");
-    \\    zfinal_opts.addOption(bool, "enable_mysql", use_mysql);
-    \\    zfinal_opts.addOption(bool, "enable_pg", use_pg);
-    \\    zfinal_mod.addImport("build_options", zfinal_opts.createModule());
+    \\    const zfinal_mod = zfinal_dep.module("zfinal");
     \\
     \\    const exe_mod = b.createModule(.{{
     \\        .root_source_file = b.path("src/main.zig"),
@@ -33,6 +28,7 @@ pub const build_zig =
     \\        .imports = &.{{.{{ .name = "zfinal", .module = zfinal_mod }}}},
     \\    }});
     \\    exe_mod.link_libc = true;
+    \\    exe_mod.linkSystemLibrary("sqlite3", .{{}});
     \\    if (use_mysql) exe_mod.linkSystemLibrary("mysqlclient", .{{}});
     \\    if (use_pg) exe_mod.linkSystemLibrary("pq", .{{}});
     \\
@@ -61,7 +57,12 @@ pub const build_zig_zon =
     \\    .version = "0.1.0",
     \\    .fingerprint = 0xd3da709fcd7fc3,
     \\    .minimum_zig_version = "0.17.0",
-    \\    .dependencies = .{{}},
+    \\    .dependencies = .{{
+    \\        .zfinal = .{{
+    \\            .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.3.tar.gz",
+    \\            .hash = "...", // run `zig fetch <url>` to fill the actual hash
+    \\        }},
+    \\    }},
     \\    .paths = .{{
     \\        "build.zig",
     \\        "build.zig.zon",
