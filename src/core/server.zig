@@ -320,14 +320,35 @@ fn dispatch(request: *http.Server.Request, server: *Server) !void {
 
     var ctx = Context.init(request, server.allocator);
     ctx.max_body_size = server.config.max_body_size;
+    // Set the per-request deadline up front. Handlers / dispatch loops
+    // can check `ctx.isExpired()` to bail out of long work.
+    if (server.config.request_timeout_ms > 0) {
+        ctx.setTimeoutMs(server.config.request_timeout_ms);
+    }
     defer ctx.deinit();
 
+    // Check deadline once before invoking handler — fast path for
+    // already-expired requests (e.g. clock skew, very fast 504).
+    if (ctx.isExpired()) {
+        getLog().warnFmt("Request already past deadline at dispatch: {s} {s}", .{ @tagName(request.head.method), target });
+        ctx.res_status = .request_timeout;
+        ctx.renderText("Request Timeout") catch {};
+        if (server.metrics) |m| m.recordRequest(@intFromEnum(ctx.res_status));
+        return;
+    }
+
     server.router.execute(path, method, &ctx) catch |err| {
-        getLog().errFmt("Handler error: {} for {s} {s}", .{ err, @tagName(request.head.method), target });
-        ctx.res_status = .internal_server_error;
-        ctx.renderText("Internal Server Error") catch |render_err| {
-            getLog().warnFmt("Failed to render 500 response: {t}", .{render_err});
-        };
+        if (ctx.isExpired()) {
+            getLog().warnFmt("Request timed out in handler: {s} {s}", .{ @tagName(request.head.method), target });
+            ctx.res_status = .request_timeout;
+            ctx.renderText("Request Timeout") catch {};
+        } else {
+            getLog().errFmt("Handler error: {} for {s} {s}", .{ err, @tagName(request.head.method), target });
+            ctx.res_status = .internal_server_error;
+            ctx.renderText("Internal Server Error") catch |render_err| {
+                getLog().warnFmt("Failed to render 500 response: {t}", .{render_err});
+            };
+        }
         if (server.metrics) |m| {
             m.recordError(@errorName(err), path);
         }

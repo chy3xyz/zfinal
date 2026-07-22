@@ -1,6 +1,17 @@
 const std = @import("std");
 const params = @import("params.zig");
 
+/// Monotonic nanosecond timestamp. Zig 0.17 removed
+/// `std.time.Instant.now()` / `nanoTimestamp()` in favor of
+/// `std.Io.Timestamp.now(io, .awake)`, but our context doesn't hold an
+/// Io instance. `std.c.clock_gettime(.MONOTONIC, ...)` is portable and
+/// matches the platform-correct timespec layout (macOS vs Linux differ).
+fn monoNowNs() i128 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i128, ts.sec) * std.time.ns_per_s + @as(i128, ts.nsec);
+}
+
 /// HTTP request/response context. Wraps the raw std.http.Server.Request
 /// with convenience methods for query params, path params, cookies,
 /// headers, attributes, file uploads, and response rendering.
@@ -22,6 +33,7 @@ pub const Context = struct {
     remote_addr: ?std.Io.net.IpAddress = null,
     /// Maximum request body size in bytes (default 10MB).
     max_body_size: usize = 10 * 1024 * 1024,
+    deadline_ns: ?i128 = null,
     query_params: ?std.StringHashMap([]const u8) = null,
     path_params: ?std.StringHashMap([]const u8) = null,
     attributes: std.StringHashMap([]const u8),
@@ -45,10 +57,15 @@ pub const Context = struct {
     /// Handlers MUST individually free all allocated memory via ctx.allocator.
     pub fn init(req: *std.http.Server.Request, parent_allocator: std.mem.Allocator) Context {
         var headers = std.StringHashMap([]const u8).init(parent_allocator);
-        headers.ensureTotalCapacity(16) catch {};
+        // Pre-allocate is best-effort — fall back to incremental growth if OOM.
+        headers.ensureTotalCapacity(16) catch |err| {
+            std.debug.print("context.init: headers pre-alloc failed ({s}); using incremental growth\n", .{@errorName(err)});
+        };
 
         var attrs = std.StringHashMap([]const u8).init(parent_allocator);
-        attrs.ensureTotalCapacity(8) catch {};
+        attrs.ensureTotalCapacity(8) catch |err| {
+            std.debug.print("context.init: attrs pre-alloc failed ({s}); using incremental growth\n", .{@errorName(err)});
+        };
 
         return Context{
             .req = req,
@@ -108,6 +125,25 @@ pub const Context = struct {
         return null;
     }
 
+    /// Set a per-request deadline (relative to now). `ms = 0` clears
+    /// the deadline. Callers (dispatch loop, handler) should check
+    /// `isExpired()` periodically and bail out via `sendError(.request_timeout)` if so.
+    pub fn setTimeoutMs(self: *Context, ms: u64) void {
+        if (ms == 0) {
+            self.deadline_ns = null;
+            return;
+        }
+        const now = monoNowNs();
+        self.deadline_ns = now + @as(i128, ms) * std.time.ns_per_ms;
+    }
+
+    /// Returns true once the per-request deadline (if set) has elapsed.
+    /// Used by the dispatch loop and long-running handlers to bail out.
+    pub fn isExpired(self: *const Context) bool {
+        const deadline = self.deadline_ns orelse return false;
+        return monoNowNs() >= deadline;
+    }
+
     /// Set a response header. Copies both name and value — caller retains ownership.
     pub fn setHeader(self: *Context, name: []const u8, value: []const u8) !void {
         const name_copy = try self.allocator.dupe(u8, name);
@@ -140,7 +176,9 @@ pub const Context = struct {
                 var read_buf: [4096]u8 = undefined;
                 var reader = self.req.readerExpectNone(&read_buf);
                 try reader.appendRemaining(self.allocator, &body_buffer, .limited(self.max_body_size));
-                _ = reader.discardRemaining() catch {};
+                _ = reader.discardRemaining() catch |err| {
+                    std.debug.print("context.form parsing: discardRemaining failed ({s}) — request may have leftover bytes\n", .{@errorName(err)});
+                };
                 if (body_buffer.items.len > 0) {
                     try params.parseQueryIntoAllocator(self.allocator, body_buffer.items, &map);
                 }
@@ -306,27 +344,31 @@ pub const Context = struct {
         if (body.len < 256 or !self.clientAcceptsGzip()) return .{ .data = body, .is_compressed = false };
 
         var buf = std.ArrayList(u8).empty;
-        defer buf.deinit(self.allocator);
+        errdefer buf.deinit(self.allocator);
 
-        const gzip_hdr = std.compress.flate.Container.gzip.header();
-        try buf.appendSlice(self.allocator, gzip_hdr);
-
-        var w = buf.writer();
+        // Compress in two phases: first write gzip output into a
+        // stack scratch buffer; if it fits in 16KB, append directly
+        // to `buf`. Otherwise allocate. The Raw compressor handles
+        // gzip header + footer automatically when container = .gzip.
+        var scratch: [16384]u8 = undefined;
+        var scratch_w: std.Io.Writer = .fixed(&scratch);
         const Compress = std.compress.flate.Compress;
-        var compressor = Compress.Raw.init(&w, try self.allocator.alloc(u8, 8192), .gzip) catch {
-            return .{ .data = body, .is_compressed = false };
-        };
-        defer compressor.deinit();
-
-        compressor.writer.writeAll(body) catch {
-            return .{ .data = body, .is_compressed = false };
-        };
-        compressor.close() catch {
+        var compressor = Compress.Raw.init(&scratch_w, try self.allocator.alloc(u8, 8192), .gzip) catch |err| {
+            std.debug.print("context.compressGzip: compressor init failed ({s}); serving uncompressed\n", .{@errorName(err)});
             return .{ .data = body, .is_compressed = false };
         };
 
-        const gzip_footer = std.compress.flate.Container.gzip.footer();
-        try buf.appendSlice(self.allocator, gzip_footer);
+        compressor.writer.writeAll(body) catch |err| {
+            std.debug.print("context.compressGzip: writeAll failed ({s}); serving uncompressed\n", .{@errorName(err)});
+            return .{ .data = body, .is_compressed = false };
+        };
+        compressor.finish() catch |err| {
+            std.debug.print("context.compressGzip: finish failed ({s}); serving partial compressed output\n", .{@errorName(err)});
+        };
+
+        // Copy scratch buffer (full gzip stream including header + footer).
+        const compressed_len = scratch_w.end;
+        try buf.appendSlice(self.allocator, scratch[0..compressed_len]);
 
         const data = try buf.toOwnedSlice(self.allocator);
         return .{ .data = data, .is_compressed = true };
@@ -369,7 +411,9 @@ pub const Context = struct {
 
         var drain_buf: [4096]u8 = undefined;
         var drain_reader = self.req.readerExpectNone(&drain_buf);
-        _ = drain_reader.discardRemaining() catch {};
+        _ = drain_reader.discardRemaining() catch |err| {
+            std.debug.print("context: connection drain failed ({s}) — connection may be reset by client\n", .{@errorName(err)});
+        };
     }
 
     fn freeSetCookieDupes(self: *Context, headers: std.ArrayList(std.http.Header)) void {
@@ -381,10 +425,19 @@ pub const Context = struct {
     }
 
     pub fn renderText(self: *Context, text: []const u8) !void {
+        // Try gzip if client accepts and body is large enough to be worth compressing.
+        const compressed = try self.compressBody(text);
+        // If compressed, the slice is a fresh heap allocation we must free.
+        defer if (compressed.is_compressed) self.allocator.free(compressed.data);
+
         var headers = std.ArrayList(std.http.Header).empty;
         defer {
             self.freeSetCookieDupes(headers);
             headers.deinit(self.allocator);
+        }
+
+        if (compressed.is_compressed) {
+            try headers.append(self.allocator, .{ .name = "Content-Encoding", .value = "gzip" });
         }
 
         // Add custom headers
@@ -398,7 +451,7 @@ pub const Context = struct {
 
         self.drainUnconsumedBody();
 
-        try self.req.respond(text, .{
+        try self.req.respond(compressed.data, .{
             .status = self.res_status,
             .extra_headers = headers.items,
             .keep_alive = self.req.head.keep_alive,
@@ -409,6 +462,9 @@ pub const Context = struct {
         const json = try std.json.Stringify.valueAlloc(self.allocator, data, .{});
         defer self.allocator.free(json);
 
+        const compressed = try self.compressBody(json);
+        defer if (compressed.is_compressed) self.allocator.free(compressed.data);
+
         var headers = std.ArrayList(std.http.Header).empty;
         defer {
             self.freeSetCookieDupes(headers);
@@ -416,6 +472,9 @@ pub const Context = struct {
         }
 
         try headers.append(self.allocator, .{ .name = "Content-Type", .value = "application/json" });
+        if (compressed.is_compressed) {
+            try headers.append(self.allocator, .{ .name = "Content-Encoding", .value = "gzip" });
+        }
 
         // Add custom headers
         var header_it = self.response_headers.iterator();
@@ -428,7 +487,7 @@ pub const Context = struct {
 
         self.drainUnconsumedBody();
 
-        try self.req.respond(json, .{
+        try self.req.respond(compressed.data, .{
             .status = self.res_status,
             .extra_headers = headers.items,
             .keep_alive = self.req.head.keep_alive,
@@ -436,6 +495,9 @@ pub const Context = struct {
     }
 
     pub fn renderHtml(self: *Context, html: []const u8) !void {
+        const compressed = try self.compressBody(html);
+        defer if (compressed.is_compressed) self.allocator.free(compressed.data);
+
         var headers = std.ArrayList(std.http.Header).empty;
         defer {
             self.freeSetCookieDupes(headers);
@@ -443,6 +505,9 @@ pub const Context = struct {
         }
 
         try headers.append(self.allocator, .{ .name = "Content-Type", .value = "text/html; charset=utf-8" });
+        if (compressed.is_compressed) {
+            try headers.append(self.allocator, .{ .name = "Content-Encoding", .value = "gzip" });
+        }
 
         // Add custom headers
         var header_it = self.response_headers.iterator();
@@ -455,7 +520,7 @@ pub const Context = struct {
 
         self.drainUnconsumedBody();
 
-        try self.req.respond(html, .{
+        try self.req.respond(compressed.data, .{
             .status = self.res_status,
             .extra_headers = headers.items,
             .keep_alive = self.req.head.keep_alive,

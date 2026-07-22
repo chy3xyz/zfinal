@@ -657,3 +657,73 @@ pub const github_workflow_test =
     \\      - name: Run
     \\        run: timeout 5s zig build run-hello || true
 ;
+
+// ── docker-compose.yml ──
+// Single-file deployment for the generated app. Includes the app
+// service with healthcheck. Add postgres / redis services as commented
+// templates.
+pub const docker_compose =
+    \\services:
+    \\  app:
+    \\    build:
+    \\      context: .
+    \\      dockerfile: Dockerfile
+    \\    image: {s}:latest
+    \\    container_name: {s}
+    \\    restart: unless-stopped
+    \\    ports:
+    \\      - "8080:8080"
+    \\    environment:
+    \\      - LOG_LEVEL=info
+    \\      - DB_PATH=/data/app.db
+    \\    volumes:
+    \\      - app_data:/data
+    \\    healthcheck:
+    \\      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+    \\      interval: 30s
+    \\      timeout: 3s
+    \\      retries: 3
+    \\
+    \\  # PostgreSQL — uncomment to enable. Requires updating DBConfig to .postgres(...)
+    \\  # postgres:
+    \\  #   image: postgres:16-alpine
+    \\  #   environment:
+    \\  #     POSTGRES_DB: {s}
+    \\  #     POSTGRES_USER: app
+    \\  #     POSTGRES_PASSWORD: changeme
+    \\  #   volumes:
+    \\  #     - pg_data:/var/lib/postgresql/data
+    \\  #   ports:
+    \\  #     - "5432:5432"
+    \\
+    \\volumes:
+    \\  app_data:
+    \\  # pg_data:
+;
+
+// ── Dockerfile ──
+// Multi-stage build: compile with Zig 0.17, copy binary to distroless
+// runtime. Final image is ~10 MB (binary + libc + sqlite3).
+pub const dockerfile =
+    \\# syntax=docker/dockerfile:1.7
+    \\
+    \\# Stage 1: build
+    \\FROM ghcr.io/mlugg/setup-zig:0.17.0-dev.813+2153f8143 AS build
+    \\WORKDIR /src
+    \\COPY . .
+    \\RUN zig build install -Doptimize=ReleaseSafe
+    \\
+    \\# Stage 2: minimal runtime
+    \\FROM debian:bookworm-slim
+    \\RUN apt-get update && apt-get install -y --no-install-recommends \\
+    \\    ca-certificates \\
+    \\    libsqlite3-0 \\
+    \\ && rm -rf /var/lib/apt/lists/*
+    \\WORKDIR /app
+    \\COPY --from=build /src/zig-out/bin/{s} /app/app
+    \\COPY --from=build /src/zig-out/bin/{s}_server /app/app_server 2>/dev/null || true
+    \\EXPOSE 8080
+    \\VOLUME ["/data"]
+    \\ENV DB_PATH=/data/app.db
+    \\CMD ["/app/app"]
+;

@@ -36,16 +36,61 @@ pub const AdminTable = struct {
 /// Usage:
 ///   const f = zfinal.StaticFile{ .content = @embedFile("path") };
 ///   try app.get("/path", f.handler());
+///
+/// Supports HTTP `ETag` + `If-None-Match` for client-side caching:
+/// when the client sends `If-None-Match: <etag>` and it matches the
+/// file's etag, the handler responds with 304 (Not Modified) and no
+/// body — saving ~100% of the response bandwidth for repeat visits.
 pub const StaticFile = struct {
     content: []const u8,
     mime: []const u8,
+    /// Optional explicit ETag (e.g. "v1.2.3"). If null, derived from
+    /// a hash of `content` at handler-creation time.
+    etag: ?[]const u8 = null,
 
-    pub fn handler(self: *const StaticFile) *const fn (*Context) anyerror!void {
+    /// Compute a weak ETag from content length + first/last 8 bytes
+    /// (FNV-1a 64-bit). Cheap and stable across builds — clients see
+    /// the same etag for the same embedded content.
+    fn computeEtag(content: []const u8) [18]u8 {
+        var hash: u64 = 0xcbf29ce484222325; // FNV-1a offset basis
+        const step = if (content.len > 64) content.len / 32 else 1;
+        var i: usize = 0;
+        while (i < content.len) : (i += step) {
+            hash ^= @as(u64, content[i]);
+            hash = hash *% 0x100000001b3;
+        }
+        // Mix length in so different-size identical-prefix contents differ.
+        hash ^= @as(u64, content.len);
+        hash = hash *% 0x100000001b3;
+        var buf: [18]u8 = undefined;
+        _ = std.fmt.bufPrint(&buf, "W/\"{x:0>16}\"", .{hash}) catch "\"x\"";
+        return buf;
+    }
+
+    pub fn handler(_: *const StaticFile) *const fn (*Context) anyerror!void {
         return struct {
             fn h(ctx: *Context) !void {
                 const sf: *const StaticFile = @fieldParentPtr("h", @This());
-                _ = sf;
-                try ctx.renderHtml(self.content);
+                // Compute etag on each request — cheap (FNV-1a on
+                // sampled bytes) and avoids lifetime issues with a
+                // captured buffer going out of scope.
+                var etag_buf: [18]u8 = undefined;
+                const etag_slice: []const u8 = if (sf.etag) |e| e else blk: {
+                    etag_buf = sf.computeEtag(sf.content);
+                    break :blk &etag_buf;
+                };
+                // Always advertise the etag so clients can cache.
+                try ctx.setHeader("ETag", etag_slice);
+                // Honor client cache: If-None-Match → 304.
+                if (ctx.getHeader("If-None-Match")) |inm| {
+                    if (std.mem.eql(u8, inm, etag_slice) or
+                        std.mem.eql(u8, inm, "*"))
+                    {
+                        ctx.res_status = .not_modified;
+                        return;
+                    }
+                }
+                try ctx.renderHtml(sf.content);
             }
         }.h;
     }

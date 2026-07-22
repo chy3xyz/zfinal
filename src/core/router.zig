@@ -110,8 +110,16 @@ pub const Route = struct {
 pub const Router = struct {
     routes: std.ArrayList(Route),
     /// HashMap fast path for static routes: "{method}:{path}" → route index.
-    /// Parameterized routes fall back to linear scan.
+    /// Parameterized routes fall back to linear scan (cached in
+    /// `param_route_cache` via FIFO eviction).
     static_routes: std.StringHashMap(usize),
+    /// FIFO cache for parameterized route lookups. Key is
+    /// "{method}:{path}" (e.g. "GET:/users/42"); value is the
+    /// route index (or `null` = no match). Capped at 1024 entries;
+    /// oldest entry is evicted on overflow.
+    param_route_cache: std.StringHashMap(?usize),
+    param_cache_order: std.ArrayList([]u8),
+    param_cache_max: u32 = 1024,
     global_interceptors: InterceptorChain,
     allocator: std.mem.Allocator,
 
@@ -119,9 +127,32 @@ pub const Router = struct {
         return Router{
             .routes = std.ArrayList(Route).empty,
             .static_routes = std.StringHashMap(usize).init(allocator),
+            .param_route_cache = std.StringHashMap(?usize).init(allocator),
+            .param_cache_order = std.ArrayList([]u8).empty,
             .global_interceptors = InterceptorChain.init(allocator),
             .allocator = allocator,
         };
+    }
+
+    /// Insert into FIFO cache; evict oldest if over capacity.
+    /// Note: this is FIFO, not LRU — cache hits do NOT re-order. The
+    /// oldest entry is always at the front of `param_cache_order`.
+    fn paramCachePut(self: *Router, key: []const u8, value: ?usize) !void {
+        // Cap the cache at param_cache_max entries. When full, drop the
+        // oldest (FIFO). This is intentionally simple — a true LRU with
+        // doubly-linked list would be ~3x more code for marginal gain
+        // on workloads with hot route tails.
+        while (self.param_cache_order.items.len >= self.param_cache_max) {
+            const oldest = self.param_cache_order.orderedRemove(0);
+            if (self.param_route_cache.fetchRemove(oldest)) |kv| {
+                self.allocator.free(kv.key);
+            }
+            self.allocator.free(oldest);
+        }
+        const key_dup = try self.allocator.dupe(u8, key);
+        errdefer self.allocator.free(key_dup);
+        try self.param_route_cache.put(key_dup, value);
+        try self.param_cache_order.append(self.allocator, key_dup);
     }
 
     pub fn deinit(self: *Router) void {
@@ -136,6 +167,12 @@ pub const Router = struct {
         var key_it = self.static_routes.keyIterator();
         while (key_it.next()) |key| self.allocator.free(key.*);
         self.static_routes.deinit();
+        // The hashmap keys and the order-list items share the same
+        // allocation (we dupe once in paramCachePut and store the
+        // pointer in both). Free them only via the order list.
+        for (self.param_cache_order.items) |item| self.allocator.free(item);
+        self.param_cache_order.deinit(self.allocator);
+        self.param_route_cache.deinit();
         self.global_interceptors.deinit();
         self.* = undefined;
     }
@@ -194,7 +231,7 @@ pub const Router = struct {
 
         // O(1) fast path: index static routes (no params) by "{method}:{path}"
         if (parsed.param_names.len == 0) {
-            var key_buf: [128]u8 = undefined;
+            var key_buf: [256]u8 = undefined;
             const key = staticRouteKey(method, owned_path, &key_buf);
             const key_owned = try self.allocator.dupe(u8, key);
             errdefer self.allocator.free(key_owned);
@@ -205,14 +242,14 @@ pub const Router = struct {
     /// Build the hashmap lookup key for a method + path combination.
     /// Writes into buf, returns the populated slice. If too long for the buffer,
     /// returns only the path portion (hashmap lookup will miss, falling back to linear scan).
-    fn staticRouteKey(method: HttpMethod, path: []const u8, buf: *[128]u8) []const u8 {
+    fn staticRouteKey(method: HttpMethod, path: []const u8, buf: *[256]u8) []const u8 {
         return std.fmt.bufPrint(buf, "{s}:{s}", .{ @tagName(method), path }) catch path;
     }
 
     /// 查找匹配的路由
     pub fn match(self: *Router, path: []const u8, method: HttpMethod) ?*Route {
         // O(1) fast path for exact-match static routes
-        var key_buf: [128]u8 = undefined;
+        var key_buf: [256]u8 = undefined;
         const method_key = staticRouteKey(method, path, &key_buf);
         if (self.static_routes.get(method_key)) |idx| {
             return &self.routes.items[idx];
@@ -222,13 +259,26 @@ pub const Router = struct {
         if (self.static_routes.get(any_key)) |idx| {
             return &self.routes.items[idx];
         }
+
+        // Parameterized-route cache (FIFO, capped). Key includes method
+        // so GET /users/42 and POST /users/42 don't collide.
+        const cache_key = staticRouteKey(method, path, &key_buf);
+        if (self.param_route_cache.get(cache_key)) |cached_idx| {
+            return if (cached_idx) |idx| &self.routes.items[idx] else null;
+        }
+
         // Fall back to O(n) linear scan for parameterized routes
-        for (self.routes.items) |*route| {
+        var found: ?usize = null;
+        for (self.routes.items, 0..) |*route, idx| {
             if (route.matches(path, method)) {
-                return route;
+                found = idx;
+                break;
             }
         }
-        return null;
+        // Cache the result (or negative result) to skip the scan on
+        // repeat hits to the same parameterized URL.
+        self.paramCachePut(cache_key, found) catch {};
+        return if (found) |idx| &self.routes.items[idx] else null;
     }
 
     /// 执行路由处理

@@ -434,6 +434,9 @@ fn createProject(allocator: std.mem.Allocator, project_name: []const u8, clean: 
     // AI tool configs (.claude/, .opencode/, .cursor/)
     try writeAiConfigs(allocator, project_dir);
 
+    // docker-compose.yml + Dockerfile — single-binary deployment
+    try writeDeploymentFiles(allocator, project_dir, project_name);
+
     // src/
     try project_dir.createDirPath(io, "src");
     var src_dir = try project_dir.openDir(io, "src", .{});
@@ -3940,4 +3943,34 @@ fn runZfCheckCapture(allocator: std.mem.Allocator) ![]u8 {
     _ = allocator;
     // TODO: actually spawn `zf check` and capture stdout.
     return &[_]u8{};
+}
+
+/// Write docker-compose.yml + Dockerfile for single-binary deployment.
+/// Container names are derived from project_name (lowercased, dashes → underscores).
+fn writeDeploymentFiles(allocator: std.mem.Allocator, cwd: std.Io.Dir, project_name: []const u8) !void {
+    const app_name_lower = try allocator.dupe(u8, project_name);
+    defer allocator.free(app_name_lower);
+    // Lowercase + replace '-' with '_' for container-friendly names.
+    for (app_name_lower) |*c| {
+        if (c.* == '-') c.* = '_';
+        c.* = std.ascii.toLower(c.*);
+    }
+    // docker-compose.yml uses {s} three times: image, container_name,
+    // POSTGRES_DB (commented template).
+    const compose_content = try std.fmt.allocPrint(
+        allocator,
+        templates.docker_compose,
+        .{ app_name_lower, app_name_lower, app_name_lower },
+    );
+    defer allocator.free(compose_content);
+    try writeFile(cwd, "docker-compose.yml", compose_content);
+
+    // Dockerfile uses {s} twice: zig-out/bin/<name> and <name>_server.
+    const dockerfile_content = try std.fmt.allocPrint(
+        allocator,
+        templates.dockerfile,
+        .{ project_name, project_name },
+    );
+    defer allocator.free(dockerfile_content);
+    try writeFile(cwd, "Dockerfile", dockerfile_content);
 }

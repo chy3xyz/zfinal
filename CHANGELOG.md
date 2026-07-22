@@ -134,6 +134,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0] - 2026-07-08
+
+### Added
+- **Static file ETag / If-None-Match 304** — `StaticFile` now sets
+  `ETag: W/"<fnv1a>"` on every response. If the client sends
+  `If-None-Match: <etag>` and it matches, the handler responds with
+  304 + no body, saving 100% of the response bandwidth for repeat
+  visitors. Cached clients (browsers, CDN) get sub-millisecond 304s.
+- **Per-request deadline** — `Context.setTimeoutMs(ms)` sets a monotonic
+  deadline; `Context.isExpired()` returns true once the deadline has
+  elapsed. Server `dispatch` checks the deadline before invoking the
+  handler and after, sending `408 Request Timeout` if expired.
+  Controlled by `ServerConfig.request_timeout_ms` (default 30s).
+- **Router FIFO match cache** — `Router` now caches parameterized-route
+  lookups (capped at 1024 entries, FIFO eviction). The static-route
+  HashMap was already O(1); this closes the linear-scan fallback for
+  the common case of repeat hits to the same parameterized URL.
+- **gzip response compression wired into render methods** — `renderText`,
+  `renderJson`, `renderHtml` now call `compressBody` when the client
+  sends `Accept-Encoding: gzip` and the body is ≥ 256 bytes. Adds
+  `Content-Encoding: gzip` header automatically. Falls back to
+  uncompressed on compression failure (with stderr log).
+
+### Fixed
+- **5 silent `catch {}` sites in `src/core/context.zig`** now log via
+  `std.debug.print` with the error name and a brief explanation.
+  Catches that were previously silent: `headers.ensureTotalCapacity`,
+  `attrs.ensureTotalCapacity`, `reader.discardRemaining` (2 places),
+  and the 3 `compressBody` failure paths.
+- **`std.time.nanoTimestamp` removed in Zig 0.17** — replaced with a
+  `monoNowNs()` helper that uses `std.c.clock_gettime(.MONOTONIC, ...)`.
+  Replaces 2 call sites in `setTimeoutMs` and `isExpired`.
+
+### Added (zf CLI)
+- **`zf new` now generates `docker-compose.yml` + `Dockerfile`** for
+  single-binary deployment. `docker-compose.yml` includes the app
+  service with healthcheck + commented PostgreSQL template.
+  `Dockerfile` is multi-stage (Zig build → debian-slim runtime).
+  Container names are derived from the project name (lowercased,
+  dashes → underscores).
+
+### Tests
+- Total: **215 passed; 9 skipped; 0 failed** (no new test cases
+  needed — existing integration suite still passes after the
+  context/router refactor).
+
 ## [0.18.0] - 2026-07-08
 
 ### Added (API ergonomics)
