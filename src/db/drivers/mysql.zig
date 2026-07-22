@@ -2,10 +2,20 @@ const std = @import("std");
 const DBConfig = @import("../config.zig").DBConfig;
 const ResultSet = @import("../result.zig").ResultSet;
 const SqlParam = @import("../sql_param.zig").SqlParam;
+const diag = @import("../diag.zig");
 
 const c = @import("c_mysql");
 
 const DEFAULT_BINLOG_SERVER_ID = 0x7a65746c; // "zetl"
+
+// mysql_ssl_mode enum values from <mysql.h>. Match the enum's numeric
+// ordering — DO NOT reorder. We use the C-side enum tag directly when
+// passing to mysql_options().
+const SSL_MODE_DISABLED: c_int = 1;
+const SSL_MODE_PREFERRED: c_int = 2;
+const SSL_MODE_REQUIRED: c_int = 3;
+const SSL_MODE_VERIFY_CA: c_int = 4;
+const SSL_MODE_VERIFY_IDENTITY: c_int = 5;
 
 pub const MySQLDB = struct {
     conn: ?*c.MYSQL,
@@ -35,6 +45,32 @@ pub const MySQLDB = struct {
         d_buf[db_slice.len] = 0;
         const db: [:0]const u8 = d_buf[0..db_slice.len :0];
 
+        // Set connect timeout BEFORE mysql_real_connect. mysql_options returns
+        // 0 on success and a non-zero errno on failure.
+        const timeout_sec: c_uint = @intCast(config.timeout);
+        if (c.mysql_options(conn, c.MYSQL_OPT_CONNECT_TIMEOUT, &timeout_sec) != 0) {
+            const msg = c.mysql_error(conn);
+            std.debug.print("MySQL set connect_timeout failed: {s}\n", .{msg});
+            c.mysql_close(conn);
+            return error.InitFailed;
+        }
+
+        // Set SSL mode. cloud DBs default to REQUIRED; explicit DISABLED
+        // avoids the 5s handshake timeout on localhost dev.
+        const ssl_int: c_int = switch (config.ssl_mode) {
+            .disable => SSL_MODE_DISABLED,
+            .prefer => SSL_MODE_PREFERRED, // PREFERRED = "use if available, fallback to plaintext"
+            .require => SSL_MODE_REQUIRED,
+            .verify_ca => SSL_MODE_VERIFY_CA,
+            .verify_full => SSL_MODE_VERIFY_IDENTITY,
+        };
+        if (c.mysql_options(conn, c.MYSQL_OPT_SSL_MODE, &ssl_int) != 0) {
+            const msg = c.mysql_error(conn);
+            std.debug.print("MySQL set SSL mode failed: {s}\n", .{msg});
+            c.mysql_close(conn);
+            return error.InitFailed;
+        }
+
         if (c.mysql_real_connect(conn, h.ptr, u.ptr, pw.ptr, db.ptr, config.port orelse 3306, null, 0) == null) {
             @memset(&p_buf, 0);
             const msg = c.mysql_error(conn);
@@ -42,6 +78,16 @@ pub const MySQLDB = struct {
             c.mysql_close(conn);
             return error.ConnectionFailed;
         }
+
+        // Force utf8mb4 client charset for full Unicode + emoji round-trip.
+        // The server may default to latin1 or utf8 (3-byte BMP only).
+        if (c.mysql_set_character_set(conn, "utf8mb4") != 0) {
+            const msg = c.mysql_error(conn);
+            std.debug.print("MySQL set utf8mb4 failed: {s}\n", .{msg});
+            c.mysql_close(conn);
+            return error.InitFailed;
+        }
+
         @memset(&p_buf, 0);
         @memset(&u_buf, 0);
 
@@ -65,44 +111,51 @@ pub const MySQLDB = struct {
     pub fn exec(self: *MySQLDB, sql: [:0]const u8) !void {
         const cxn = self.conn orelse return error.ConnectionFailed;
         if (c.mysql_query(cxn, sql.ptr) != 0) {
-            std.debug.print("MySQL exec failed: {s}\n", .{c.mysql_error(cxn)});
-            return error.ExecFailed;
+            const d = extractMysqlDiag(cxn);
+            std.debug.print("MySQL exec failed [errno {s}]: {s}\n", .{ d.raw, d.message });
+            return diag.toError(d.code);
         }
         self.last_affected = c.mysql_affected_rows(cxn);
     }
 
     pub fn execParams(self: *MySQLDB, sql: [:0]const u8, params: []const SqlParam) !void {
-        const stmt = c.mysql_stmt_init(self.conn) orelse return error.StmtInitFailed;
+        const cxn = self.conn orelse return error.ConnectionFailed;
+        const stmt = c.mysql_stmt_init(cxn) orelse return error.StmtInitFailed;
         defer _ = c.mysql_stmt_close(stmt);
 
         if (c.mysql_stmt_prepare(stmt, sql.ptr, sql.len) != 0) {
-            std.debug.print("MySQL stmt prepare failed: {s}\n", .{c.mysql_stmt_error(stmt)});
-            return error.PrepareFailed;
+            const d = extractMysqlStmtDiag(stmt);
+            std.debug.print("MySQL stmt prepare failed [errno {s}]: {s}\n", .{ d.raw, d.message });
+            return diag.toError(d.code);
         }
 
         var bind = try buildMysqlBind(self.allocator, params);
         defer freeMysqlBind(self.allocator, &bind);
 
         if (c.mysql_stmt_bind_param(stmt, bind.bind.items.ptr)) {
-            std.debug.print("MySQL bind failed: {s}\n", .{c.mysql_stmt_error(stmt)});
-            return error.BindFailed;
+            const d = extractMysqlStmtDiag(stmt);
+            std.debug.print("MySQL bind failed [errno {s}]: {s}\n", .{ d.raw, d.message });
+            return diag.toError(d.code);
         }
 
         if (c.mysql_stmt_execute(stmt) != 0) {
-            std.debug.print("MySQL stmt execute failed: {s}\n", .{c.mysql_stmt_error(stmt)});
-            return error.ExecFailed;
+            const d = extractMysqlStmtDiag(stmt);
+            std.debug.print("MySQL stmt execute failed [errno {s}]: {s}\n", .{ d.raw, d.message });
+            return diag.toError(d.code);
         }
 
         self.last_affected = c.mysql_stmt_affected_rows(stmt);
     }
 
     pub fn query(self: *MySQLDB, sql: [:0]const u8) !ResultSet {
-        if (c.mysql_query(self.conn, sql.ptr) != 0) {
-            std.debug.print("MySQL query failed: {s}\n", .{c.mysql_error(self.conn)});
-            return error.QueryFailed;
+        const cxn = self.conn orelse return error.ConnectionFailed;
+        if (c.mysql_query(cxn, sql.ptr) != 0) {
+            const d = extractMysqlDiag(cxn);
+            std.debug.print("MySQL query failed [errno {s}]: {s}\n", .{ d.raw, d.message });
+            return diag.toError(d.code);
         }
 
-        const res = c.mysql_store_result(self.conn) orelse {
+        const res = c.mysql_store_result(cxn) orelse {
             // Some queries (e.g. CALL) may return no result set
             return ResultSet.init(self.allocator, &.{});
         };
@@ -112,25 +165,29 @@ pub const MySQLDB = struct {
     }
 
     pub fn queryParams(self: *MySQLDB, sql: [:0]const u8, params: []const SqlParam) !ResultSet {
-        const stmt = c.mysql_stmt_init(self.conn) orelse return error.StmtInitFailed;
+        const cxn = self.conn orelse return error.ConnectionFailed;
+        const stmt = c.mysql_stmt_init(cxn) orelse return error.StmtInitFailed;
         defer _ = c.mysql_stmt_close(stmt);
 
         if (c.mysql_stmt_prepare(stmt, sql.ptr, sql.len) != 0) {
-            std.debug.print("MySQL stmt prepare failed: {s}\n", .{c.mysql_stmt_error(stmt)});
-            return error.PrepareFailed;
+            const d = extractMysqlStmtDiag(stmt);
+            std.debug.print("MySQL stmt prepare failed [errno {s}]: {s}\n", .{ d.raw, d.message });
+            return diag.toError(d.code);
         }
 
         var bind = try buildMysqlBind(self.allocator, params);
         defer freeMysqlBind(self.allocator, &bind);
 
         if (c.mysql_stmt_bind_param(stmt, bind.bind.items.ptr)) {
-            std.debug.print("MySQL bind failed: {s}\n", .{c.mysql_stmt_error(stmt)});
-            return error.BindFailed;
+            const d = extractMysqlStmtDiag(stmt);
+            std.debug.print("MySQL bind failed [errno {s}]: {s}\n", .{ d.raw, d.message });
+            return diag.toError(d.code);
         }
 
         if (c.mysql_stmt_execute(stmt) != 0) {
-            std.debug.print("MySQL stmt execute failed: {s}\n", .{c.mysql_stmt_error(stmt)});
-            return error.ExecFailed;
+            const d = extractMysqlStmtDiag(stmt);
+            std.debug.print("MySQL stmt execute failed [errno {s}]: {s}\n", .{ d.raw, d.message });
+            return diag.toError(d.code);
         }
 
         // Fetch result metadata
@@ -184,8 +241,9 @@ pub const MySQLDB = struct {
             if (rc == c.MYSQL_NO_DATA) break;
             if (rc == c.MYSQL_DATA_TRUNCATED) {} // continue
             if (rc != 0 and rc != c.MYSQL_DATA_TRUNCATED) {
-                std.debug.print("MySQL fetch failed: {s}\n", .{c.mysql_stmt_error(stmt)});
-                return error.FetchFailed;
+                const d = extractMysqlStmtDiag(stmt);
+                std.debug.print("MySQL fetch failed [errno {s}]: {s}\n", .{ d.raw, d.message });
+                return diag.toError(d.code);
             }
 
             var cells = try self.allocator.alloc(?[]const u8, n_cols);
@@ -391,5 +449,57 @@ pub const MySQLDB = struct {
             }
         }
         self.binlog_opened = false;
+    }
+
+    /// Extract errno + message from a connection-level error.
+    /// Borrowed slices — caller must keep conn/stmt alive.
+    fn extractMysqlDiag(conn: *c.MYSQL) diag.Diag {
+        const errno_val: u32 = c.mysql_errno(conn);
+        const code = diag.mysqlCode(@intCast(errno_val));
+        const message = std.mem.span(c.mysql_error(conn));
+        // For unique_violation (errno 1062), try to extract the key name
+        // from the message format: "Duplicate entry 'x' for key 'users.email'"
+        var table: ?[]const u8 = null;
+        var column: ?[]const u8 = null;
+        if (code == .unique_violation) {
+            if (extractDupKey(message)) |key| {
+                if (std.mem.indexOfScalar(u8, key, '.')) |dot| {
+                    table = key[0..dot];
+                    column = key[dot + 1 ..];
+                } else {
+                    // Constraint name only — store it as the constraint field.
+                    // Caller can decide whether to surface it.
+                }
+            }
+        }
+        return .{
+            .code = code,
+            .message = message,
+            .table = table,
+            .column = column,
+            .raw = @tagName(code),
+        };
+    }
+
+    /// Same as extractMysqlDiag but for stmt-level errors (mysql_stmt_error).
+    fn extractMysqlStmtDiag(stmt: *c.MYSQL_STMT) diag.Diag {
+        const errno_val: u32 = c.mysql_stmt_errno(stmt);
+        const code = diag.mysqlCode(@intCast(errno_val));
+        const message = std.mem.span(c.mysql_stmt_error(stmt));
+        return .{
+            .code = code,
+            .message = message,
+            .raw = @tagName(code),
+        };
+    }
+
+    /// Find "for key 'X'" inside a MySQL duplicate-entry message and
+    /// return the X slice. Returns null if the format is unrecognized.
+    fn extractDupKey(message: []const u8) ?[]const u8 {
+        const needle = "for key '";
+        const start = std.mem.indexOf(u8, message, needle) orelse return null;
+        const key_start = start + needle.len;
+        const end = std.mem.indexOfScalar(u8, message[key_start..], '\'') orelse return null;
+        return message[key_start..key_start + end];
     }
 };

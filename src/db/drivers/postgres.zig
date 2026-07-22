@@ -2,8 +2,17 @@ const std = @import("std");
 const DBConfig = @import("../config.zig").DBConfig;
 const ResultSet = @import("../result.zig").ResultSet;
 const SqlParam = @import("../sql_param.zig").SqlParam;
+const diag = @import("../diag.zig");
 
 const c = @import("c_pg");
+
+// PG_DIAG_* field codes — character constants from <libpq-fe.h>:
+//   'C' SQLSTATE, 'M' primary message, 't' table, 'c' column, 'n' constraint.
+const PG_DIAG_SQLSTATE: c_int = 'C';
+const PG_DIAG_TABLE_NAME: c_int = 't';
+const PG_DIAG_COLUMN_NAME: c_int = 'c';
+const PG_DIAG_CONSTRAINT_NAME: c_int = 'n';
+const PG_DIAG_MESSAGE_PRIMARY: c_int = 'M';
 
 pub const PostgresDB = struct {
     conn: ?*c.PGconn,
@@ -12,22 +21,58 @@ pub const PostgresDB = struct {
 
     pub fn connect(allocator: std.mem.Allocator, config: DBConfig) !PostgresDB {
         var conn_buf: [1024]u8 = undefined;
-        const conn_slice = try std.fmt.bufPrint(
+        // Build the conninfo string. Optional keys are appended only if set.
+        const base = try std.fmt.bufPrint(
             &conn_buf,
-            "host={s} port={d} dbname={s} user={s} password={s}",
+            "host={s} port={d} dbname={s} user={s} password={s} connect_timeout={d} client_encoding=UTF8",
             .{
                 config.host orelse "localhost",
                 config.port orelse 5432,
                 config.database,
                 config.username orelse "",
                 config.password orelse "",
+                config.timeout,
             },
         );
-        conn_buf[conn_slice.len] = 0;
-        const conn_str: [:0]const u8 = conn_buf[0..conn_slice.len :0];
+        conn_buf[base.len] = 0;
+
+        // Append sslmode= if non-default. libpq's default is 'prefer' which
+        // silently downgrades to non-SSL on failure — cloud DBs (RDS, Cloud SQL)
+        // require an explicit 'require' or stricter.
+        var ssl_buf: [64]u8 = undefined;
+        const ssl_suffix: []const u8 = switch (config.ssl_mode) {
+            .disable => blk: {
+                const s = try std.fmt.bufPrint(&ssl_buf, " sslmode=disable", .{});
+                break :blk s;
+            },
+            .prefer => "", // libpq default — no need to append
+            .require => blk: {
+                const s = try std.fmt.bufPrint(&ssl_buf, " sslmode=require", .{});
+                break :blk s;
+            },
+            .verify_ca => blk: {
+                const s = try std.fmt.bufPrint(&ssl_buf, " sslmode=verify-ca", .{});
+                break :blk s;
+            },
+            .verify_full => blk: {
+                const s = try std.fmt.bufPrint(&ssl_buf, " sslmode=verify-full", .{});
+                break :blk s;
+            },
+        };
+
+        // Compose final conninfo: base + suffix
+        var final_buf: [1100]u8 = undefined;
+        const final_len = base.len + ssl_suffix.len;
+        if (final_len > final_buf.len) return error.ConnectionFailed;
+        @memcpy(final_buf[0..base.len], base);
+        @memcpy(final_buf[base.len..final_len], ssl_suffix);
+        final_buf[final_len] = 0;
+        const conn_str: [:0]const u8 = final_buf[0..final_len :0];
 
         const conn = c.PQconnectdb(conn_str);
         @memset(&conn_buf, 0);
+        @memset(&ssl_buf, 0);
+        @memset(&final_buf, 0);
         if (c.PQstatus(conn) != c.CONNECTION_OK) {
             const msg = c.PQerrorMessage(conn);
             std.debug.print("PostgreSQL connect failed: {s}\n", .{msg});
@@ -58,9 +103,9 @@ pub const PostgresDB = struct {
         defer c.PQclear(res);
 
         if (c.PQresultStatus(res) != c.PGRES_COMMAND_OK) {
-            const msg = c.PQerrorMessage(cxn);
-            std.debug.print("PostgreSQL exec failed: {s}\n", .{msg});
-            return error.ExecFailed;
+            const d = extractPgDiag(res);
+            std.debug.print("PostgreSQL exec failed [{s}]: {s}\n", .{ d.raw, d.message });
+            return diag.toError(d.code);
         }
 
         const s = std.mem.span(c.PQcmdTuples(res));
@@ -85,9 +130,9 @@ pub const PostgresDB = struct {
         defer c.PQclear(res);
 
         if (c.PQresultStatus(res) != c.PGRES_COMMAND_OK) {
-            const msg = c.PQerrorMessage(cxn);
-            std.debug.print("PostgreSQL execParams failed: {s}\n", .{msg});
-            return error.ExecFailed;
+            const d = extractPgDiag(res);
+            std.debug.print("PostgreSQL execParams failed [{s}]: {s}\n", .{ d.raw, d.message });
+            return diag.toError(d.code);
         }
 
         const s = std.mem.span(c.PQcmdTuples(res));
@@ -116,9 +161,9 @@ pub const PostgresDB = struct {
         defer c.PQclear(res);
 
         if (c.PQresultStatus(res) != c.PGRES_TUPLES_OK) {
-            const msg = c.PQerrorMessage(cxn);
-            std.debug.print("PostgreSQL query failed: {s}\n", .{msg});
-            return error.QueryFailed;
+            const d = extractPgDiag(res);
+            std.debug.print("PostgreSQL query failed [{s}]: {s}\n", .{ d.raw, d.message });
+            return diag.toError(d.code);
         }
 
         const n_cols: usize = @intCast(c.PQnfields(res));
@@ -237,5 +282,43 @@ pub const PostgresDB = struct {
         allocator.free(p.values);
         allocator.free(p.lengths);
         allocator.free(p.formats);
+    }
+
+    /// Extract SQLSTATE + table/column/constraint from a failed PG result.
+    /// All returned slices are borrowed from libpq-owned memory — do NOT
+    /// free them. Caller must keep `res` alive until diag is consumed.
+    fn extractPgDiag(res_opt: ?*c.PGresult) diag.Diag {
+        const res = res_opt orelse {
+            // No result — PQexec itself failed. Use PQerrorMessage on conn.
+            return .{
+                .code = .connection_lost,
+                .message = "(no result)",
+                .raw = "",
+            };
+        };
+        const sqlstate_ptr = c.PQresultErrorField(res, PG_DIAG_SQLSTATE);
+        const sqlstate = if (sqlstate_ptr) |p| std.mem.span(p) else "";
+        const code = diag.pgCode(sqlstate);
+
+        const msg_ptr = c.PQresultErrorField(res, PG_DIAG_MESSAGE_PRIMARY);
+        const message = if (msg_ptr) |p| std.mem.span(p) else "";
+
+        const table_ptr = c.PQresultErrorField(res, PG_DIAG_TABLE_NAME);
+        const table: ?[]const u8 = if (table_ptr) |p| std.mem.span(p) else null;
+
+        const col_ptr = c.PQresultErrorField(res, PG_DIAG_COLUMN_NAME);
+        const column: ?[]const u8 = if (col_ptr) |p| std.mem.span(p) else null;
+
+        const cn_ptr = c.PQresultErrorField(res, PG_DIAG_CONSTRAINT_NAME);
+        const constraint: ?[]const u8 = if (cn_ptr) |p| std.mem.span(p) else null;
+
+        return .{
+            .code = code,
+            .message = message,
+            .table = table,
+            .column = column,
+            .constraint = constraint,
+            .raw = sqlstate,
+        };
     }
 };

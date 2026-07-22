@@ -134,6 +134,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-07-08
+
+### Added (DB driver parity)
+- **`src/db/diag.zig`** — unified SQL error diagnostics. Maps PG SQLSTATE
+  (23xxx, 40P01, 55P03, 42xxx) and MySQL errno (1062, 1451/1452, 3819, 1048,
+  1205, 1213, 1064, 1146) to a shared `ErrorCode` enum + 10 unit tests.
+- **`DBConfig.ssl_mode: SSLMode`** — TLS configuration shared by PG and MySQL.
+  Values: `disable`, `prefer` (default, libpq default), `require`, `verify_ca`,
+  `verify_full`. Production cloud DBs should set `.require` or stronger.
+- **`SSLMode` enum** in `config.zig` with doc comments for each level.
+- **PG: `connect_timeout=N` in conninfo** — `DBConfig.timeout` was previously
+  declared but never honored; now it actually controls the connect deadline.
+- **PG: `client_encoding=UTF8` in conninfo** — explicit declaration so PG
+  does not silently fall back to SQL_ASCII on misconfigured clusters.
+- **MySQL: `MYSQL_OPT_CONNECT_TIMEOUT`** — connect timeout via `mysql_options`.
+- **MySQL: `MYSQL_OPT_SSL_MODE`** — maps `SSLMode` to libmysqlclient's
+  `enum mysql_ssl_mode` (`SSL_MODE_DISABLED`..`SSL_MODE_VERIFY_IDENTITY`).
+- **MySQL: `mysql_set_character_set(conn, "utf8mb4")`** — full Unicode +
+  emoji round-trip. Server default is `utf8` (3-byte BMP only) or `latin1`.
+
+### Fixed (DB driver AI-friendliness)
+- **Typed SQL errors**: `error.UniqueViolation`, `error.ForeignKeyViolation`,
+  `error.CheckViolation`, `error.NotNullViolation`, `error.LockTimeout`,
+  `error.Deadlock`, `error.IntegrityViolation`, `error.ParseError`,
+  `error.UnknownTable`, `error.ConnectionLost` are now returned by both
+  PG and MySQL drivers. Previously every failure was a generic
+  `error.ExecFailed` / `error.QueryFailed`.
+- **PG diagnostic extraction**: `PQresultErrorField` is used for SQLSTATE,
+  primary message, table name, column name, and constraint name. Extracted
+  `{table, column, constraint}` are exposed via the `Diag` struct returned
+  alongside the typed error (drivers print the raw `[SQLSTATE]` for logs).
+- **MySQL `errno` mapping**: `mysql_errno(conn)` / `mysql_stmt_errno(stmt)`
+  are now used to classify ~15 common error codes (1062, 1451/1452, 3819,
+  1048, 1205, 1213, 1064, 1146). For unique-violation (1062) we also
+  parse `"for key 'table.column'"` from `mysql_error()` to surface the
+  table+column just like SQLite already did.
+
+### Tests
+- **`diag.zig`**: 10 new unit tests (pgCode class 23, pgCode 40P01/55P03,
+  pgCode 42xxx, pgCode empty, mysqlCode known errnos, toError round-trip,
+  parseSqliteTableColumn UNIQUE/FK/no-target). All 197 tests still pass.
+
 ## [0.13.1] - 2026-06-13
 
 ### Fixed (P0)
