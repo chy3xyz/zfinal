@@ -2,6 +2,7 @@ const std = @import("std");
 const Interceptor = @import("../interceptor/interceptor.zig").Interceptor;
 const Context = @import("../core/context.zig").Context;
 const TokenManager = @import("token.zig").TokenManager;
+const audit = @import("../core/audit.zig");
 
 /// Token 拦截器配置
 pub const TokenInterceptorConfig = struct {
@@ -16,8 +17,14 @@ pub fn createTokenInterceptor(config: TokenInterceptorConfig) Interceptor {
         var cfg: TokenInterceptorConfig = undefined;
 
         fn before(ctx: *Context) !bool {
+            const path = if (std.mem.indexOfScalar(u8, ctx.req.head.target, '?')) |q|
+                ctx.req.head.target[0..q]
+            else
+                ctx.req.head.target;
+
             // 获取 Token
             const token_value = try ctx.getPara(cfg.token_name) orelse {
+                audit.log(.csrf_reject, path, "missing");
                 ctx.res_status = .bad_request;
                 try ctx.renderJson(.{ .@"error" = "Missing token" });
                 return false;
@@ -26,6 +33,7 @@ pub fn createTokenInterceptor(config: TokenInterceptorConfig) Interceptor {
             // 验证 Token
             const valid = try cfg.token_manager.validate(token_value);
             if (!valid) {
+                audit.log(.csrf_reject, path, "invalid");
                 ctx.res_status = .bad_request;
                 try ctx.renderJson(.{ .@"error" = cfg.error_message });
                 return false;

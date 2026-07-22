@@ -3,8 +3,10 @@ const http = std.http;
 const Router = @import("router.zig").Router;
 const HttpMethod = @import("router.zig").HttpMethod;
 const Context = @import("context.zig").Context;
+const Metrics = @import("metrics.zig").Metrics;
 const getLog = @import("logger.zig").getLogger;
 const shutdown = @import("shutdown.zig");
+const io_instance = @import("../io_instance.zig");
 
 pub const ServerConfig = struct {
     host: []const u8 = "0.0.0.0",
@@ -13,6 +15,22 @@ pub const ServerConfig = struct {
     max_connections: usize = 10000,
     max_requests_per_conn: usize = 100,
     max_body_size: usize = 10 * 1024 * 1024,
+    /// Max time to wait for in-flight connections after SIGTERM/SIGINT (ms).
+    /// Prevents hang forever when a client never closes. Default 30s.
+    drain_timeout_ms: u64 = 30_000,
+    /// Per-connection idle timeout (ms) between request activity.
+    /// Watchdog closes the socket if no `receiveHead`/dispatch progress.
+    /// 0 disables. Default 30s. Still pair with reverse-proxy timeouts.
+    /// Note: Zig 0.17 Threaded has no Stream Writer timeout; this covers
+    /// blocked handlers/writes by closing the socket (fallback).
+    request_timeout_ms: u64 = 30_000,
+    /// Per `net_read` deadline (ms) via `Io.operateTimeout` for receiveHead/body.
+    /// 0 disables (rely on idle watchdog only). Default matches request_timeout_ms.
+    read_timeout_ms: u64 = 30_000,
+    /// When true (default), force one-request-per-connection to avoid
+    /// Zig `http.Server` keep-alive / discardBody bugs (ziglang/zig#25017).
+    /// Set false only after full body-drain coverage + upstream fix + soak tests.
+    force_connection_close: bool = true,
 };
 
 /// Error set for server operations. Wrapped to fit Group.async std.Io.Cancelable!void constraint.
@@ -35,6 +53,8 @@ pub const Server = struct {
     allocator: std.mem.Allocator,
     router: *Router,
     config: ServerConfig,
+    /// Optional shared metrics; when set, dispatch auto-records status classes.
+    metrics: ?*Metrics = null,
     active_conns: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     err_handle: ErrorHandle = .{},
     /// Listener socket, stored so a shutdown watchdog can close it to unblock accept().
@@ -121,48 +141,174 @@ fn acceptLoopImpl(io: std.Io, server: *Server, addr: std.Io.net.IpAddress, group
 
         group.async(io, handleConn, .{ io, conn, server });
     }
-    // Graceful shutdown: drain pending connections.
-    // group.cancel(io) would panic on aarch64-macos when handleConn
-    // fibers have active cancelation waiters. Instead, close the
-    // listener (defer above handles that) and let connections drain
-    // naturally via keep-alive timeout or max_requests_per_conn.
+    // Graceful shutdown: drain pending connections with a hard deadline.
     getLog().info("Shutting down server...", .{});
-    var drain_ok: bool = false;
-    while (!drain_ok) {
-        // Wait for active connections to complete
-        for (0..10) |_| {
-            if (server.active_conns.load(.monotonic) == 0) {
-                drain_ok = true;
-                break;
-            }
-            io.sleep(std.Io.Duration.fromMilliseconds(100), .awake) catch break;
+    const drain_deadline_ms = server.config.drain_timeout_ms;
+    var waited_ms: u64 = 0;
+    while (server.active_conns.load(.monotonic) > 0) {
+        if (waited_ms >= drain_deadline_ms) {
+            getLog().warnFmt(
+                "Drain timeout ({d}ms) reached with {d} active connection(s); exiting",
+                .{ drain_deadline_ms, server.active_conns.load(.monotonic) },
+            );
+            break;
         }
-        if (!drain_ok) {
-            getLog().info("Waiting for active connections to drain...", .{});
-        }
+        io.sleep(std.Io.Duration.fromMilliseconds(100), .awake) catch break;
+        waited_ms += 100;
     }
-    getLog().info("All connections drained.", .{});
+    if (server.active_conns.load(.monotonic) == 0) {
+        getLog().info("All connections drained.", .{});
+    }
 }
 
 /// Handler fiber — manages keep-alive request loop for one connection.
 fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cancelable!void {
-    defer conn.close(io);
     defer _ = server.active_conns.fetchSub(1, .monotonic);
     _ = server.active_conns.fetchAdd(1, .monotonic);
+    if (server.metrics) |m| m.recordConnection();
+
+    var conn_closed = std.atomic.Value(bool).init(false);
+    defer {
+        if (!conn_closed.swap(true, .monotonic)) conn.close(io);
+    }
+
+    var last_activity_ms = std.atomic.Value(u64).init(monoMs(io));
+    var finished = std.atomic.Value(bool).init(false);
+    defer finished.store(true, .release);
+
+    var idle_group = std.Io.Group.init;
+    if (server.config.request_timeout_ms > 0) {
+        idle_group.async(io, idleWatchdog, .{
+            io,
+            conn,
+            &last_activity_ms,
+            &finished,
+            &conn_closed,
+            server.config.request_timeout_ms,
+        });
+    }
+    defer {
+        finished.store(true, .release);
+        _ = idle_group.await(io) catch {};
+    }
 
     var read_buf: [4096]u8 = undefined;
     var write_buf: [4096]u8 = undefined;
-    var reader = conn.reader(io, &read_buf);
+    var reader = TimedReader.init(conn, io, &read_buf, server.config.read_timeout_ms);
     var writer = conn.writer(io, &write_buf);
     var http_srv = http.Server.init(&reader.interface, &writer.interface);
     var req_count: usize = 0;
 
     while (req_count < server.config.max_requests_per_conn) : (req_count += 1) {
+        if (conn_closed.load(.monotonic)) break;
+        last_activity_ms.store(monoMs(io), .monotonic);
         var request = http_srv.receiveHead() catch break;
+        last_activity_ms.store(monoMs(io), .monotonic);
         dispatch(&request, server) catch break;
+        last_activity_ms.store(monoMs(io), .monotonic);
         if (request.head.version != .@"HTTP/1.1") break;
         if (!request.head.keep_alive) break;
     }
+}
+
+/// Stream reader that applies `Io.operateTimeout` on each `net_read`.
+const TimedReader = struct {
+    io: std.Io,
+    interface: std.Io.Reader,
+    stream: std.Io.net.Stream,
+    timeout_ms: u64,
+    err: ?anyerror = null,
+
+    const max_iovecs_len = 8;
+
+    fn init(stream: std.Io.net.Stream, io: std.Io, buffer: []u8, timeout_ms: u64) TimedReader {
+        return .{
+            .io = io,
+            .interface = .{
+                .vtable = &.{
+                    .stream = streamImpl,
+                    .readVec = readVec,
+                },
+                .buffer = buffer,
+                .seek = 0,
+                .end = 0,
+            },
+            .stream = stream,
+            .timeout_ms = timeout_ms,
+        };
+    }
+
+    fn streamImpl(io_r: *std.Io.Reader, io_w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+        const dest = limit.slice(try io_w.writableSliceGreedy(1));
+        var data: [1][]u8 = .{dest};
+        const n = try readVec(io_r, &data);
+        io_w.advance(n);
+        return n;
+    }
+
+    fn readVec(io_r: *std.Io.Reader, data: [][]u8) std.Io.Reader.Error!usize {
+        const r: *TimedReader = @alignCast(@fieldParentPtr("interface", io_r));
+        var iovecs_buffer: [max_iovecs_len][]u8 = undefined;
+        const dest_n, const data_size = try io_r.writableVector(&iovecs_buffer, data);
+        const dest = iovecs_buffer[0..dest_n];
+        std.debug.assert(dest[0].len > 0);
+
+        const timeout: std.Io.Timeout = if (r.timeout_ms == 0)
+            .none
+        else
+            .{ .duration = .{
+                .raw = .fromMilliseconds(@intCast(r.timeout_ms)),
+                .clock = .awake,
+            } };
+
+        const n = (r.io.operateTimeout(.{
+            .net_read = .{
+                .socket_handle = r.stream.socket.handle,
+                .data = dest,
+            },
+        }, timeout) catch |err| {
+            r.err = err;
+            return error.ReadFailed;
+        }).net_read catch |err| {
+            r.err = err;
+            return error.ReadFailed;
+        };
+
+        if (n == 0) return error.EndOfStream;
+        if (n > data_size) {
+            r.interface.end += n - data_size;
+            return data_size;
+        }
+        return n;
+    }
+};
+
+fn idleWatchdog(
+    io: std.Io,
+    conn: std.Io.net.Stream,
+    last_activity_ms: *std.atomic.Value(u64),
+    finished: *std.atomic.Value(bool),
+    conn_closed: *std.atomic.Value(bool),
+    timeout_ms: u64,
+) std.Io.Cancelable!void {
+    while (!finished.load(.acquire)) {
+        io.sleep(std.Io.Duration.fromMilliseconds(100), .awake) catch break;
+        if (finished.load(.acquire)) break;
+        const now = monoMs(io);
+        const last = last_activity_ms.load(.monotonic);
+        if (now > last and (now - last) >= timeout_ms) {
+            getLog().warnFmt("Request idle timeout ({d}ms); closing connection", .{timeout_ms});
+            if (!conn_closed.swap(true, .monotonic)) {
+                conn.close(io);
+            }
+            break;
+        }
+    }
+}
+
+fn monoMs(io: std.Io) u64 {
+    const ts = std.Io.Timestamp.now(io, .awake);
+    return @intCast(@max(ts.toMilliseconds(), 0));
 }
 
 fn dispatch(request: *http.Server.Request, server: *Server) !void {
@@ -170,6 +316,7 @@ fn dispatch(request: *http.Server.Request, server: *Server) !void {
     const safe_target = if (target.len > 4096) target[0..4096] else target;
     const path = if (std.mem.indexOfScalar(u8, safe_target, '?')) |q| safe_target[0..q] else safe_target;
     const method = HttpMethod.fromString(@tagName(request.head.method)) orelse .GET;
+    const start_ms: i64 = std.Io.Timestamp.now(io_instance.io, .awake).toMilliseconds();
 
     var ctx = Context.init(request, server.allocator);
     ctx.max_body_size = server.config.max_body_size;
@@ -181,13 +328,25 @@ fn dispatch(request: *http.Server.Request, server: *Server) !void {
         ctx.renderText("Internal Server Error") catch |render_err| {
             getLog().warnFmt("Failed to render 500 response: {t}", .{render_err});
         };
+        if (server.metrics) |m| {
+            m.recordError(@errorName(err), path);
+        }
     };
 
-    // TODO(zig-0.17): Force Connection: close to work around http.Server
-    // reader state bug. Keep-alive on same connection triggers
-    // readerExpectNone assertion (state != .received_head).
-    // Remove this once upstream fix lands (see ziglang/zig#XXXXX).
-    request.head.keep_alive = false;
+    if (server.metrics) |m| {
+        m.recordRequest(@intFromEnum(ctx.res_status));
+        m.recordRoute(path);
+        const end_ms = std.Io.Timestamp.now(io_instance.io, .awake).toMilliseconds();
+        const dur: u64 = @intCast(@max(end_ms - start_ms, 0));
+        m.recordLatencyMs(dur);
+        m.recordRouteLatencyMs(path, dur);
+    }
+
+    // Zig http.Server keep-alive is unsafe until ziglang/zig#25017 (+ body drain).
+    // Default forces close; opt-in via ServerConfig.force_connection_close=false.
+    if (server.config.force_connection_close) {
+        request.head.keep_alive = false;
+    }
 }
 
 // ============================================================

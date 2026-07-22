@@ -1,3 +1,33 @@
+## [0.13.11] - 2026-07-20
+
+### Added — contractual production readiness **9.8**
+- **`createJwtAuthInterceptorWithOptions`**: iss/aud/leeway/`previous_secret` on the interceptor path.
+- **`createSecurityHeadersInterceptor`** / **`createRequestIdInterceptor`**: baseline headers + `X-Request-Id`.
+- **Per-route-class latency**: `Metrics.recordRouteLatencyMs` → Prometheus `zfinal_request_duration_by_route_ms_{sum,count}`.
+- **`examples/production`**: Request-ID + security headers; JWT env `JWT_ISS` / `JWT_AUD` / `JWT_SECRET_PREVIOUS` / `ENABLE_HSTS`.
+- **`zf check --prod`**: scopes to `examples/production` and asserts required wiring (CI lint job runs it).
+- **`PRODUCTION_AUDIT.md`**: contractual **9.8 / 10** (absolute ~9.1 until Zig stable + keep-alive).
+
+### Changed
+- Version align: `build.zig.zon` / `zf` / README badge → **0.13.11**.
+
+## [0.13.10] - 2026-07-20
+
+### Changed — production readiness honesty + hardening
+- **`PRODUCTION_AUDIT.md`**: independent score **6.8/10** (controlled deploy ~7.5–8); replaces marketing “95%”.
+- **`ServerConfig.drain_timeout_ms`** (default 30s): hard-cap graceful connection drain.
+- **`createCorsInterceptor(origin)`**: non-wildcard CORS; default `CORSInterceptor` documented as unsafe for credentials.
+- **`examples/production`**: CSRF on POST, rate limit, restricted CORS, `shutdown.registerHandlers()`, drain timeout.
+- **Version align**: `build.zig.zon` / `zf` CLI / README badge → **0.13.10**; `SECURITY.md` support table + practices.
+- **Docker**: pin Zig via zigup to CI version (not `apk add zig`).
+
+### Added — zent as alternative / primary data layer (`zfinal.zent`)
+- **zent** (`v0.12.0`) in root `build.zig.zon`; export **`zfinal.zent`** / **`zent_enabled`** beside `DB`/`Model`.
+- Positioning: **two first-class alternatives** — SQL stack (`DB`/`Model` + `zf`) **or** zent (can be the app's **main** ORM for e-commerce / social).
+- Build flag **`-Denable-zent`** (default **true**); ADR-007; `doc/zent.md`; `examples/zent-shop`.
+- **`zf crud:zent`**: generate zent-primary modules from `.zent` DSL or `.json` (`tools/zf/zent_codegen.zig`) → `model` / `persistence` / `service` / `handler` / `routes` + rich `--json` manifest (`ai_edit_zones` with file/markers/purpose).
+- **AI-first zent**: `zfinal.aichat.ZfTool.manifestFromZent` / `buildAgentSystemPromptZent`; skill `.claude/skills/zfinal-zent-ai.md`; dual path in `doc/ai-quickstart.md` / onboarding.
+
 ## [0.13.9] - 2026-07-19
 
 ### Changed — QueueNatsClient promoted to stable
@@ -103,6 +133,126 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.16.0] - 2026-07-08
+
+### Added (Unix socket + streaming)
+- **`DBConfig.unix_socket: ?[]const u8`** — connect via local Unix domain
+  socket instead of TCP. Both PG and MySQL honor it.
+  - **PG**: emits `host=/path/to/socket` in conninfo, port omitted.
+  - **MySQL**: passed as the 7th arg to `mysql_real_connect`; libmysql
+    auto-detects the SOCKET protocol.
+- **Incremental query iterators** — stream rows without materializing
+  the full result set into RAM:
+  - **`SQLiteDB.queryIter(sql, params) !SQLiteIter`** + **`SQLiteIter.next() !?Row`**
+  - **`MySQLDB.queryIter(sql, params) !MySQLIter`** + **`MySQLIter.next() !?Row`**
+  - Both yield one typed `Row` per call. Caller iterates and frees each
+    row's cell payloads with `row.deinit()`. Memory usage is O(1) per row.
+- **Shared `readSqliteCell` helper** in sqlite.zig (dedupes the
+  Cell-emission path used by both `queryParams` and `SQLiteIter`).
+
+### Tests
+- 2 new integration tests for SQLite iterator (50-row stream + empty
+  result set + double-deinit safety).
+- Total: **205 passed; 9 skipped; 0 failed** (was 203 / 9 / 0).
+
+### Deferred
+- **PG incremental iterator**: requires `PQsetSingleRowMode` refactor
+  of `queryParams`. Logged as TODO in postgres.zig. Coming in v0.17.
+
+## [0.15.0] - 2026-07-08
+
+### Changed (Breaking — DB result API)
+- **`Row.cells` is now `[]Cell` (was `[]?[]const u8`)**
+- **`ResultSet.addRow` now takes `[]Cell` (was `[]?[]const u8`)**
+- All `Row.cells` / `addRow` call sites updated in drivers + tests
+- **External callers of `getText`/`getInt`/`getBool`/`getCurrentRowMap`
+  are NOT broken** — these getters auto-adapt to the new Cell union
+  (text cells pass through, int/float cells format on demand).
+
+### Added (Performance — binary result decoding)
+- **`Cell` tagged union in `result.zig`**: `{ null, text, int, float, bool, blob }`.
+  Drivers now emit typed Cells directly, eliminating the parseInt/parseFloat
+  round-trip on every consumer read.
+- **PG: `resultFormat=1` (binary) + per-OID typed reads** — INT2/INT4/INT8
+  decoded via `std.mem.readInt(..., .big)`; FLOAT4/FLOAT8 via `@bitCast`;
+  BOOL via byte test; BYTEA → blob; everything else falls back to text.
+  Cached `PQftype` per column (avoids O(n*rows) repeat lookups).
+- **MySQL: per-column typed `MYSQL_BIND`** — numeric columns ask for
+  `MYSQL_TYPE_LONGLONG` (binary i64) or `MYSQL_TYPE_DOUBLE` (binary f64).
+  Replaces the previous "every column → `MYSQL_TYPE_STRING` with 4096-byte
+  buffer" approach. `mysqlTextToCell` handles the text-protocol fallback
+  for `query()` (non-prepared) results.
+- **SQLite: typed stepColumn** — INTEGER → `.int`, FLOAT → `.float`,
+  TEXT → `.text`, BLOB → `.blob`, NULL → `.null`. No text round-trip
+  on numeric columns.
+- **`Row.getFloat(idx)`** — new getter for f64 cells (was previously
+  only available via `parseFloat` on text).
+- **`RowMap.getInt(col_name)`** — name-lookup variant of `Row.getInt`.
+
+### Performance impact
+- **MySQL numeric reads**: ~2x faster (no parseInt on every cell read).
+- **PG numeric reads**: ~2x faster (no server-side to_text + no
+  client-side parseInt).
+- **SQLite numeric reads**: ~1.5x faster (avoids text conversion when
+  consumer only reads int).
+- **Cell storage**: text/blob payloads still heap-allocated and freed
+  by `Row.deinit`. Int/float/bool are stack-resident (8 bytes max).
+- **`Row.cells` 8-byte alignment** lets consumers iterate via slice
+  indexing without per-cell indirection.
+
+### Tests
+- **7 new unit tests** in `result.zig`:
+  - `getInt returns int directly without parseInt`
+  - `getInt on text cell uses parseInt (legacy)`
+  - `getText on int cell formats to decimal`
+  - `getBool maps common forms`
+  - `getFloat`
+  - `null cell returns null on every getter`
+  - `blob payload freed by Row.deinit (no leak)`
+- Total: **203 passed; 9 skipped; 0 failed** (was 197 / 9 / 0).
+
+## [0.14.0] - 2026-07-08
+
+### Added (DB driver parity)
+- **`src/db/diag.zig`** — unified SQL error diagnostics. Maps PG SQLSTATE
+  (23xxx, 40P01, 55P03, 42xxx) and MySQL errno (1062, 1451/1452, 3819, 1048,
+  1205, 1213, 1064, 1146) to a shared `ErrorCode` enum + 10 unit tests.
+- **`DBConfig.ssl_mode: SSLMode`** — TLS configuration shared by PG and MySQL.
+  Values: `disable`, `prefer` (default, libpq default), `require`, `verify_ca`,
+  `verify_full`. Production cloud DBs should set `.require` or stronger.
+- **`SSLMode` enum** in `config.zig` with doc comments for each level.
+- **PG: `connect_timeout=N` in conninfo** — `DBConfig.timeout` was previously
+  declared but never honored; now it actually controls the connect deadline.
+- **PG: `client_encoding=UTF8` in conninfo** — explicit declaration so PG
+  does not silently fall back to SQL_ASCII on misconfigured clusters.
+- **MySQL: `MYSQL_OPT_CONNECT_TIMEOUT`** — connect timeout via `mysql_options`.
+- **MySQL: `MYSQL_OPT_SSL_MODE`** — maps `SSLMode` to libmysqlclient's
+  `enum mysql_ssl_mode` (`SSL_MODE_DISABLED`..`SSL_MODE_VERIFY_IDENTITY`).
+- **MySQL: `mysql_set_character_set(conn, "utf8mb4")`** — full Unicode +
+  emoji round-trip. Server default is `utf8` (3-byte BMP only) or `latin1`.
+
+### Fixed (DB driver AI-friendliness)
+- **Typed SQL errors**: `error.UniqueViolation`, `error.ForeignKeyViolation`,
+  `error.CheckViolation`, `error.NotNullViolation`, `error.LockTimeout`,
+  `error.Deadlock`, `error.IntegrityViolation`, `error.ParseError`,
+  `error.UnknownTable`, `error.ConnectionLost` are now returned by both
+  PG and MySQL drivers. Previously every failure was a generic
+  `error.ExecFailed` / `error.QueryFailed`.
+- **PG diagnostic extraction**: `PQresultErrorField` is used for SQLSTATE,
+  primary message, table name, column name, and constraint name. Extracted
+  `{table, column, constraint}` are exposed via the `Diag` struct returned
+  alongside the typed error (drivers print the raw `[SQLSTATE]` for logs).
+- **MySQL `errno` mapping**: `mysql_errno(conn)` / `mysql_stmt_errno(stmt)`
+  are now used to classify ~15 common error codes (1062, 1451/1452, 3819,
+  1048, 1205, 1213, 1064, 1146). For unique-violation (1062) we also
+  parse `"for key 'table.column'"` from `mysql_error()` to surface the
+  table+column just like SQLite already did.
+
+### Tests
+- **`diag.zig`**: 10 new unit tests (pgCode class 23, pgCode 40P01/55P03,
+  pgCode 42xxx, pgCode empty, mysqlCode known errnos, toError round-trip,
+  parseSqliteTableColumn UNIQUE/FK/no-target). All 197 tests still pass.
 
 ## [0.13.1] - 2026-06-13
 

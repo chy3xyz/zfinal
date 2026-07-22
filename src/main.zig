@@ -6,6 +6,8 @@ const std = @import("std");
 test {
     std.testing.refAllDecls(@This());
     _ = @import("aichat/aichat_test.zig");
+    _ = @import("aichat/zf_tool.zig");
+    _ = @import("auth/jwt.zig");
 }
 
 // Export core modules
@@ -29,9 +31,21 @@ pub const initGlobalLogger = @import("core/logger.zig").initGlobalLogger;
 pub const getLogger = @import("core/logger.zig").getLogger;
 pub const Metrics = @import("core/metrics.zig").Metrics;
 pub const healthHandlerFor = @import("core/metrics.zig").healthHandlerFor;
+pub const healthHandlerWithChecks = @import("core/metrics.zig").healthHandlerWithChecks;
+pub const metricsHandlerFor = @import("core/metrics.zig").metricsHandlerFor;
+pub const HealthCheck = @import("core/metrics.zig").HealthCheck;
 pub const shutdown = @import("core/shutdown.zig");
+pub const auditLog = @import("core/audit.zig").log;
+pub const AuditEvent = @import("core/audit.zig").Event;
 pub const JsonNaming = enum { snake_case, camelCase };
-// Export database modules
+
+// ═══════════════════════════════════════════════════════════
+// Data layers — two first-class alternatives (pick a primary)
+//   A) DB / Model  — SQL-first, `zf crud:sql` (CRUD / legacy SQL)
+//   B) zent        — schema-as-code (can be the app's main ORM)
+// Choose one stack per module; do NOT mix drivers in one Tx.
+// Guide: doc/zent.md
+// ═══════════════════════════════════════════════════════════
 pub const DB = @import("db/db.zig").DB;
 pub const DBConfig = @import("db/config.zig").DBConfig;
 pub const DBType = @import("db/config.zig").DBType;
@@ -51,12 +65,32 @@ pub const Page = @import("db/pagination.zig").Page;
 pub const SqlTemplate = @import("db/sql_template.zig").SqlTemplate;
 pub const SqlTemplateManager = @import("db/sql_template.zig").SqlTemplateManager;
 
+/// Alternative data layer to `DB`/`Model` ([zent](https://github.com/chy3xyz/zent)).
+/// Equal choice — and the recommended **primary** stack for graph-heavy apps
+/// (e-commerce, social, RBAC). Default on (`-Denable-zent=true`).
+/// Usage: `const zent = zfinal.zent;`
+pub const zent = @import("data/zent_layer.zig").api;
+pub const zent_enabled = @import("data/zent_layer.zig").enabled;
+
 // Export interceptor modules
 pub const Interceptor = @import("interceptor/interceptor.zig").Interceptor;
 pub const InterceptorChain = @import("interceptor/interceptor.zig").InterceptorChain;
 pub const LoggingInterceptor = @import("interceptor/interceptor.zig").LoggingInterceptor;
 pub const AuthInterceptor = @import("interceptor/interceptor.zig").AuthInterceptor;
 pub const CORSInterceptor = @import("interceptor/interceptor.zig").CORSInterceptor;
+pub const createCorsInterceptor = @import("interceptor/interceptor.zig").createCorsInterceptor;
+pub const createCorsAllowlistInterceptor = @import("interceptor/interceptor.zig").createCorsAllowlistInterceptor;
+pub const createJwtAuthInterceptor = @import("interceptor/interceptor.zig").createJwtAuthInterceptor;
+pub const createJwtAuthInterceptorWithOptions = @import("interceptor/interceptor.zig").createJwtAuthInterceptorWithOptions;
+
+// Auth
+pub const Jwt = @import("auth/jwt.zig");
+pub const jwtSign = @import("auth/jwt.zig").sign;
+pub const jwtVerify = @import("auth/jwt.zig").verify;
+pub const jwtVerifyWithOptions = @import("auth/jwt.zig").verifyWithOptions;
+pub const jwtFreeClaims = @import("auth/jwt.zig").freeClaims;
+pub const JwtClaims = @import("auth/jwt.zig").Claims;
+pub const JwtVerifyOptions = @import("auth/jwt.zig").VerifyOptions;
 
 // Export validator module
 pub const Validator = @import("validator/validator.zig").Validator;
@@ -73,6 +107,7 @@ pub const CacheConfig = @import("plugin/cache.zig").CacheConfig;
 pub const CacheBackend = @import("plugin/cache.zig").CacheBackend;
 pub const RedisClient = @import("plugin/redis.zig").RedisClient;
 pub const RedisCache = @import("plugin/redis.zig").RedisCache;
+pub const RedisSessionStore = @import("plugin/redis_session.zig").RedisSessionStore;
 pub const CronPlugin = @import("plugin/cron.zig").CronPlugin;
 pub const CircuitBreaker = @import("plugin/circuit_breaker.zig").CircuitBreaker;
 pub const QueueClient = @import("plugin/queue.zig").QueueClient;
@@ -165,6 +200,9 @@ pub const createPerformanceInterceptor = @import("ext/interceptor.zig").createPe
 pub const createExceptionInterceptor = @import("ext/interceptor.zig").createExceptionInterceptor;
 pub const createAccessLogInterceptor = @import("ext/interceptor.zig").createAccessLogInterceptor;
 pub const createCacheInterceptor = @import("ext/interceptor.zig").createCacheInterceptor;
+pub const createRateLimitInterceptor = @import("ext/interceptor.zig").createRateLimitInterceptor;
+pub const createSecurityHeadersInterceptor = @import("ext/security_interceptor.zig").createSecurityHeadersInterceptor;
+pub const createRequestIdInterceptor = @import("ext/security_interceptor.zig").createRequestIdInterceptor;
 pub const RenderExt = @import("ext/util.zig").RenderExt;
 pub const ParamExt = @import("ext/util.zig").ParamExt;
 pub const SessionExt = @import("ext/util.zig").SessionExt;

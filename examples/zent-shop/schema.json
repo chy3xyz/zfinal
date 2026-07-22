@@ -1,0 +1,39 @@
+{
+  "module": "shop",
+  "api_prefix": "/api/v1",
+  "entities": [
+    {
+      "name": "User",
+      "fields": [
+        { "name": "name", "type": "string" },
+        { "name": "handle", "type": "string", "index": true }
+      ]
+    },
+    {
+      "name": "Product",
+      "fields": [
+        { "name": "seller_id", "type": "int" },
+        { "name": "name", "type": "string" },
+        { "name": "price_cents", "type": "int" },
+        { "name": "stock", "type": "int", "default": "0" }
+      ],
+      "list_by": "seller_id"
+    },
+    {
+      "name": "Follow",
+      "fields": [
+        { "name": "follower_id", "type": "int" },
+        { "name": "followee_id", "type": "int" }
+      ],
+      "list_by": "follower_id"
+    },
+    {
+      "name": "Post",
+      "fields": [
+        { "name": "author_id", "type": "int" },
+        { "name": "body", "type": "string" }
+      ],
+      "list_by": "author_id"
+    }
+  ]
+}

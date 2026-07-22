@@ -1,5 +1,7 @@
 const std = @import("std");
 const Context = @import("../core/context.zig").Context;
+const jwt = @import("../auth/jwt.zig");
+const audit = @import("../core/audit.zig");
 
 pub const Handler = *const fn (*Context) anyerror!void;
 
@@ -127,14 +129,14 @@ pub const LoggingInterceptor = Interceptor{
     .after = loggingAfter,
 };
 
-/// Auth interceptor example
+/// Demo-only auth: checks cookie `auth_token` **presence**, not validity.
+/// Do **not** use for production — use `createJwtAuthInterceptor`.
 pub fn authBefore(ctx: *Context) !bool {
-    // Check for auth token in cookie or header
     const token = try ctx.getCookie("auth_token");
     if (token == null) {
         ctx.res_status = .unauthorized;
         try ctx.renderJson(.{ .err = "Unauthorized" });
-        return false; // Stop execution
+        return false;
     }
     return true;
 }
@@ -144,17 +146,71 @@ pub const AuthInterceptor = Interceptor{
     .before = authBefore,
 };
 
-/// CORS interceptor
+/// Production JWT (HS256) auth. Expects `Authorization: Bearer <token>`.
+pub fn createJwtAuthInterceptor(secret: []const u8) Interceptor {
+    return createJwtAuthInterceptorWithOptions(secret, .{});
+}
+
+/// Production JWT with `VerifyOptions` (iss/aud/rotation/leeway).
+pub fn createJwtAuthInterceptorWithOptions(secret: []const u8, opts: jwt.VerifyOptions) Interceptor {
+    const Impl = struct {
+        var sec: []const u8 = undefined;
+        var verify_opts: jwt.VerifyOptions = undefined;
+
+        fn before(ctx: *Context) !bool {
+            const hdr = ctx.getHeader("Authorization") orelse {
+                ctx.res_status = .unauthorized;
+                try ctx.renderJson(.{ .err = "Missing Authorization" });
+                return false;
+            };
+            const prefix = "Bearer ";
+            if (hdr.len <= prefix.len or !std.ascii.eqlIgnoreCase(hdr[0..prefix.len], prefix)) {
+                ctx.res_status = .unauthorized;
+                try ctx.renderJson(.{ .err = "Expected Bearer token" });
+                return false;
+            }
+            const token = hdr[prefix.len..];
+            var ts: std.c.timespec = undefined;
+            _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+            const now: i64 = @intCast(ts.sec);
+
+            const claims = jwt.verifyWithOptions(ctx.allocator, sec, token, now, verify_opts) catch {
+                const path = if (std.mem.indexOfScalar(u8, ctx.req.head.target, '?')) |q|
+                    ctx.req.head.target[0..q]
+                else
+                    ctx.req.head.target;
+                audit.log(.auth_fail, path, "jwt");
+                ctx.res_status = .unauthorized;
+                try ctx.renderJson(.{ .err = "Invalid or expired token" });
+                return false;
+            };
+            defer jwt.freeClaims(ctx.allocator, claims);
+            try ctx.setAttr("jwt_sub", claims.sub);
+            if (claims.role) |role| {
+                try ctx.setAttr("jwt_role", role);
+            }
+            return true;
+        }
+    };
+    Impl.sec = secret;
+    Impl.verify_opts = opts;
+    return Interceptor{
+        .name = "jwt_auth",
+        .before = Impl.before,
+    };
+}
+
+/// Default CORS: `Access-Control-Allow-Origin: *`.
+/// **Not safe for credentialed browser APIs.** Prefer `createCorsInterceptor`.
 pub fn corsBefore(ctx: *Context) !bool {
     try ctx.setHeader("Access-Control-Allow-Origin", "*");
     try ctx.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
     try ctx.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
 
-    // Handle OPTIONS request
     if (ctx.req.head.method == .OPTIONS) {
         ctx.res_status = .ok;
         try ctx.renderText("");
-        return false; // Stop execution
+        return false;
     }
 
     return true;
@@ -169,6 +225,55 @@ pub const CORSInterceptor = Interceptor{
     .before = corsBefore,
     .after = corsAfter,
 };
+
+/// Production-oriented CORS: single explicit origin (no wildcard).
+pub fn createCorsInterceptor(allowed_origin: []const u8) Interceptor {
+    return createCorsAllowlistInterceptor(&.{allowed_origin});
+}
+
+/// Production CORS with an allow-list of origins. Reflects request Origin when matched.
+pub fn createCorsAllowlistInterceptor(allowed_origins: []const []const u8) Interceptor {
+    const Impl = struct {
+        var origins: []const []const u8 = &.{};
+
+        fn before(ctx: *Context) !bool {
+            const req_origin = ctx.getHeader("Origin");
+            var matched: ?[]const u8 = null;
+            if (req_origin) |o| {
+                for (origins) |allowed| {
+                    if (std.mem.eql(u8, allowed, o)) {
+                        matched = allowed;
+                        break;
+                    }
+                }
+            } else if (origins.len == 1) {
+                // Non-browser / same-origin tools: still emit the configured origin.
+                matched = origins[0];
+            }
+
+            if (matched) |m| {
+                try ctx.setHeader("Access-Control-Allow-Origin", m);
+                try ctx.setHeader("Vary", "Origin");
+                try ctx.setHeader("Access-Control-Allow-Credentials", "true");
+            }
+            try ctx.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
+            try ctx.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+
+            if (ctx.req.head.method == .OPTIONS) {
+                ctx.res_status = .ok;
+                try ctx.renderText("");
+                return false;
+            }
+            return true;
+        }
+    };
+    Impl.origins = allowed_origins;
+    return Interceptor{
+        .name = "cors_allowlist",
+        .before = Impl.before,
+        .after = corsAfter,
+    };
+}
 
 test "interceptor basic" {
     const allocator = std.testing.allocator;

@@ -114,3 +114,27 @@ pub fn createCacheInterceptor(cache: *zfinal.CacheKit) zfinal.Interceptor {
         .after = Impl.after,
     };
 }
+
+/// Rate-limit as a before-interceptor. Stops the chain when limiter returns 429.
+pub fn createRateLimitInterceptor(limiter: *zfinal.RateLimitHandler) zfinal.Interceptor {
+    const Impl = struct {
+        var lim: *zfinal.RateLimitHandler = undefined;
+
+        fn before(ctx: *zfinal.Context) !bool {
+            lim.handle(ctx) catch {
+                const path = if (std.mem.indexOfScalar(u8, ctx.req.head.target, '?')) |q|
+                    ctx.req.head.target[0..q]
+                else
+                    ctx.req.head.target;
+                zfinal.auditLog(.rate_limited, path, "429");
+                return false;
+            };
+            return true;
+        }
+    };
+    Impl.lim = limiter;
+    return zfinal.Interceptor{
+        .name = "rate_limit",
+        .before = Impl.before,
+    };
+}

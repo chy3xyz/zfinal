@@ -4,11 +4,11 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.8.x   | :white_check_mark: (current) |
-| 0.7.x   | :white_check_mark: |
-| 0.3.x   | :x:                |
-| 0.2.x   | :x:                |
-| 0.1.x   | :x:                |
+| 0.13.x  | :white_check_mark: (current) |
+| 0.12.x  | :white_check_mark: |
+| 0.8.x   | :x:                |
+| 0.7.x   | :x:                |
+| ≤0.3.x  | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -64,8 +64,8 @@ ZFinal 0.8+ includes defense-in-depth security across multiple layers:
 
 ### Thread Safety
 - All mutex locks propagate errors (`try`) or panic with clear messages.
-- DB transaction rollback failures trigger `@panic` (no silent data corruption).
-- 16 `catch{}` sites replaced with explicit error handling.
+- DB transaction rollback failures are logged and propagated (no silent commit).
+- Prefer explicit error handling over empty `catch {}`.
 
 ### Connection Security
 - Connection pool health checks: `DB.ping()` before returning connections.
@@ -77,7 +77,10 @@ ZFinal 0.8+ includes defense-in-depth security across multiple layers:
 - **SQL**: Use `Model` ORM or `execParams`/`queryParams`. Never concatenate user input into SQL strings.
 - **CSRF**: Apply `createTokenInterceptor` to all state-changing routes.
 - **Rate limiting**: Enable `RateLimitHandler` on public endpoints.
-- **Allocators**: Use `smp_allocator` (ReleaseFast) or `init.gpa` (Debug). Do not use `page_allocator` in request handlers.
+- **CORS**: Do not use default `CORSInterceptor` (`*`) for credentialed APIs; use `createCorsInterceptor("https://app.example.com")`.
+- **Auth**: `AuthInterceptor` only checks cookie presence — implement real JWT/session verification.
+- **TLS**: Terminate at reverse proxy; set proxy idle/read timeouts (framework has no per-request idle timeout yet).
+- **Shutdown**: Call `zfinal.shutdown.registerHandlers()` before `app.start()`; tune `ServerConfig.drain_timeout_ms`.
+- **Allocators**: Prefer `smp_allocator` (ReleaseFast) or process GPA (Debug). Avoid unbounded `page_allocator` in hot request paths.
 - **Logging**: Use `-Dlog-level=warn` in production to suppress debug output.
-- **Shutdown**: Call `shutdown.registerHandlers()` at startup and check `shutdown.isShuttingDown()` in your main loop.
 - **Dependencies**: Keep Zig and ZFinal up to date. Check `PRODUCTION_AUDIT.md` for known issue status.

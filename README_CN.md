@@ -10,7 +10,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-145%20passing%2C%200%20leaks-brightgreen.svg)]()
 [![Codegen](https://img.shields.io/badge/codegen%20tests-6%2F6-brightgreen.svg)]()
-[![Production](https://img.shields.io/badge/production--readiness-95%25-brightgreen.svg)](PRODUCTION_AUDIT.md)
+[![Production](https://img.shields.io/badge/production--score-6.8%2F10-yellow.svg)](PRODUCTION_AUDIT.md)
 
 [English](README.md) | **中文文档**
 
@@ -360,6 +360,9 @@ ZFinal 自带 6 个 skill + 1 个 sub-agent：
 千万级支撑与 L0→L3 渐进代码架构：
 [doc/scale_to_millions.md](doc/scale_to_millions.md) ·
 [doc/progressive_architecture.md](doc/progressive_architecture.md)。
+
+电商 / 社交图关系用 **zent**（与 `zf` Model 正交）：
+[doc/zent.md](doc/zent.md) · [`examples/zent-shop`](examples/zent-shop/)。
 
 ---
 

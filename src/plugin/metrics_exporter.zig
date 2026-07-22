@@ -21,6 +21,34 @@ pub const MetricsExporter = struct {
             \\zfinal_responses_total{{code="3xx"}} {d}
             \\zfinal_responses_total{{code="4xx"}} {d}
             \\zfinal_responses_total{{code="5xx"}} {d}
+            \\# HELP zfinal_request_duration_ms Request latency histogram (ms).
+            \\# TYPE zfinal_request_duration_ms histogram
+            \\zfinal_request_duration_ms_bucket{{le="5"}} {d}
+            \\zfinal_request_duration_ms_bucket{{le="20"}} {d}
+            \\zfinal_request_duration_ms_bucket{{le="50"}} {d}
+            \\zfinal_request_duration_ms_bucket{{le="100"}} {d}
+            \\zfinal_request_duration_ms_bucket{{le="250"}} {d}
+            \\zfinal_request_duration_ms_bucket{{le="1000"}} {d}
+            \\zfinal_request_duration_ms_bucket{{le="5000"}} {d}
+            \\zfinal_request_duration_ms_bucket{{le="+Inf"}} {d}
+            \\zfinal_request_duration_ms_sum {d}
+            \\zfinal_request_duration_ms_count {d}
+            \\# HELP zfinal_requests_by_route_total Coarse path-class request counts.
+            \\# TYPE zfinal_requests_by_route_total counter
+            \\zfinal_requests_by_route_total{{route="health"}} {d}
+            \\zfinal_requests_by_route_total{{route="metrics"}} {d}
+            \\zfinal_requests_by_route_total{{route="api"}} {d}
+            \\zfinal_requests_by_route_total{{route="other"}} {d}
+            \\# HELP zfinal_request_duration_by_route_ms Coarse path-class latency (ms).
+            \\# TYPE zfinal_request_duration_by_route_ms summary
+            \\zfinal_request_duration_by_route_ms_sum{{route="health"}} {d}
+            \\zfinal_request_duration_by_route_ms_count{{route="health"}} {d}
+            \\zfinal_request_duration_by_route_ms_sum{{route="metrics"}} {d}
+            \\zfinal_request_duration_by_route_ms_count{{route="metrics"}} {d}
+            \\zfinal_request_duration_by_route_ms_sum{{route="api"}} {d}
+            \\zfinal_request_duration_by_route_ms_count{{route="api"}} {d}
+            \\zfinal_request_duration_by_route_ms_sum{{route="other"}} {d}
+            \\zfinal_request_duration_by_route_ms_count{{route="other"}} {d}
             \\
         , .{
             metrics.uptime(),
@@ -30,7 +58,38 @@ pub const MetricsExporter = struct {
             metrics.responses_3xx.load(.monotonic),
             metrics.responses_4xx.load(.monotonic),
             metrics.responses_5xx.load(.monotonic),
+            cumBucket(metrics, 0),
+            cumBucket(metrics, 1),
+            cumBucket(metrics, 2),
+            cumBucket(metrics, 3),
+            cumBucket(metrics, 4),
+            cumBucket(metrics, 5),
+            cumBucket(metrics, 6),
+            cumBucket(metrics, 7),
+            metrics.latency_sum_ms.load(.monotonic),
+            metrics.total_requests.load(.monotonic),
+            metrics.route_hits[0].load(.monotonic),
+            metrics.route_hits[1].load(.monotonic),
+            metrics.route_hits[2].load(.monotonic),
+            metrics.route_hits[3].load(.monotonic),
+            metrics.route_latency_sum_ms[0].load(.monotonic),
+            metrics.route_latency_count[0].load(.monotonic),
+            metrics.route_latency_sum_ms[1].load(.monotonic),
+            metrics.route_latency_count[1].load(.monotonic),
+            metrics.route_latency_sum_ms[2].load(.monotonic),
+            metrics.route_latency_count[2].load(.monotonic),
+            metrics.route_latency_sum_ms[3].load(.monotonic),
+            metrics.route_latency_count[3].load(.monotonic),
         });
+    }
+
+    fn cumBucket(metrics: *const Metrics, idx: usize) u64 {
+        var sum: u64 = 0;
+        var i: usize = 0;
+        while (i <= idx) : (i += 1) {
+            sum += metrics.latency_bucket_counts[i].load(.monotonic);
+        }
+        return sum;
     }
 
     pub fn toJson(metrics: *const Metrics, allocator: std.mem.Allocator) ![]const u8 {
@@ -55,12 +114,16 @@ test "metrics exporter: prometheus contains counters" {
     m.recordConnection();
     m.recordRequest(200);
     m.recordRequest(500);
+    m.recordRoute("/api/me");
+    m.recordRouteLatencyMs("/api/me", 12);
 
     const text = try MetricsExporter.toPrometheus(&m, a);
     defer a.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "zfinal_connections_total 1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "code=\"2xx\"}} 1") != null or std.mem.indexOf(u8, text, "code=\"2xx\"} 1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "5xx") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "zfinal_request_duration_by_route_ms_sum{route=\"api\"} 12") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "zfinal_request_duration_by_route_ms_count{route=\"api\"} 1") != null);
 
     const json = try MetricsExporter.toJson(&m, a);
     defer a.free(json);

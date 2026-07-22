@@ -303,7 +303,7 @@ test "db: bulk insert on SQLite" {
 // ============================================================
 test "db: CRUD on PostgreSQL" {
     const a = std.testing.allocator;
-    var db = (try tryOpenPG(a)) orelse return;
+    var db = (try tryOpenPG(a)) orelse return error.SkipZigTest;
     defer db.destroy();
 
     _ = db.exec("DROP TABLE IF EXISTS cross_crud") catch {};
@@ -323,7 +323,7 @@ test "db: CRUD on PostgreSQL" {
 // ============================================================
 test "db: CRUD on MySQL" {
     const a = std.testing.allocator;
-    var db = (try tryOpenMY(a)) orelse return;
+    var db = (try tryOpenMY(a)) orelse return error.SkipZigTest;
     defer db.destroy();
 
     _ = db.exec("DROP TABLE IF EXISTS cross_crud") catch {};
@@ -415,4 +415,55 @@ test "db: column metadata" {
     defer r.deinit();
     try std.testing.expectEqual(@as(usize, 3), r.columnCount());
     try std.testing.expect(r.next());
+}
+
+test "db: incremental iterator streams rows without materializing" {
+    const a = std.testing.allocator;
+    const SQLiteDB = @import("drivers/sqlite.zig").SQLiteDB;
+    var db = try DB.init(a, DBConfig.sqliteMemory());
+    defer db.destroy();
+    const sdb: *SQLiteDB = &db.driver.sqlite;
+    _ = try db.exec("CREATE TABLE iter_test (id INTEGER PRIMARY KEY, val TEXT)");
+    var i: i64 = 0;
+    while (i < 50) : (i += 1) {
+        var buf: [16]u8 = undefined;
+        const v = try std.fmt.bufPrint(&buf, "row{d}", .{i});
+        _ = try db.execParams("INSERT INTO iter_test (val) VALUES (?)", &.{SqlParam{ .text = v }});
+    }
+
+    // Stream via the incremental iterator — memory should stay flat (1 row
+    // at a time) regardless of total row count.
+    var iter = try sdb.queryIterNoArgs("SELECT id, val FROM iter_test ORDER BY id");
+    defer iter.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), iter.columns().len);
+
+    var seen: usize = 0;
+    var first_id: i64 = -1;
+    var last_id: i64 = -1;
+    while (try iter.next()) |row| {
+        var mutable = row;
+        defer mutable.deinit();
+        if (seen == 0) first_id = (try mutable.getInt(0)).?;
+        last_id = (try mutable.getInt(0)).?;
+        seen += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 50), seen);
+    try std.testing.expectEqual(@as(i64, 1), first_id);
+    try std.testing.expectEqual(@as(i64, 50), last_id);
+}
+
+test "db: incremental iterator returns null after exhaustion, can call deinit twice safely" {
+    const a = std.testing.allocator;
+    const SQLiteDB = @import("drivers/sqlite.zig").SQLiteDB;
+    var db = try DB.init(a, DBConfig.sqliteMemory());
+    defer db.destroy();
+    const sdb: *SQLiteDB = &db.driver.sqlite;
+    _ = try db.exec("CREATE TABLE iter_empty (id INTEGER PRIMARY KEY)");
+
+    var iter = try sdb.queryIterNoArgs("SELECT id FROM iter_empty");
+    defer iter.deinit();
+    try std.testing.expect((try iter.next()) == null);
+    // Calling next() again on an exhausted iterator is safe and returns null.
+    try std.testing.expect((try iter.next()) == null);
 }

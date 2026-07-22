@@ -2,7 +2,7 @@ const std = @import("std");
 const io_instance = @import("../io_instance.zig");
 const Plugin = @import("plugin.zig").Plugin;
 
-/// MQTT 3.1.1 client configuration (TCP, no TLS).
+/// MQTT 3.1.1 client configuration (TCP; TLS via reverse proxy / sidecar).
 pub const MqttConfig = struct {
     broker_host: []const u8,
     broker_port: u16 = 1883,
@@ -10,6 +10,8 @@ pub const MqttConfig = struct {
     username: ?[]const u8 = null,
     password: ?[]const u8 = null,
     keep_alive: u16 = 60,
+    /// Native MQTTS not implemented — terminate TLS at a proxy, or keep false.
+    use_tls: bool = false,
 };
 
 /// Stable MQTT 3.1.1 client: CONNECT / CONNACK / PUBLISH QoS0 / PINGREQ / DISCONNECT.
@@ -50,6 +52,7 @@ pub const MqttPlugin = struct {
 
     pub fn connect(self: *MqttPlugin) !void {
         if (self.connected) return;
+        if (self.config.use_tls) return error.TlsNotImplemented;
         const address = try std.Io.net.IpAddress.parseIp4(self.config.broker_host, self.config.broker_port);
         self.stream = try address.connect(io_instance.io, .{ .mode = .stream });
         errdefer self.disconnect();

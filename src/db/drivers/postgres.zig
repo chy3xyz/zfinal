@@ -1,9 +1,19 @@
 const std = @import("std");
 const DBConfig = @import("../config.zig").DBConfig;
+const Cell = @import("../result.zig").Cell;
 const ResultSet = @import("../result.zig").ResultSet;
 const SqlParam = @import("../sql_param.zig").SqlParam;
+const diag = @import("../diag.zig");
 
 const c = @import("c_pg");
+
+// PG_DIAG_* field codes — character constants from <libpq-fe.h>:
+//   'C' SQLSTATE, 'M' primary message, 't' table, 'c' column, 'n' constraint.
+const PG_DIAG_SQLSTATE: c_int = 'C';
+const PG_DIAG_TABLE_NAME: c_int = 't';
+const PG_DIAG_COLUMN_NAME: c_int = 'c';
+const PG_DIAG_CONSTRAINT_NAME: c_int = 'n';
+const PG_DIAG_MESSAGE_PRIMARY: c_int = 'M';
 
 pub const PostgresDB = struct {
     conn: ?*c.PGconn,
@@ -12,22 +22,70 @@ pub const PostgresDB = struct {
 
     pub fn connect(allocator: std.mem.Allocator, config: DBConfig) !PostgresDB {
         var conn_buf: [1024]u8 = undefined;
-        const conn_slice = try std.fmt.bufPrint(
+        // Build the conninfo string. If unix_socket is set, the host is
+        // the socket path (libpq accepts `host=/path/to/socket` directly)
+        // and the port is irrelevant — we omit it to avoid libpq errors.
+        const base = if (config.unix_socket) |sock| try std.fmt.bufPrint(
             &conn_buf,
-            "host={s} port={d} dbname={s} user={s} password={s}",
+            "host={s} dbname={s} user={s} password={s} connect_timeout={d} client_encoding=UTF8",
+            .{
+                sock,
+                config.database,
+                config.username orelse "",
+                config.password orelse "",
+                config.timeout,
+            },
+        ) else try std.fmt.bufPrint(
+            &conn_buf,
+            "host={s} port={d} dbname={s} user={s} password={s} connect_timeout={d} client_encoding=UTF8",
             .{
                 config.host orelse "localhost",
                 config.port orelse 5432,
                 config.database,
                 config.username orelse "",
                 config.password orelse "",
+                config.timeout,
             },
         );
-        conn_buf[conn_slice.len] = 0;
-        const conn_str: [:0]const u8 = conn_buf[0..conn_slice.len :0];
+        conn_buf[base.len] = 0;
+
+        // Append sslmode= if non-default. libpq's default is 'prefer' which
+        // silently downgrades to non-SSL on failure — cloud DBs (RDS, Cloud SQL)
+        // require an explicit 'require' or stricter.
+        var ssl_buf: [64]u8 = undefined;
+        const ssl_suffix: []const u8 = switch (config.ssl_mode) {
+            .disable => blk: {
+                const s = try std.fmt.bufPrint(&ssl_buf, " sslmode=disable", .{});
+                break :blk s;
+            },
+            .prefer => "", // libpq default — no need to append
+            .require => blk: {
+                const s = try std.fmt.bufPrint(&ssl_buf, " sslmode=require", .{});
+                break :blk s;
+            },
+            .verify_ca => blk: {
+                const s = try std.fmt.bufPrint(&ssl_buf, " sslmode=verify-ca", .{});
+                break :blk s;
+            },
+            .verify_full => blk: {
+                const s = try std.fmt.bufPrint(&ssl_buf, " sslmode=verify-full", .{});
+                break :blk s;
+            },
+        };
+
+        // Compose final conninfo: base + suffix
+        var final_buf: [1100]u8 = undefined;
+        const final_len = base.len + ssl_suffix.len;
+        if (final_len > final_buf.len) return error.ConnectionFailed;
+        @memcpy(final_buf[0..base.len], base);
+        @memcpy(final_buf[base.len..final_len], ssl_suffix);
+        final_buf[final_len] = 0;
+        const conn_str: [:0]const u8 = final_buf[0..final_len :0];
 
         const conn = c.PQconnectdb(conn_str);
         @memset(&conn_buf, 0);
+        @memset(&ssl_buf, 0);
+        @memset(&final_buf, 0);
         if (c.PQstatus(conn) != c.CONNECTION_OK) {
             const msg = c.PQerrorMessage(conn);
             std.debug.print("PostgreSQL connect failed: {s}\n", .{msg});
@@ -58,9 +116,9 @@ pub const PostgresDB = struct {
         defer c.PQclear(res);
 
         if (c.PQresultStatus(res) != c.PGRES_COMMAND_OK) {
-            const msg = c.PQerrorMessage(cxn);
-            std.debug.print("PostgreSQL exec failed: {s}\n", .{msg});
-            return error.ExecFailed;
+            const d = extractPgDiag(res);
+            std.debug.print("PostgreSQL exec failed [{s}]: {s}\n", .{ d.raw, d.message });
+            return diag.toError(d.code);
         }
 
         const s = std.mem.span(c.PQcmdTuples(res));
@@ -80,14 +138,14 @@ pub const PostgresDB = struct {
             bind.values.ptr,
             bind.lengths.ptr,
             bind.formats.ptr,
-            0,
+            0, // input param format: 0 = text
         );
         defer c.PQclear(res);
 
         if (c.PQresultStatus(res) != c.PGRES_COMMAND_OK) {
-            const msg = c.PQerrorMessage(cxn);
-            std.debug.print("PostgreSQL execParams failed: {s}\n", .{msg});
-            return error.ExecFailed;
+            const d = extractPgDiag(res);
+            std.debug.print("PostgreSQL execParams failed [{s}]: {s}\n", .{ d.raw, d.message });
+            return diag.toError(d.code);
         }
 
         const s = std.mem.span(c.PQcmdTuples(res));
@@ -103,6 +161,11 @@ pub const PostgresDB = struct {
         const bind = try buildParams(self.allocator, params);
         defer freeParams(self.allocator, bind);
 
+        // resultFormats[0] = 1 → binary output. libpq sends column values
+        // in their native wire format (i64 for INT8, f64 for FLOAT8, etc.)
+        // and we decode directly into the matching Cell variant. Saves the
+        // server-side to_text() and the client-side parseInt() round-trip.
+        var result_formats = [_]c_int{1};
         const res = c.PQexecParams(
             cxn,
             sql.ptr,
@@ -111,14 +174,14 @@ pub const PostgresDB = struct {
             bind.values.ptr,
             bind.lengths.ptr,
             bind.formats.ptr,
-            0,
+            &result_formats,
         );
         defer c.PQclear(res);
 
         if (c.PQresultStatus(res) != c.PGRES_TUPLES_OK) {
-            const msg = c.PQerrorMessage(cxn);
-            std.debug.print("PostgreSQL query failed: {s}\n", .{msg});
-            return error.QueryFailed;
+            const d = extractPgDiag(res);
+            std.debug.print("PostgreSQL query failed [{s}]: {s}\n", .{ d.raw, d.message });
+            return diag.toError(d.code);
         }
 
         const n_cols: usize = @intCast(c.PQnfields(res));
@@ -133,20 +196,25 @@ pub const PostgresDB = struct {
         var result_set = ResultSet.init(self.allocator, columns);
         errdefer result_set.deinit();
 
+        // Cache column OIDs once — PQftype is O(n*rows) otherwise.
+        var col_oids = try self.allocator.alloc(c.Oid, n_cols);
+        defer self.allocator.free(col_oids);
+        for (0..n_cols) |i| {
+            col_oids[i] = c.PQftype(res, @intCast(i));
+        }
+
         for (0..n_rows) |ri| {
-            var cells = try self.allocator.alloc(?[]const u8, n_cols);
+            var cells = try self.allocator.alloc(Cell, n_cols);
             errdefer {
-                for (cells) |c_| if (c_) |v| self.allocator.free(v);
+                for (cells) |cell| switch (cell) {
+                    .text => |t| self.allocator.free(t),
+                    .blob => |b| self.allocator.free(b),
+                    else => {},
+                };
                 self.allocator.free(cells);
             }
             for (0..n_cols) |ci| {
-                if (c.PQgetisnull(res, @intCast(ri), @intCast(ci)) == 1) {
-                    cells[ci] = null;
-                } else {
-                    const ptr = c.PQgetvalue(res, @intCast(ri), @intCast(ci));
-                    const len: usize = @intCast(c.PQgetlength(res, @intCast(ri), @intCast(ci)));
-                    cells[ci] = try self.allocator.dupe(u8, ptr[0..len]);
-                }
+                cells[ci] = try readPgCell(self.allocator, res, @intCast(ri), @intCast(ci), col_oids[ci]);
             }
             try result_set.addRow(cells);
         }
@@ -237,5 +305,101 @@ pub const PostgresDB = struct {
         allocator.free(p.values);
         allocator.free(p.lengths);
         allocator.free(p.formats);
+    }
+
+    /// Extract SQLSTATE + table/column/constraint from a failed PG result.
+    /// All returned slices are borrowed from libpq-owned memory — do NOT
+    /// free them. Caller must keep `res` alive until diag is consumed.
+    fn extractPgDiag(res_opt: ?*c.PGresult) diag.Diag {
+        const res = res_opt orelse {
+            // No result — PQexec itself failed. Use PQerrorMessage on conn.
+            return .{
+                .code = .connection_lost,
+                .message = "(no result)",
+                .raw = "",
+            };
+        };
+        const sqlstate_ptr = c.PQresultErrorField(res, PG_DIAG_SQLSTATE);
+        const sqlstate = if (sqlstate_ptr) |p| std.mem.span(p) else "";
+        const code = diag.pgCode(sqlstate);
+
+        const msg_ptr = c.PQresultErrorField(res, PG_DIAG_MESSAGE_PRIMARY);
+        const message = if (msg_ptr) |p| std.mem.span(p) else "";
+
+        const table_ptr = c.PQresultErrorField(res, PG_DIAG_TABLE_NAME);
+        const table: ?[]const u8 = if (table_ptr) |p| std.mem.span(p) else null;
+
+        const col_ptr = c.PQresultErrorField(res, PG_DIAG_COLUMN_NAME);
+        const column: ?[]const u8 = if (col_ptr) |p| std.mem.span(p) else null;
+
+        const cn_ptr = c.PQresultErrorField(res, PG_DIAG_CONSTRAINT_NAME);
+        const constraint: ?[]const u8 = if (cn_ptr) |p| std.mem.span(p) else null;
+
+        return .{
+            .code = code,
+            .message = message,
+            .table = table,
+            .column = column,
+            .constraint = constraint,
+            .raw = sqlstate,
+        };
+    }
+
+    /// Decode a single binary-result cell into the matching Cell variant.
+    /// We dispatch on PQftype OID — common types mapped to native Cell:
+    ///   INT2/INT4/INT8 → .int, FLOAT4/FLOAT8/NUMERIC → .float,
+    ///   BOOL → .bool, TEXT/VARCHAR/CHAR/UNKNOWN → .text (always works),
+    ///   BYTEA → .blob, DATE/TIME/TIMESTAMP → .text (ISO wire format).
+    /// Unknown OIDs fall back to .text via PQgetvalue.
+    fn readPgCell(allocator: std.mem.Allocator, res: *c.PGresult, row: c_int, col: c_int, oid: c.Oid) !Cell {
+        if (c.PQgetisnull(res, row, col) == 1) return .null;
+
+        // Native binary reads. Endian: server is big-endian; Zig host is
+        // typically little-endian on x86/aarch64. We use std.mem.nativeToBig
+        // for ints (network byte order = big).
+        switch (oid) {
+            c.INT8OID, c.BIGSERIALOID => {
+                const v = c.PQgetvalue(res, row, col);
+                const big = std.mem.readInt(i64, v[0..8].*, .big);
+                return .{ .int = big };
+            },
+            c.INT4OID => {
+                const v = c.PQgetvalue(res, row, col);
+                const big = std.mem.readInt(i32, v[0..4].*, .big);
+                return .{ .int = big };
+            },
+            c.INT2OID => {
+                const v = c.PQgetvalue(res, row, col);
+                const big = std.mem.readInt(i16, v[0..2].*, .big);
+                return .{ .int = big };
+            },
+            c.FLOAT8OID => {
+                const v = c.PQgetvalue(res, row, col);
+                const bits = std.mem.readInt(u64, v[0..8].*, .big);
+                return .{ .float = @bitCast(bits) };
+            },
+            c.FLOAT4OID => {
+                const v = c.PQgetvalue(res, row, col);
+                const bits = std.mem.readInt(u32, v[0..4].*, .big);
+                return .{ .float = @as(f32, @bitCast(bits)) };
+            },
+            c.BOOLOID => {
+                const v = c.PQgetvalue(res, row, col);
+                return .{ .bool = v[0] != 0 };
+            },
+            c.BYTEAOID => {
+                const v = c.PQgetvalue(res, row, col);
+                const len: usize = @intCast(c.PQgetlength(res, row, col));
+                return .{ .blob = try allocator.dupe(u8, v[0..len]) };
+            },
+            else => {
+                // text, varchar, char, date, time, timestamp, json, uuid, numeric, ...
+                // Either true binary (uuid=16 bytes, numeric=variable) or already
+                // text-encoded. For correctness over speed, use text for these.
+                const v = c.PQgetvalue(res, row, col);
+                const len: usize = @intCast(c.PQgetlength(res, row, col));
+                return .{ .text = try allocator.dupe(u8, v[0..len]) };
+            },
+        }
     }
 };

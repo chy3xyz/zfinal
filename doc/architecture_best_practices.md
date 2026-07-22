@@ -26,8 +26,12 @@ HTTP 请求
   → InterceptorChain（横切：日志 / 鉴权 / CORS / CSRF）
   → Router → Handler（绑参、状态码、响应形状）
   → Service（业务规则、事务边界）
-  → Model / DB（映射、参数化 SQL）
+  → 数据层（二选一主力）：
+       A) Model / DB（`zf crud:sql`）
+       B) zfinal.zent（schema-as-code；电商/社交可作全站主力）
 ```
+
+详见 [zent.md](zent.md)。
 
 ---
 
@@ -79,7 +83,8 @@ SQL schema  ──zf──►  生成物 + JSON manifest
 | 目录 | 放什么 | 不放什么 |
 |------|--------|----------|
 | `core/` | Server、Router、Context、Session、Logger、Metrics、Shutdown | 业务实体 |
-| `db/` | 连接、池、ORM、分页、驱动（PG/MySQL opt-in） | HTTP |
+| `db/` | 连接、池、ORM、分页、驱动（PG/MySQL opt-in）— **数据层 A** | HTTP |
+| （`zfinal.zent`） | schema-as-code ORM — **数据层 B**，可与 A 二选一作主力 | 与 `DB` 同事务混用 |
 | `interceptor/` | 请求链横切 | 持久化 |
 | `plugin/` | 可启停能力（Cache / Redis / Cron / MQTT / P2P…） | 无生命周期的纯函数 |
 | `kit/` | **零框架依赖** 工具 | `@import("zfinal")` |

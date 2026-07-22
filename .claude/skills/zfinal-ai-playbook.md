@@ -1,81 +1,77 @@
 ---
 name: zfinal-ai-playbook
-description: Use when developing a ZFinal web app and you need to know the exact sequence of `zf` commands and file edits. Triggers on "new feature in zfinal", "add a model/handler", "regenerate from SQL", or any task that combines `zf` CLI with hand-written business logic.
+description: Use when developing a ZFinal web app and you need to know the exact sequence of `zf` commands and file edits. Triggers on "new feature in zfinal", "add a model/handler", "regenerate from SQL", or any task that combines `zf` CLI with hand-written business logic. For zent/graph domains prefer zfinal-zent-ai.
 ---
 
 # ZFinal AI Playbook — Standard Script
 
-The complete sequence an AI follows to add a feature in a ZFinal app. Use this when the user asks to add a new entity, endpoint, or CRUD capability.
+The complete sequence an AI follows to add a feature in a ZFinal app.
+
+> **Graph / e-commerce / social?** Load **`zfinal-zent-ai`** instead and use
+> `zf crud:zent`. This playbook is the **SQL / DB primary** path.
 
 ## 1. Read the situation
 
 Before invoking any `zf` command:
 
-- Read `CLAUDE.md` (Health Stack, development notes) and `AGENTS.md` (gen/edit boundaries).
-- Confirm the project is on `main` or a feature branch.
-- Identify the SQL schema source: a file, an existing DB, or a DDL sketch in the user's message.
+- Read `CLAUDE.md` and `AGENTS.md`.
+- Pick data-layer primary: **A) DB/Model** (this doc) or **B) zent** (`zfinal-zent-ai`).
+- Identify schema source: `.sql`, live DSN, or `.zent`/JSON.
 
-## 2. Generate from SQL (preferred)
+## 2. Generate (SQL primary)
 
 ```bash
-# Parse schema and emit model/service/handler/routes + tests
 zf crud:sql schema.sql [project_name] [--force] [--json]
 ```
 
-Always use `--json` to receive a machine-readable manifest. Parse it to learn:
+Always use `--json`. Parse `tables[].files`, `ai_edit_zones`, `fields`, `next_steps`.
 
-- `tables[].files.model` / `.service` / `.handler` / `.routes`
-- `tables[].ai_edit_zones` (where to add business logic)
-- `tables[].fields` (column types and nullability)
-- `next_steps[]` (what to do after generation)
+### zent primary (pointer)
+
+```bash
+zf crud:zent schema.zent --json
+# details: .claude/skills/zfinal-zent-ai.md
+```
 
 ## 3. Edit inside the AI edit zones
-
-Generated files contain markers like:
 
 ```zig
 // ── ai-edit-zone: business rules ─────────────
 ```
 
-Inside these zones, add the requested logic. Examples:
+- `service.zig` — validation, computed fields
+- `handler.zig` — auth, response shaping
+- `model.zig` — rare hooks
 
-- `service.zig` — cross-table validation, computed fields, audit hooks
-- `handler.zig` — per-route auth checks, response shaping, custom error codes
-- `model.zig` — model-level hooks (rare; usually stays empty)
+Keep edits small.
 
-Keep edits small. Promote complex logic to a new `business.zig` rather than nesting inside generated files.
-
-## 4. Add routes (if not auto-generated)
+## 4. Single-file generators
 
 ```bash
-zf g handler <Entity>        # single-file handler (non-CRUD)
-zf g service <Entity>        # service skeleton
-zf g middleware <Name>       # interceptor
-zf g task <Name>             # scheduled task
+zf g handler <Entity> [--json]
+zf g service <Entity> [--json]
+zf g middleware <Name>
+zf g task <Name>
 ```
-
-Each accepts `--json` to emit a manifest with the output path and next steps.
 
 ## 5. Verify
 
 ```bash
-zf check                     # AI boundary audit (must pass)
-zig build                    # compilation
-zig build test               # unit + integration tests
+zf check && zig build && zig build test
 ```
 
-If any step fails, fix inside the `ai-edit-zone` — never touch generated boilerplate outside the zones.
+## 6. In-process AI tool
 
-## 6. Commit and ship
-
-- Stage only intentional files. Generated files committed alongside your edits.
-- Commit message: `feat: <what>` or `fix: <what>`.
-- Tag with `zf version` or by editing `CHANGELOG.md` then `git tag v0.X.Y`.
-- Push to `origin` and create a GitHub release.
+```zig
+const tool = zfinal.aichat.ZfTool.init(allocator);
+_ = try tool.manifestFromSql(sql);           // SQL stack
+_ = try tool.manifestFromZent(zent_schema); // zent stack
+_ = try tool.buildAgentSystemPromptZent(zent_schema);
+```
 
 ## Anti-patterns
 
-- **Don't** hand-write `model.zig` / `handler.zig` from scratch. Use `zf crud:sql` or `zf g`.
-- **Don't** edit outside `ai-edit-zone` markers unless you also update the generator template.
-- **Don't** run `zig fmt` on `.gen.zig` files — the generator emits pre-formatted code.
-- **Don't** skip `zf check`. It catches boundary violations before commit.
+- Hand-write CRUD — use `zf crud:sql` or `zf crud:zent`.
+- Edit outside `ai-edit-zone` unless updating the generator.
+- Mix `zfinal.DB` and `zent` in one transaction.
+- Skip `zf check`.

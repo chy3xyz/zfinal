@@ -23,7 +23,8 @@ Then load exactly one skill based on the task:
 
 | Task | Skill |
 |------|-------|
-| Add a feature, model, handler, route | `zfinal-ai-playbook` |
+| Add a feature, model, handler, route (SQL) | `zfinal-ai-playbook` |
+| E-commerce / social / graph / `crud:zent` | `zfinal-zent-ai` |
 | Run tests, fix CI, health check | `zfinal-health` |
 | Add framework internals | `zfinal-framework` |
 | Build app from scratch | `zfinal-app` |
@@ -32,12 +33,13 @@ Then load exactly one skill based on the task:
 
 ## Hard rules
 
-- Use `zf` for all code generation. Never hand-write `model.zig` / `handler.zig` / `service.zig`.
+- Use `zf` for all code generation. Never hand-write `model.zig` / `handler.zig` / `service.zig` / zent `persistence.zig` boilerplate.
 - Edit only inside `// ── ai-edit-zone: ...` markers. The markers are contract.
-- Always pass `--json` when an AI is invoking `zf`; parse the manifest.
+- Always pass `--json` when an AI is invoking `zf` (`crud:sql` or `crud:zent`); parse the manifest.
 - After every code change, run `zig build test`.
 - After every generator change, run `zig build test-zf`.
-- Never edit `tools/zf/codegen.zig` without running its tests.
+- Never edit `tools/zf/codegen.zig` or `tools/zf/zent_codegen.zig` without running its tests.
+- Never mix `zfinal.DB` and `zent` Driver in one transaction.
 - Never commit `zfinal_migration.zig` (gitignored).
 
 ## Communication style

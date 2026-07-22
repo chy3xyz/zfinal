@@ -1,0 +1,20 @@
+.{
+    .name = .zent_shop,
+    .version = "0.1.0",
+    .fingerprint = 0x67d840f1e1e25591,
+    .minimum_zig_version = "0.17.0",
+    // Same pin as root build.zig.zon. For local zent edits, switch to:
+    //   .zent = .{ .path = "../../../zent" },
+    .dependencies = .{
+        .zent = .{
+            .url = "git+https://github.com/chy3xyz/zent?ref=v0.12.0#db5851857892896f6462c6da4d1a3eb1c952c5f6",
+            .hash = "N-V-__8AANTKDADWk9QQji3SsTsRizXViB6MsytJG2SsxFK3",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "README.md",
+    },
+}

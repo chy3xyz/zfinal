@@ -69,6 +69,7 @@ Runnable demo in [`examples/ai-blog-5min/`](../examples/ai-blog-5min/ZF_GEN.md).
 | Architecture best practices (layers, plugins, AI boundaries) | [architecture_best_practices.md](architecture_best_practices.md) |
 | Scale-out for millions of users | [scale_to_millions.md](scale_to_millions.md) |
 | Progressive app architecture (L0→L3) | [progressive_architecture.md](progressive_architecture.md) |
+| 数据层：`DB` **或** `zent`（可作主力） | [zent.md](zent.md) |
 | RobustMQ / Kafka messaging | [robustmq.md](robustmq.md) |
 | NATS messaging | [nats.md](nats.md) |
 | Understand the framework's design | [core_concepts.md](core_concepts.md) |

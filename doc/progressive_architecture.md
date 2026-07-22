@@ -60,6 +60,8 @@ app.setPort(8080);
 var db = try zfinal.DB.init(allocator, .{ .driver = .sqlite, .path = "app.db" });
 defer db.deinit();
 
+// 数据层二选一：上例为 SQL 主力。电商/社交可改为 zfinal.zent 作主力（doc/zent.md）。
+
 // 把 *DB 注入 service（或经 app 扩展点），handler 只调 service
 try users.routes.register(&app, svc);
 try app.start();
@@ -283,6 +285,8 @@ main.zig 只组装 adapters → ports → service → routes
 | 熔断外部依赖 | L2 | `CircuitBreaker` 包 adapters |
 | 租户 / 分片键 | L3 | model 字段 + 查询强制谓词 |
 | 异步削峰 | L3 | `ports/bus` → RobustMQ（Kafka）或 NATS |
+| 图关系密（订单/关注） | L2+ | **`zfinal.zent` 作主力**（见 `doc/zent.md`）；`DB` 仅旁路 |
+| 平 CRUD / 存量 SQL | L0+ | **`DB`/`Model` + `zf` 作主力** |
 | CDN / 对象存储 | L1+ | handler 只返回 URL，不接大文件流 |
 
 ---

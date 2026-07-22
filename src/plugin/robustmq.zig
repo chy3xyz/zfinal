@@ -615,13 +615,89 @@ pub const KafkaWireFormat = struct {
         // error-code parse can be tightened once broker version matrix is locked.
     }
 
-    /// Very loose Fetch response parser: collect printable bulk payloads after the header.
-    /// Full RecordBatch decode is complex; we extract length-prefixed value blobs when present.
+    /// Extract message values from a Fetch response by scanning for magic=2 record batches.
+    /// Ported from zigmodu KafkaConnector — network path already exercised; this delivers payloads.
     pub fn parseFetchValues(allocator: std.mem.Allocator, resp: []const u8) ![][]const u8 {
-        _ = resp;
-        // Until full RecordBatch decode lands, return empty set on success path.
-        // Callers still exercise the network round-trip.
-        return try allocator.alloc([]const u8, 0);
+        var out: std.ArrayList([]const u8) = .empty;
+        errdefer {
+            for (out.items) |v| allocator.free(v);
+            out.deinit(allocator);
+        }
+        var i: usize = 0;
+        while (i + 22 < resp.len) : (i += 1) {
+            if (resp[i] != 2) continue;
+            if (i < 16) continue;
+            const batch_start = i - 16;
+            if (batch_start + 21 > resp.len) continue;
+            const length = readI32(resp[batch_start + 8 ..][0..4]);
+            if (length <= 0 or length > 16 * 1024 * 1024) continue;
+            const batch_end = batch_start + 12 + @as(usize, @intCast(length));
+            if (batch_end > resp.len) continue;
+            const values = parseRecordBatchValues(allocator, resp[batch_start..batch_end]) catch continue;
+            defer {
+                for (values) |v| allocator.free(v);
+                allocator.free(values);
+            }
+            for (values) |v| {
+                try out.append(allocator, try allocator.dupe(u8, v));
+            }
+            i = batch_end -| 1;
+        }
+        return try out.toOwnedSlice(allocator);
+    }
+
+    /// Decode RecordBatch (magic=2) values (Produce layout).
+    pub fn parseRecordBatchValues(allocator: std.mem.Allocator, batch: []const u8) ![][]const u8 {
+        if (batch.len < 22) return error.InvalidRecordBatch;
+        if (batch[16] != 2) return error.UnsupportedMagic;
+        const body = batch[21..];
+        if (body.len < 40) return try allocator.alloc([]const u8, 0);
+        var off: usize = 40;
+        var out: std.ArrayList([]const u8) = .empty;
+        errdefer {
+            for (out.items) |v| allocator.free(v);
+            out.deinit(allocator);
+        }
+        while (off < body.len) {
+            const rec_len, const n1 = try readVarint(body[off..]);
+            off += n1;
+            if (rec_len <= 0 or off + @as(usize, @intCast(rec_len)) > body.len) break;
+            const rec = body[off .. off + @as(usize, @intCast(rec_len))];
+            off += @intCast(rec_len);
+            var roff: usize = 1;
+            _, const n2 = try readVarint(rec[roff..]);
+            roff += n2;
+            _, const n3 = try readVarint(rec[roff..]);
+            roff += n3;
+            const key_len, const n4 = try readVarint(rec[roff..]);
+            roff += n4;
+            if (key_len >= 0) {
+                if (roff + @as(usize, @intCast(key_len)) > rec.len) break;
+                roff += @intCast(key_len);
+            }
+            const val_len, const n5 = try readVarint(rec[roff..]);
+            roff += n5;
+            if (val_len < 0 or roff + @as(usize, @intCast(val_len)) > rec.len) break;
+            const val = try allocator.dupe(u8, rec[roff .. roff + @as(usize, @intCast(val_len))]);
+            try out.append(allocator, val);
+        }
+        return try out.toOwnedSlice(allocator);
+    }
+
+    fn readVarint(buf: []const u8) !struct { i32, usize } {
+        var result: u32 = 0;
+        var shift: u5 = 0;
+        var i: usize = 0;
+        while (i < buf.len and i < 5) : (i += 1) {
+            const b = buf[i];
+            result |= @as(u32, b & 0x7f) << shift;
+            if ((b & 0x80) == 0) {
+                const decoded: i32 = @as(i32, @bitCast(result >> 1)) ^ -@as(i32, @intCast(result & 1));
+                return .{ decoded, i + 1 };
+            }
+            shift += 7;
+        }
+        return error.InvalidVarint;
     }
 
     pub fn buildProduceRequestLegacy(
@@ -874,6 +950,29 @@ test "KafkaWireFormat produce request" {
     // api_key = 0
     try std.testing.expectEqual(@as(u8, 0), payload[0]);
     try std.testing.expectEqual(@as(u8, 0), payload[1]);
+}
+
+test "KafkaWireFormat parseFetchValues finds embedded batch" {
+    const allocator = std.testing.allocator;
+    // Build a produce request which embeds a RecordBatch, then scan it.
+    const payload = try KafkaWireFormat.buildProduceRequest(
+        allocator,
+        "t",
+        0,
+        null,
+        "fetch-me",
+        7,
+        "zfinal",
+        1,
+    );
+    defer allocator.free(payload);
+    const values = try KafkaWireFormat.parseFetchValues(allocator, payload);
+    defer {
+        for (values) |v| allocator.free(v);
+        allocator.free(values);
+    }
+    try std.testing.expect(values.len >= 1);
+    try std.testing.expectEqualStrings("fetch-me", values[0]);
 }
 
 test "parseBootstrap RobustMQ default form" {

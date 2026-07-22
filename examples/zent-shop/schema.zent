@@ -1,0 +1,31 @@
+# zf crud:zent — shop domain (e-commerce + social)
+# Generate: zf crud:zent examples/zent-shop/schema.zent --json
+# Or:       zf crud:zent schema.zent --force
+
+module shop
+api_prefix /api/v1
+
+entity User {
+  name: string
+  handle: string @index
+}
+
+entity Product {
+  seller_id: int
+  name: string
+  price_cents: int
+  stock: int = 0
+  list_by: seller_id
+}
+
+entity Follow {
+  follower_id: int
+  followee_id: int
+  list_by: follower_id
+}
+
+entity Post {
+  author_id: int
+  body: string
+  list_by: author_id
+}
