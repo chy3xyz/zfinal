@@ -25,6 +25,17 @@ pub const MySQLDB = struct {
     last_affected: u64 = 0,
     rpl: ?c.MYSQL_RPL = null,
     binlog_opened: bool = false,
+    /// Connection-local prepared statement cache. Each entry holds a
+    /// `MYSQL_STMT*` plus the original SQL for re-preparation if the
+    /// connection is reset. Use `prepareCached` to install,
+    /// `execCached`/`queryCached` to execute, `releaseCached` to free.
+    stmt_cache: ?std.ArrayList(CachedStmt) = null,
+
+    const CachedStmt = struct {
+        name: []const u8,
+        sql: []const u8,
+        stmt: ?*c.MYSQL_STMT,
+    };
 
     pub fn connect(allocator: std.mem.Allocator, config: DBConfig) !MySQLDB {
         const conn = c.mysql_init(null) orelse return error.InitFailed;
@@ -105,6 +116,16 @@ pub const MySQLDB = struct {
 
     pub fn close(self: *MySQLDB) void {
         self.binlogClose();
+        // Close any cached statements before the connection goes away.
+        if (self.stmt_cache) |*cache| {
+            for (cache.items) |entry| {
+                if (entry.stmt) |s| _ = c.mysql_stmt_close(s);
+                self.allocator.free(entry.name);
+                self.allocator.free(entry.sql);
+            }
+            cache.deinit(self.allocator);
+            self.stmt_cache = null;
+        }
         if (self.conn) |cxn| {
             c.mysql_close(cxn);
             self.conn = null;
@@ -298,6 +319,82 @@ pub const MySQLDB = struct {
 
     pub fn affectedRows(self: *MySQLDB) i64 {
         return @intCast(self.last_affected);
+    }
+
+    /// Install a connection-local prepared statement under `name`.
+    /// Subsequent `execCached(name, ...)` / `queryCached(name, ...)`
+    /// reuse the `MYSQL_STMT*` without re-preparing.
+    ///
+    /// On error, any partial stmt is closed and removed.
+    pub fn prepareCached(self: *MySQLDB, name: [:0]const u8, sql: [:0]const u8, _: c_int) !void {
+        // `n_params` accepted for API symmetry with PG but ignored —
+        // MySQL infers parameter count from the bound array at execute.
+        const cxn = self.conn orelse return error.ConnectionFailed;
+        const stmt = c.mysql_stmt_init(cxn) orelse return error.StmtInitFailed;
+        if (c.mysql_stmt_prepare(stmt, sql.ptr, sql.len) != 0) {
+            const d = extractMysqlStmtDiag(stmt);
+            std.debug.print("MySQL prepareCached failed [errno {s}]: {s}\n", .{ d.raw, d.message });
+            _ = c.mysql_stmt_close(stmt);
+            return diag.toError(d.code);
+        }
+        if (self.stmt_cache == null) {
+            self.stmt_cache = std.ArrayList(CachedStmt).empty;
+        }
+        try self.stmt_cache.?.append(self.allocator, .{
+            .name = try self.allocator.dupe(u8, name),
+            .sql = try self.allocator.dupe(u8, sql),
+            .stmt = stmt,
+        });
+    }
+
+    /// Look up a cached statement handle by name.
+    fn lookupCached(self: *MySQLDB, name: []const u8) ?*c.MYSQL_STMT {
+        const cache = self.stmt_cache orelse return null;
+        for (cache.items) |entry| {
+            if (std.mem.eql(u8, entry.name, name)) return entry.stmt;
+        }
+        return null;
+    }
+
+    /// Execute a previously-prepared statement (no result set).
+    /// `params` are bound by the helper; types must match the original
+    /// prepareCached SQL signature.
+    pub fn execCached(
+        self: *MySQLDB,
+        name: []const u8,
+        params: []const SqlParam,
+    ) !void {
+        const stmt = self.lookupCached(name) orelse return error.PrepareFailed;
+
+        var bind = try buildMysqlBind(self.allocator, params);
+        defer freeMysqlBind(self.allocator, &bind);
+
+        if (c.mysql_stmt_bind_param(stmt, bind.bind.items.ptr)) {
+            const d = extractMysqlStmtDiag(stmt);
+            std.debug.print("MySQL execCached bind failed [errno {s}]: {s}\n", .{ d.raw, d.message });
+            return diag.toError(d.code);
+        }
+        if (c.mysql_stmt_execute(stmt) != 0) {
+            const d = extractMysqlStmtDiag(stmt);
+            std.debug.print("MySQL execCached execute failed [errno {s}]: {s}\n", .{ d.raw, d.message });
+            return diag.toError(d.code);
+        }
+        self.last_affected = c.mysql_stmt_affected_rows(stmt);
+    }
+
+    /// Close a cached statement and remove from cache.
+    pub fn releaseCached(self: *MySQLDB, name: [:0]const u8) void {
+        if (self.stmt_cache) |*cache| {
+            for (cache.items, 0..) |entry, i| {
+                if (std.mem.eql(u8, entry.name, name)) {
+                    if (entry.stmt) |s| _ = c.mysql_stmt_close(s);
+                    self.allocator.free(entry.name);
+                    self.allocator.free(entry.sql);
+                    _ = cache.orderedRemove(i);
+                    return;
+                }
+            }
+        }
     }
 
     /// Open an incremental query iterator. Like `queryParams`, but yields

@@ -467,3 +467,165 @@ test "db: incremental iterator returns null after exhaustion, can call deinit tw
     // Calling next() again on an exhausted iterator is safe and returns null.
     try std.testing.expect((try iter.next()) == null);
 }
+
+// ─── v0.18 API ergonomics ─────────────────────────────────────────────
+
+test "db: minimal exec + query (no transaction) works without corruption" {
+    const a = std.testing.allocator;
+    var db = try DB.init(a, DBConfig.sqliteMemory());
+    defer db.destroy();
+    _ = try db.exec("CREATE TABLE mini (id INTEGER PRIMARY KEY, v TEXT)");
+
+    try db.execParams("INSERT INTO mini (v) VALUES (?)", &.{SqlParam{ .text = "x" }});
+    try db.execParams("INSERT INTO mini (v) VALUES (?)", &.{SqlParam{ .text = "y" }});
+
+    var r = try db.query("SELECT COUNT(*) FROM mini");
+    defer r.deinit();
+    try std.testing.expect(r.next());
+    try std.testing.expectEqual(@as(i64, 2), (try r.currentRow().?.getInt(0)).?);
+}
+
+const TxnBody = struct {
+    fn run(d: *DB) !void {
+        try d.execParams("INSERT INTO txn_test (val) VALUES (?)", &.{SqlParam{ .text = "first" }});
+        try d.execParams("INSERT INTO txn_test (val) VALUES (?)", &.{SqlParam{ .text = "second" }});
+    }
+};
+
+test "db: transaction commits on success" {
+    const a = std.testing.allocator;
+    var db = try DB.init(a, DBConfig.sqliteMemory());
+    defer db.destroy();
+    _ = try db.exec("CREATE TABLE txn_test (id INTEGER PRIMARY KEY, val TEXT)");
+
+    try db.transaction(null, TxnBody.run);
+
+    var r = try db.query("SELECT COUNT(*) FROM txn_test");
+    defer r.deinit();
+    try std.testing.expect(r.next());
+    try std.testing.expectEqual(@as(i64, 2), (try r.currentRow().?.getInt(0)).?);
+}
+
+const TxnFailingBody = struct {
+    fn run(d: *DB) !void {
+        try d.execParams("INSERT INTO txn_test (val) VALUES (?)", &.{SqlParam{ .text = "rolled" }});
+        return error.IntentionalTestError;
+    }
+};
+
+test "db: transaction rolls back on error" {
+    const a = std.testing.allocator;
+    var db = try DB.init(a, DBConfig.sqliteMemory());
+    defer db.destroy();
+    _ = try db.exec("CREATE TABLE txn_test (id INTEGER PRIMARY KEY, val TEXT)");
+    // Seed one row outside any transaction so COUNT(*) is non-zero baseline.
+    _ = try db.execParams("INSERT INTO txn_test (val) VALUES (?)", &.{SqlParam{ .text = "baseline" }});
+
+    try std.testing.expectError(error.IntentionalTestError, db.transaction(null, TxnFailingBody.run));
+
+    var r = try db.query("SELECT COUNT(*) FROM txn_test WHERE val = 'rolled'");
+    defer r.deinit();
+    try std.testing.expect(r.next());
+    try std.testing.expectEqual(@as(i64, 0), (try r.currentRow().?.getInt(0)).?);
+}
+
+test "db: transactionResult returns the body's value" {
+    const a = std.testing.allocator;
+    var db = try DB.init(a, DBConfig.sqliteMemory());
+    defer db.destroy();
+    _ = try db.exec("CREATE TABLE txn_result (id INTEGER PRIMARY KEY)");
+
+    const Body = struct {
+        fn run(d: *DB) !i64 {
+            try d.exec("INSERT INTO txn_result DEFAULT VALUES");
+            try d.exec("INSERT INTO txn_result DEFAULT VALUES");
+            return 42;
+        }
+    };
+    const out = try db.transactionResult(null, i64, Body.run);
+    try std.testing.expectEqual(@as(i64, 42), out);
+}
+
+test "db: queryScalar returns typed single value" {
+    const a = std.testing.allocator;
+    var db = try DB.init(a, DBConfig.sqliteMemory());
+    defer db.destroy();
+    _ = try db.exec("CREATE TABLE qs (id INTEGER PRIMARY KEY, n INTEGER, label TEXT, active INTEGER)");
+    _ = try db.execParams("INSERT INTO qs VALUES (1, 10, 'alice', 1)", &.{});
+    _ = try db.execParams("INSERT INTO qs VALUES (2, 20, 'bob', 0)", &.{});
+
+    // Integer aggregate.
+    const cnt: ?i64 = try db.queryScalar(a, i64, "SELECT COUNT(*) FROM qs", &.{});
+    try std.testing.expectEqual(@as(i64, 2), cnt.?);
+
+    // Max aggregate.
+    const max: ?i64 = try db.queryScalar(a, i64, "SELECT MAX(n) FROM qs", &.{});
+    try std.testing.expectEqual(@as(i64, 20), max.?);
+
+    // Boolean.
+    const is_active: ?bool = try db.queryScalar(a, bool, "SELECT active FROM qs WHERE id = 1", &.{});
+    try std.testing.expectEqual(true, is_active.?);
+
+    // Text — queryScalar([]const u8) heap-allocates the returned slice.
+    // Caller owns it and must free.
+    {
+        const name = try db.queryScalar(a, []const u8, "SELECT label FROM qs WHERE id = 2", &.{});
+        defer if (name) |n| a.free(n);
+        try std.testing.expectEqualStrings("bob", name.?);
+    }
+
+    // Empty result set returns null. Use a query that returns 0 rows,
+    // not COUNT(*) which always returns one row with value 0.
+    const empty: ?i64 = try db.queryScalar(a, i64, "SELECT id FROM qs WHERE id = 999", &.{});
+    try std.testing.expect(empty == null);
+
+    // Float aggregate.
+    _ = try db.execParams("INSERT INTO qs VALUES (3, 31, 'pi', 1)", &.{});
+    const sum: ?f64 = try db.queryScalar(a, f64, "SELECT CAST(SUM(n) AS REAL) FROM qs", &.{});
+    try std.testing.expect(sum != null);
+}
+
+test "db: execMany runs the same SQL for each row" {
+    const a = std.testing.allocator;
+    var db = try DB.init(a, DBConfig.sqliteMemory());
+    defer db.destroy();
+    _ = try db.exec("CREATE TABLE em (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+
+    const rows = [_][]const SqlParam{
+        &[_]SqlParam{ .{ .text = "Alice" }, .{ .int = 30 } },
+        &[_]SqlParam{ .{ .text = "Bob" }, .{ .int = 25 } },
+        &[_]SqlParam{ .{ .text = "Charlie" }, .{ .int = 35 } },
+        &[_]SqlParam{ .{ .text = "Dora" }, .{ .int = 28 } },
+    };
+    try db.execMany("INSERT INTO em (name, age) VALUES (?, ?)", &rows);
+
+    const cnt: ?i64 = try db.queryScalar(a, i64, "SELECT COUNT(*) FROM em", &.{});
+    try std.testing.expectEqual(@as(i64, 4), cnt.?);
+
+    const total_age: ?i64 = try db.queryScalar(a, i64, "SELECT SUM(age) FROM em", &.{});
+    try std.testing.expectEqual(@as(i64, 118), total_age.?);
+}
+
+// ─── v0.18 prepared statement cache ────────────────────────────────────
+//
+// PG and MySQL live tests are gated behind -Ddriver_pg=true /
+// -Ddriver_mysql=true. The following test verifies the cache API
+// returns UnsupportedDriver on SQLite (where the cache is a no-op),
+// so we get coverage on every build.
+
+test "db: prepareCached returns UnsupportedDriver on SQLite" {
+    const a = std.testing.allocator;
+    var db = try DB.init(a, DBConfig.sqliteMemory());
+    defer db.destroy();
+
+    try std.testing.expectError(
+        error.UnsupportedDriver,
+        db.prepareCached("stmt1", "SELECT 1", 0),
+    );
+    try std.testing.expectError(
+        error.UnsupportedDriver,
+        db.execCached("stmt1", &.{}),
+    );
+    // releaseCached should silently no-op on SQLite.
+    db.releaseCached("stmt1");
+}

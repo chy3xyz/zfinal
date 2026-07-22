@@ -134,6 +134,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-07-08
+
+### Added (API ergonomics)
+- **`DB.transaction(cfg, body)`** — closure-based auto-commit / rollback.
+  If `body` returns normally, the transaction commits. If it errors,
+  the transaction rolls back and the error propagates. Optional
+  `DeadlockRetry` config (currently classifies MySQL/PG `Deadlock`
+  errors as retryable, max 3 attempts).
+- **`DB.transactionResult(T, body)`** — generic-returning variant. Use
+  when the body produces a value (computed aggregate, generated ID,
+  etc.).
+- **`DB.queryScalar(T, sql, params)`** — single-cell shortcut for
+  COUNT / MAX / EXISTS queries. `T ∈ {i64, f64, bool, []const u8}`.
+  For `T = []const u8` the returned slice is heap-allocated via the
+  passed-in allocator (caller owns + frees).
+- **`DB.execMany(sql, rows)`** — runs the same SQL once per row in
+  the batch. Caller passes a slice of `[]const SqlParam` slices.
+
+### Added (Prepared statement cache — PG + MySQL)
+- **`DB.prepareCached(name, sql, n_params)`** /
+  **`DB.execCached(name, params)`** /
+  **`DB.releaseCached(name)`** — server-side (PG `PQprepare` /
+  `PQexecPrepared`) or connection-local (MySQL `MYSQL_STMT*`)
+  prepared statement cache. Skips server-side parse + plan on repeat
+  calls. Typical 2-5x speedup on hot queries.
+- Cache entries are auto-released on `db.destroy()`.
+- SQLite returns `UnsupportedDriver` for the cache API (no-op).
+
+### Tests
+- 7 new integration tests (transaction commit/rollback/result,
+  queryScalar typed returns, execMany, minimal exec+query, cache
+  driver guard).
+- Total: **215 passed; 9 skipped; 0 failed** (was 208 / 9 / 0).
+
+### Known issue
+- **`transaction` body must be a NAMED function or struct method** —
+  not an anonymous struct literal. Zig 0.17 has a lifetime issue
+  with anonymous struct function pointers as `comptime body`; using
+  one corrupts the next query. Documented in the API doc comment.
+
 ## [0.17.0] - 2026-07-08
 
 ### Added

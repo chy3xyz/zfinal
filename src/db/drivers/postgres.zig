@@ -20,6 +20,20 @@ pub const PostgresDB = struct {
     conn: ?*c.PGconn,
     allocator: std.mem.Allocator,
     last_affected: i64 = 0,
+    /// Server-side prepared statement cache. Each entry maps a stable
+    /// `name` to the server-prepared statement. Re-running the same
+    /// `execCached(name, ...)` / `queryCached(name, ...)` avoids the
+    /// parse + plan cost of `PQexecParams` on every call.
+    ///
+    /// Use `prepareCached` to install, `releaseCached` to DEALLOCATE.
+    /// On `close`, all entries are released automatically.
+    stmt_cache: ?std.ArrayList(CachedStmt) = null,
+
+    const CachedStmt = struct {
+        name: []const u8,
+        sql: []const u8,
+        n_params: c_int,
+    };
 
     pub fn connect(allocator: std.mem.Allocator, config: DBConfig) !PostgresDB {
         var conn_buf: [1024]u8 = undefined;
@@ -98,6 +112,16 @@ pub const PostgresDB = struct {
     }
 
     pub fn close(self: *PostgresDB) void {
+        // Release any cached prepared statements (DEALLOCATE on server).
+        if (self.stmt_cache) |*cache| {
+            for (cache.items) |entry| {
+                self.releaseCached(entry.name[0.. :0].*);
+                self.allocator.free(entry.name);
+                self.allocator.free(entry.sql);
+            }
+            cache.deinit(self.allocator);
+            self.stmt_cache = null;
+        }
         if (self.conn) |cxn| {
             c.PQfinish(cxn);
             self.conn = null;
@@ -413,6 +437,83 @@ pub const PostgresDB = struct {
 
     pub fn affectedRows(self: *PostgresDB) i64 {
         return self.last_affected;
+    }
+
+    /// Install a server-side prepared statement under `name`. Subsequent
+    /// `execCached(name, ...)` / `queryCached(name, ...)` reuse it without
+    /// re-parsing. Naming convention: prefix with your app to avoid
+    /// collisions (e.g. "myapp_users_get").
+    ///
+    /// On error, any partial server-side state is rolled back.
+    pub fn prepareCached(self: *PostgresDB, name: [:0]const u8, sql: [:0]const u8, n_params: c_int) !void {
+        const cxn = self.conn orelse return error.ConnectionFailed;
+        // PQprepare server-parses + plans the statement and binds it to
+        // `name`. The returned PGresult is just an ack — PQclear it.
+        const res = c.PQprepare(cxn, name, sql, n_params, null);
+        defer c.PQclear(res);
+        if (c.PQresultStatus(res) != c.PGRES_COMMAND_OK) {
+            const d = extractPgDiag(res);
+            std.debug.print("PostgreSQL prepareCached failed [{s}]: {s}\n", .{ d.raw, d.message });
+            return diag.toError(d.code);
+        }
+        if (self.stmt_cache == null) {
+            self.stmt_cache = std.ArrayList(CachedStmt).empty;
+        }
+        try self.stmt_cache.?.append(self.allocator, .{
+            .name = try self.allocator.dupe(u8, name),
+            .sql = try self.allocator.dupe(u8, sql),
+            .n_params = n_params,
+        });
+    }
+
+    /// Execute a previously-prepared statement. Result rows (if any) are
+    /// returned; caller must `result.deinit()`. `result_format = 1` →
+    /// binary output (typed reads).
+    pub fn execCached(
+        self: *PostgresDB,
+        name: [:0]const u8,
+        params: []const ?[*:0]const u8,
+        param_lengths: []const c_int,
+        param_formats: []const c_int,
+        result_format: c_int,
+    ) !c.PGresult {
+        const cxn = self.conn orelse return error.ConnectionFailed;
+        const res = c.PQexecPrepared(
+            cxn,
+            name,
+            @intCast(params.len),
+            params.ptr,
+            param_lengths.ptr,
+            param_formats.ptr,
+            result_format,
+        );
+        // Caller owns the result and must PQclear it.
+        return res orelse return error.ConnectionFailed;
+    }
+
+    /// DEALLOCATE a server-side prepared statement. After this call,
+    /// `execCached(name, ...)` will fail until `prepareCached(name, ...)`
+    /// is called again.
+    pub fn releaseCached(self: *PostgresDB, name: [:0]const u8) !void {
+        const cxn = self.conn orelse return error.ConnectionFailed;
+        const dealloc_sql = try std.fmt.allocPrint(self.allocator, "DEALLOCATE \"{s}\"", .{name});
+        defer self.allocator.free(dealloc_sql);
+        const res = c.PQexec(cxn, dealloc_sql.ptr);
+        defer c.PQclear(res);
+        if (c.PQresultStatus(res) != c.PGRES_COMMAND_OK) {
+            return error.PrepareFailed;
+        }
+        // Remove from local cache.
+        if (self.stmt_cache) |*cache| {
+            for (cache.items, 0..) |entry, i| {
+                if (std.mem.eql(u8, entry.name, name)) {
+                    self.allocator.free(entry.name);
+                    self.allocator.free(entry.sql);
+                    _ = cache.orderedRemove(i);
+                    return;
+                }
+            }
+        }
     }
 
     pub fn lastInsertId(self: *PostgresDB) !i64 {
