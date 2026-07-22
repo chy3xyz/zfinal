@@ -1,3 +1,15 @@
+## [0.20.0] - 2026-07-08
+
+### Added
+- **Slow-query diagnostics**: `DB` times `exec`, `execParams`, `query`, and `queryParams`, logs SQL exceeding the configurable 100 ms threshold, and exposes a per-connection atomic counter.
+- **`zf openapi`**: scans static direct, interceptor, and `RouteGroup` routes; normalizes path parameters; emits deterministic OpenAPI 3.0.3 YAML without overwriting an existing spec.
+
+### Changed
+- **O(1) named-column lookup**: `ResultSet` builds a name-to-index cache once per query, avoiding repeated linear scans in wide ORM rows.
+
+### Fixed
+- **Numeric result text lifetime**: integer and float compatibility formatting now uses thread-local buffers instead of returning slices into expired stack frames. This fixes `InvalidField` failures exposed by cached `RowMap` lookup.
+
 ## [0.13.11] - 2026-07-20
 
 ### Added — contractual production readiness **9.8**

@@ -6,6 +6,16 @@ const ResultSet = @import("result.zig").ResultSet;
 const SqlParam = @import("sql_param.zig").SqlParam;
 
 const builtin = @import("builtin");
+
+/// Monotonic nanosecond timestamp via libc clock_gettime.
+/// Same pattern as src/core/context.zig:monoNowNs — Zig 0.17 removed
+/// `std.time.Instant.now()` in favor of `std.Io.Timestamp.now(io, .awake)`.
+/// `DB` doesn't hold an Io instance, so we call clock_gettime directly.
+fn monoNowNs() u64 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @intCast(@as(i128, ts.sec) * std.time.ns_per_s + ts.nsec);
+}
 const SQLiteDB = @import("drivers/sqlite.zig").SQLiteDB;
 const build_opts = @import("build_options");
 
@@ -86,6 +96,14 @@ pub const DB = struct {
     /// ConnectionPool flips it: checkIn() on release / pool insertion,
     /// checkOut() on acquire — catching use-after-release of pooled conns.
     checked_out: bool = true,
+    /// Slow query threshold in nanoseconds. Operations exceeding this
+    /// duration are logged via `std.debug.print` with the SQL (truncated
+    /// to 200 chars) and the elapsed time. Default 100ms (100_000_000ns).
+    /// Set to 0 to disable.
+    slow_query_threshold_ns: u64 = 100 * std.time.ns_per_ms,
+    /// Total number of slow queries observed on this connection.
+    /// Useful for /debug/pool endpoint and per-connection health checks.
+    slow_query_count: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
 
     pub const RawBinlogEvent = MySQLDB.RawBinlogEvent;
 
@@ -155,20 +173,28 @@ pub const DB = struct {
 
     pub fn exec(self: *DB, sql: [:0]const u8) !void {
         try self.guard();
-        switch (self.driver) {
-            .postgres => |*d| try d.exec(sql),
-            .mysql => |*d| try d.exec(sql),
-            .sqlite => |*d| try d.exec(sql),
-        }
+        const start = monoNowNs();
+        const result = switch (self.driver) {
+            .postgres => |*d| d.exec(sql),
+            .mysql => |*d| d.exec(sql),
+            .sqlite => |*d| d.exec(sql),
+        };
+        const dur = monoNowNs() - start;
+        self.logIfSlow(sql, dur);
+        try result;
     }
 
     pub fn execParams(self: *DB, sql: [:0]const u8, params: []const SqlParam) !void {
         try self.guard();
-        switch (self.driver) {
-            .postgres => |*d| try d.execParams(sql, params),
-            .mysql => |*d| try d.execParams(sql, params),
-            .sqlite => |*d| try d.execParams(sql, params),
-        }
+        const start = monoNowNs();
+        const result = switch (self.driver) {
+            .postgres => |*d| d.execParams(sql, params),
+            .mysql => |*d| d.execParams(sql, params),
+            .sqlite => |*d| d.execParams(sql, params),
+        };
+        const dur = monoNowNs() - start;
+        self.logIfSlow(sql, dur);
+        try result;
     }
 
     /// Begin a transaction (BEGIN / START TRANSACTION).
@@ -434,20 +460,44 @@ pub const DB = struct {
 
     pub fn query(self: *DB, sql: [:0]const u8) !ResultSet {
         try self.guard();
-        return switch (self.driver) {
+        const start = monoNowNs();
+        const result = switch (self.driver) {
             .postgres => |*d| d.query(sql),
             .mysql => |*d| d.query(sql),
             .sqlite => |*d| d.query(sql),
         };
+        const dur = monoNowNs() - start;
+        self.logIfSlow(sql, dur);
+        return result;
     }
 
     pub fn queryParams(self: *DB, sql: [:0]const u8, params: []const SqlParam) !ResultSet {
         try self.guard();
-        return switch (self.driver) {
+        const start = monoNowNs();
+        const result = switch (self.driver) {
             .postgres => |*d| d.queryParams(sql, params),
             .mysql => |*d| d.queryParams(sql, params),
             .sqlite => |*d| d.queryParams(sql, params),
         };
+        const dur = monoNowNs() - start;
+        self.logIfSlow(sql, dur);
+        return result;
+    }
+
+    /// Log a slow query via stderr if `dur_ns` exceeds the threshold.
+    /// Format: `[SLOW QUERY] dur=Xms sql=...`
+    /// Truncates the SQL to 200 chars to keep logs readable.
+    fn logIfSlow(self: *DB, sql: [:0]const u8, dur_ns: u64) void {
+        if (self.slow_query_threshold_ns == 0 or dur_ns < self.slow_query_threshold_ns) return;
+        _ = self.slow_query_count.fetchAdd(1, .monotonic);
+        const dur_ms = dur_ns / std.time.ns_per_ms;
+        const sql_preview_len = @min(sql.len, 200);
+        std.debug.print("[SLOW QUERY] {d}ms slow_query_total={d} sql={s}{s}\n", .{
+            dur_ms,
+            self.slow_query_count.load(.monotonic),
+            sql[0..sql_preview_len],
+            if (sql.len > 200) "..." else "",
+        });
     }
 };
 

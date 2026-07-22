@@ -498,3 +498,182 @@ test "zent_codegen: parse JSON schema" {
     try std.testing.expectEqualStrings("catalog", schema.module);
     try std.testing.expectEqual(@as(usize, 1), schema.entities.items.len);
 }
+
+// ============================================================
+// openapi — minimal OpenAPI 3.0.3 spec generator from Zig source
+// ============================================================
+
+const openapi = @import("openapi");
+
+test "openapi: parse direct routes" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\const zfinal = @import("zfinal");
+        \\
+        \\pub fn register(app: *zfinal.ZFinal) !void {
+        \\    try app.get("/health", health);
+        \\    try app.post("/users", create);
+        \\    try app.put("/users/:id", update);
+        \\    try app.delete("/users/:id", delete);
+        \\    try app.patch("/users/:id", patch);
+        \\}
+    ;
+    var spec = try openapi.parse(allocator, src);
+    defer spec.deinit();
+
+    try std.testing.expectEqual(@as(usize, 5), spec.routes.items.len);
+    // Sorted by (path, declaration order of HttpMethod: GET<POST<PUT<PATCH<DELETE).
+    // /health < /users → /health first.
+    try std.testing.expectEqualStrings("/health", spec.routes.items[0].path);
+    try std.testing.expectEqual(openapi.HttpMethod.GET, spec.routes.items[0].method);
+    try std.testing.expectEqualStrings("/users", spec.routes.items[1].path);
+    try std.testing.expectEqual(openapi.HttpMethod.POST, spec.routes.items[1].method);
+    // /users/{id} holds PUT(2), PATCH(3), DELETE(4) → sorted by declaration order.
+    try std.testing.expectEqualStrings("/users/{id}", spec.routes.items[2].path);
+    try std.testing.expectEqual(openapi.HttpMethod.PUT, spec.routes.items[2].method);
+    try std.testing.expectEqualStrings("/users/{id}", spec.routes.items[3].path);
+    try std.testing.expectEqual(openapi.HttpMethod.PATCH, spec.routes.items[3].method);
+    try std.testing.expectEqualStrings("/users/{id}", spec.routes.items[4].path);
+    try std.testing.expectEqual(openapi.HttpMethod.DELETE, spec.routes.items[4].method);
+}
+
+test "openapi: parse WithInterceptors variants" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub fn register(app: *zfinal.ZFinal) !void {
+        \\    try app.getWithInterceptors("/me", me, &.{auth});
+        \\    try app.postWithInterceptors("/submit", submit, &.{csrf});
+        \\    try app.putWithInterceptors("/users/:id", upd, &.{log});
+        \\    try app.patchWithInterceptors("/users/:id", pat, &.{log});
+        \\    try app.deleteWithInterceptors("/users/:id", del, &.{log});
+        \\}
+    ;
+    var spec = try openapi.parse(allocator, src);
+    defer spec.deinit();
+
+    try std.testing.expectEqual(@as(usize, 5), spec.routes.items.len);
+    // /me → GET only
+    try std.testing.expectEqualStrings("/me", spec.routes.items[0].path);
+    try std.testing.expectEqual(openapi.HttpMethod.GET, spec.routes.items[0].method);
+    // /submit → POST only
+    try std.testing.expectEqualStrings("/submit", spec.routes.items[1].path);
+    try std.testing.expectEqual(openapi.HttpMethod.POST, spec.routes.items[1].method);
+    // /users/{id} → PUT(2), PATCH(3), DELETE(4) declaration order
+    try std.testing.expectEqualStrings("/users/{id}", spec.routes.items[2].path);
+    try std.testing.expectEqual(openapi.HttpMethod.PUT, spec.routes.items[2].method);
+    try std.testing.expectEqualStrings("/users/{id}", spec.routes.items[3].path);
+    try std.testing.expectEqual(openapi.HttpMethod.PATCH, spec.routes.items[3].method);
+    try std.testing.expectEqualStrings("/users/{id}", spec.routes.items[4].path);
+    try std.testing.expectEqual(openapi.HttpMethod.DELETE, spec.routes.items[4].method);
+}
+
+test "openapi: parse RouteGroup prefixes" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub fn register(app: *zfinal.ZFinal) !void {
+        \\    var api = zfinal.RouteGroup.init(&app, "/api/v1");
+        \\    try api.get("/users", list);
+        \\    try api.post("/users", create);
+        \\    try api.get("/users/:id", show);
+        \\}
+    ;
+    var spec = try openapi.parse(allocator, src);
+    defer spec.deinit();
+
+    try std.testing.expectEqual(@as(usize, 3), spec.routes.items.len);
+    try std.testing.expectEqualStrings("/api/v1/users", spec.routes.items[0].path);
+    try std.testing.expectEqual(openapi.HttpMethod.GET, spec.routes.items[0].method);
+    try std.testing.expectEqualStrings("/api/v1/users", spec.routes.items[1].path);
+    try std.testing.expectEqual(openapi.HttpMethod.POST, spec.routes.items[1].method);
+    try std.testing.expectEqualStrings("/api/v1/users/{id}", spec.routes.items[2].path);
+    try std.testing.expectEqual(openapi.HttpMethod.GET, spec.routes.items[2].method);
+}
+
+test "openapi: :id is normalized to {id}" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\try app.get("/users/:id/posts/:post_id", h);
+    ;
+    var spec = try openapi.parse(allocator, src);
+    defer spec.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), spec.routes.items.len);
+    try std.testing.expectEqualStrings("/users/{id}/posts/{post_id}", spec.routes.items[0].path);
+}
+
+test "openapi: dedupes by method+path" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\try app.get("/users", a);
+        \\try app.get("/users", b);
+        \\try app.post("/users", c);
+        \\try app.post("/users", d);
+    ;
+    var spec = try openapi.parse(allocator, src);
+    defer spec.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), spec.routes.items.len);
+    try std.testing.expectEqualStrings("/users", spec.routes.items[0].path);
+    try std.testing.expectEqual(openapi.HttpMethod.GET, spec.routes.items[0].method);
+    try std.testing.expectEqualStrings("/users", spec.routes.items[1].path);
+    try std.testing.expectEqual(openapi.HttpMethod.POST, spec.routes.items[1].method);
+}
+
+test "openapi: renderYaml produces minimal OpenAPI 3.0.3" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\try app.get("/health", h);
+        \\try app.get("/users/:id", show);
+        \\try app.post("/users", create);
+    ;
+    var spec = try openapi.parse(allocator, src);
+    defer spec.deinit();
+
+    const yaml = try openapi.renderYaml(allocator, spec);
+    defer allocator.free(yaml);
+
+    // Header
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "openapi: 3.0.3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "title: ZFinal API") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "version: 0.1.0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "paths:") != null);
+
+    // Paths
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "/health:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "/users:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "/users/{id}:") != null);
+
+    // Methods lowercased
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "get:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "post:") != null);
+
+    // Parameters + response
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "parameters:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "name: id") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "in: path") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "required: true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "responses:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "'200':") != null);
+}
+
+test "openapi: YAML output is stable across runs" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\try app.post("/users", create);
+        \\try app.get("/users", list);
+        \\try app.delete("/users/:id", del);
+        \\try app.get("/health", h);
+    ;
+
+    var spec1 = try openapi.parse(allocator, src);
+    defer spec1.deinit();
+    const yaml1 = try openapi.renderYaml(allocator, spec1);
+    defer allocator.free(yaml1);
+
+    var spec2 = try openapi.parse(allocator, src);
+    defer spec2.deinit();
+    const yaml2 = try openapi.renderYaml(allocator, spec2);
+    defer allocator.free(yaml2);
+
+    try std.testing.expectEqualStrings(yaml1, yaml2);
+}

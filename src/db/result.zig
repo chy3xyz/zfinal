@@ -156,42 +156,54 @@ fn parseBoolText(text: []const u8) !bool {
     return error.InvalidBooleanValue;
 }
 
-/// Format an i64 into a thread-local static decimal buffer.
-/// Zig doesn't have thread-local storage but we use a small fixed-size
-/// array indexed by `@mod(v, 32)` — collisions only matter if the caller
-/// compares across cells in the same row, which they shouldn't for ints.
-/// To be safe we use one buffer per call site by returning slices that
-/// live for the duration of the read (the caller must not retain).
-///
-/// NOTE: This is a stop-gap. For real workloads, callers should use
-/// `Row.getInt` (which avoids parseInt for `.int` cells). getText on an
-/// integer cell is only meant for legacy code that needs a string.
+/// Numeric-to-text compatibility buffers. The returned slices remain valid
+/// until the next conversion of the same numeric kind on the current thread.
+/// Callers that need ownership must copy the slice; typed consumers should use
+/// `getInt` / `getFloat` and avoid formatting entirely.
+threadlocal var int_text_buf: [24]u8 = undefined;
+threadlocal var float_text_buf: [32]u8 = undefined;
+
 fn intTextBuf(v: i64) []const u8 {
-    // Format into a static buffer. Returns a slice into `buf`.
-    var buf: [24]u8 = undefined;
-    const s = std.fmt.bufPrint(&buf, "{d}", .{v}) catch return "";
-    return s;
+    return std.fmt.bufPrint(&int_text_buf, "{d}", .{v}) catch "";
 }
 
 fn floatTextBuf(v: f64) []const u8 {
-    var buf: [32]u8 = undefined;
-    const s = std.fmt.bufPrint(&buf, "{d}", .{v}) catch return "";
-    return s;
+    return std.fmt.bufPrint(&float_text_buf, "{d}", .{v}) catch "";
 }
 
 /// Unified result set interface.
 pub const ResultSet = struct {
     allocator: std.mem.Allocator,
     columns: [][]const u8,
+    /// `columns[i]` is owned by the ResultSet (freed in deinit).
+    /// `columns_slice` is a non-owning view used for iteration.
     rows: std.ArrayList(Row),
     current_index: usize = 0,
+    /// Cached O(1) name→index map for RowMap lookups. Built once at
+    /// init time so the wide-table hot path (ORM scanning 30+ columns
+    /// by name on every row) doesn't pay the O(n²) linear scan.
+    name_index: ?std.StringHashMap(usize) = null,
 
     pub fn init(allocator: std.mem.Allocator, columns: [][]const u8) ResultSet {
-        return ResultSet{
+        var rs = ResultSet{
             .allocator = allocator,
             .columns = columns,
             .rows = std.ArrayList(Row).empty,
         };
+        // Eagerly build the name→index map. For wide tables (30+
+        // columns) this turns the RowMap hot path from O(n) per cell
+        // into O(1). Cost: O(n) at init, paid once per query.
+        rs.name_index = std.StringHashMap(usize).init(allocator);
+        for (columns, 0..) |col, i| {
+            rs.name_index.?.put(col, i) catch {
+                // OOM building the index — leave it null and fall
+                // back to linear scan in RowMap.get.
+                rs.name_index.?.deinit();
+                rs.name_index = null;
+                break;
+            };
+        }
+        return rs;
     }
 
     pub fn deinit(self: *ResultSet) void {
@@ -199,6 +211,8 @@ pub const ResultSet = struct {
             row.deinit();
         }
         self.rows.deinit(self.allocator);
+
+        if (self.name_index) |*idx| idx.deinit();
 
         for (self.columns) |col| {
             self.allocator.free(col);
@@ -281,25 +295,31 @@ pub const ResultSet = struct {
         return try row.getBool(index);
     }
 
-    /// Row wrapper with column name access
+    /// Row wrapper with column name access.
+    /// `get` / `getInt` use the ResultSet's pre-built name_index for
+    /// O(1) lookup. If the index wasn't built (e.g. OOM during init),
+    /// falls back to a single linear scan over `columns`.
     pub const RowMap = struct {
         row: *const Row,
         result_set: *const ResultSet,
 
         pub fn get(self: *const RowMap, col_name: []const u8) ?[]const u8 {
-            for (self.result_set.columns, 0..) |name, i| {
-                if (std.mem.eql(u8, name, col_name)) {
-                    return self.row.getText(i);
-                }
-            }
-            return null;
+            const idx = self.lookupIndex(col_name) orelse return null;
+            return self.row.getText(idx);
         }
 
         pub fn getInt(self: *const RowMap, col_name: []const u8) !?i64 {
+            const idx = self.lookupIndex(col_name) orelse return null;
+            return try self.row.getInt(idx);
+        }
+
+        fn lookupIndex(self: *const RowMap, col_name: []const u8) ?usize {
+            if (self.result_set.name_index) |*idx| {
+                return idx.get(col_name);
+            }
+            // Fallback: linear scan if index wasn't built.
             for (self.result_set.columns, 0..) |name, i| {
-                if (std.mem.eql(u8, name, col_name)) {
-                    return try self.row.getInt(i);
-                }
+                if (std.mem.eql(u8, name, col_name)) return i;
             }
             return null;
         }
@@ -369,6 +389,27 @@ test "Cell: getText on int cell formats to decimal" {
 
     _ = result.next();
     try std.testing.expectEqualStrings("99", result.currentRow().?.getText(0).?);
+}
+
+test "RowMap: cached name lookup preserves formatted numeric text" {
+    const allocator = std.testing.allocator;
+
+    var columns = try allocator.alloc([]const u8, 2);
+    columns[0] = try allocator.dupe(u8, "id");
+    columns[1] = try allocator.dupe(u8, "score");
+
+    var result = ResultSet.init(allocator, columns);
+    defer result.deinit();
+
+    var cells = try allocator.alloc(Cell, 2);
+    cells[0] = .{ .int = 123456789 };
+    cells[1] = .{ .float = 42.5 };
+    try result.addRow(cells);
+
+    _ = result.next();
+    const row = result.getCurrentRowMap().?;
+    try std.testing.expectEqualStrings("123456789", row.get("id").?);
+    try std.testing.expectEqualStrings("42.5", row.get("score").?);
 }
 
 test "Cell: getBool maps common forms" {

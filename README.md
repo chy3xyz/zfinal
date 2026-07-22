@@ -8,7 +8,7 @@
 
 [![Zig](https://img.shields.io/badge/Zig-0.17.0-orange.svg)](https://ziglang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v0.19.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.20.0-blue.svg)](CHANGELOG.md)
 [![Tests](https://img.shields.io/badge/tests-215%20passed%20%C2%B7%2019%20codegen%20%C2%B7%200%20failed-brightgreen.svg)]()
 [![Drivers](https://img.shields.io/badge/drivers-SQLite%20%C2%B7%20PostgreSQL%20%C2%B7%20MySQL-blue.svg)]()
 [![Production](https://img.shields.io/badge/production--score-9.8%2F10%20(contractual)-brightgreen.svg)](PRODUCTION_AUDIT.md)
@@ -107,7 +107,7 @@ zig build run-standalone-admin   # Single-binary admin (all HTML @embedFile'd)
 ### Add ZFinal to your project
 
 ```bash
-zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.19.0.tar.gz
+zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.0.tar.gz
 ```
 
 In your `build.zig.zon`:
@@ -115,7 +115,7 @@ In your `build.zig.zon`:
 ```zon
 .dependencies = .{
     .zfinal = .{
-        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.19.0.tar.gz",
+        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.0.tar.gz",
         .hash = "...",  // auto-filled by `zig fetch`
     },
 },
@@ -349,8 +349,8 @@ self-healing, AI assist, load testing, and AI-edit-zone audits.
 | `zf check` | Audit generated/edit boundary compliance |
 | `zf check --heal` | Auto-patch 6 common compile errors (Zig 0.17, stale API, etc.) |
 | `zf check --ai-zones` | Reverse-index of AI-editable vs AI-LOCKED files |
+| `zf openapi [--out <file>]` | Generate minimal OpenAPI 3.0.3 spec from project routes |
 | `zf g handler\|model\|middleware\|service\|task <Name>` | Add a single module |
-
 **`--json` everywhere**: every command emits structured JSON for AI parsing.
 **`--heal` is idempotent** — second run patches 0 files.
 
@@ -656,6 +656,6 @@ MIT — see [LICENSE](LICENSE) for details.
 
 Made with ❤️ by the ZFinal Team
 
-**ZFinal v0.19.0** — Zig 的 AI 极速开发框架
+**ZFinal v0.20.0** — Zig 的 AI 极速开发框架
 
 </div>

@@ -229,7 +229,7 @@ pub fn build(b: *std.Build) void {
     const zf_opts = b.addOptions();
     zf_opts.addOption(bool, "enable_pg", enable_pg);
     zf_opts.addOption(bool, "enable_my", enable_mysql);
-    zf_opts.addOption([]const u8, "version", "v0.13.11"); // current framework version
+    zf_opts.addOption([]const u8, "version", "v0.20.0"); // current framework version
 
     const zf_mod = b.createModule(.{
         .root_source_file = b.path("tools/zf/main.zig"),
@@ -259,6 +259,14 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         zf_mod.addImport("zent_codegen", zent_cg);
+    }
+    {
+        const openapi_for_zf = b.createModule(.{
+            .root_source_file = b.path("tools/zf/openapi.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        zf_mod.addImport("openapi", openapi_for_zf);
     }
     zf_mod.link_libc = true;
     zf_mod.linkSystemLibrary("sqlite3", .{});
@@ -349,6 +357,12 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
 
+        const openapi_mod = b.createModule(.{
+            .root_source_file = b.path("tools/zf/openapi.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+
         const zf_test_mod = b.createModule(.{
             .root_source_file = b.path("tools/zf/codegen_test.zig"),
             .target = target,
@@ -357,6 +371,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "codegen", .module = codegen_mod },
                 .{ .name = "admin_templates", .module = admin_templates_mod },
                 .{ .name = "zent_codegen", .module = zent_cg_mod },
+                .{ .name = "openapi", .module = openapi_mod },
             },
         });
         zf_test_mod.link_libc = true;
