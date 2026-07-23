@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+## [0.20.6] - 2026-07-23
+
+### Fixed
+- **Router param-cache concurrency**: `param_cache_mutex` serializes FIFO lookup/put/eviction (threaded `dispatch` shared Router). Prevents heap corruption that surfaced as interceptor-path crashes after the v0.20.5 double-free fix enabled real eviction.
+- **`execute` uses `matchIndex`**: snapshot handler/interceptors by route index instead of holding a dangling `*Route` across allocations.
+- **Static route first-wins**: `addWithMethod` indexes `static_routes`; duplicate registrations keep the first index (linear-scan semantics) and free duplicate keys.
+
 ## [0.20.5] - 2026-07-23
 
 ### Fixed

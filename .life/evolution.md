@@ -4,6 +4,18 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+## 2026-07-23 — release v0.20.6
+
+**Session**: Fix interceptor crash after param-cache double-free fix
+**Changes**:
+1. `param_cache_mutex` around param-route FIFO cache
+2. `matchIndex` + safer `execute`; static_routes first-wins + key ownership
+3. Regression: interceptors survive eviction
+4. SSoT `0.20.6`
+**Tests**: `zig build test` (240 passed; 11 skipped)
+
+---
+
 ## 2026-07-23 — release v0.20.5
 
 **Session**: Fix router param-cache double-free + MySQL c_uint typing

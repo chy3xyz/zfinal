@@ -1,6 +1,11 @@
 const std = @import("std");
 const Context = @import("context.zig").Context;
 const InterceptorChain = @import("../interceptor/interceptor.zig").InterceptorChain;
+const io_instance = @import("../io_instance.zig");
+
+fn paramCacheIo() std.Io {
+    return io_instance.io;
+}
 
 pub const Handler = *const fn (ctx: *Context) anyerror!void;
 
@@ -120,6 +125,12 @@ pub const Router = struct {
     param_route_cache: std.StringHashMap(?usize),
     param_cache_order: std.ArrayList([]u8),
     param_cache_max: u32 = 1024,
+    /// Guards `param_route_cache` + `param_cache_order`. Server dispatches
+    /// concurrent requests on a shared Router; without this lock, FIFO
+    /// eviction (enabled after the v0.20.5 double-free fix) races HashMap
+    /// mutators and corrupts the heap — often surfacing inside interceptor
+    /// execution on the next request.
+    param_cache_mutex: std.Io.Mutex = .init,
     global_interceptors: InterceptorChain,
     allocator: std.mem.Allocator,
 
@@ -134,10 +145,32 @@ pub const Router = struct {
         };
     }
 
+    const ParamCacheLookup = union(enum) {
+        miss,
+        negative,
+        hit: usize,
+    };
+
+    fn paramCacheLookup(self: *Router, key: []const u8) ParamCacheLookup {
+        self.param_cache_mutex.lockUncancelable(paramCacheIo());
+        defer self.param_cache_mutex.unlock(paramCacheIo());
+        if (self.param_route_cache.get(key)) |cached| {
+            return if (cached) |idx| .{ .hit = idx } else .negative;
+        }
+        return .miss;
+    }
+
     /// Insert into FIFO cache; evict oldest if over capacity.
     /// Note: this is FIFO, not LRU — cache hits do NOT re-order. The
     /// oldest entry is always at the front of `param_cache_order`.
+    /// Caller must NOT hold `param_cache_mutex`.
     fn paramCachePut(self: *Router, key: []const u8, value: ?usize) !void {
+        self.param_cache_mutex.lockUncancelable(paramCacheIo());
+        defer self.param_cache_mutex.unlock(paramCacheIo());
+        try self.paramCachePutLocked(key, value);
+    }
+
+    fn paramCachePutLocked(self: *Router, key: []const u8, value: ?usize) !void {
         // Cap the cache at param_cache_max entries. When full, drop the
         // oldest (FIFO). This is intentionally simple — a true LRU with
         // doubly-linked list would be ~3x more code for marginal gain
@@ -154,7 +187,15 @@ pub const Router = struct {
         }
         const key_dup = try self.allocator.dupe(u8, key);
         errdefer self.allocator.free(key_dup);
-        try self.param_route_cache.put(key_dup, value);
+        const gop = try self.param_route_cache.getOrPut(key_dup);
+        if (gop.found_existing) {
+            // Map already owns a key with this content — drop the duplicate
+            // and refresh the value. Do not append to the order list again.
+            self.allocator.free(key_dup);
+            gop.value_ptr.* = value;
+            return;
+        }
+        gop.value_ptr.* = value;
         // If append fails, drop the map entry so errdefer can free key_dup
         // without leaving a dangling hashmap pointer.
         errdefer _ = self.param_route_cache.fetchRemove(key_dup);
@@ -190,22 +231,7 @@ pub const Router = struct {
 
     /// 添加指定 HTTP 方法的路由
     pub fn addWithMethod(self: *Router, path: []const u8, method: HttpMethod, handler: Handler) !void {
-        // 解析路由段和参数名
-        const parsed = try parseRoute(path, self.allocator);
-
-        // Dupe path so Route owns it — caller may free the original
-        const owned_path = try self.allocator.dupe(u8, path);
-
-        const route = Route{
-            .pattern = owned_path,
-            .method = method,
-            .handler = handler,
-            .interceptors = InterceptorChain.init(self.allocator),
-            .segments = parsed.segments,
-            .param_names = parsed.param_names,
-        };
-
-        try self.routes.append(self.allocator, route);
+        try self.addWithMethodAndInterceptors(path, method, handler, InterceptorChain.init(self.allocator));
     }
 
     /// 添加带拦截器的路由
@@ -236,12 +262,18 @@ pub const Router = struct {
         try self.routes.append(self.allocator, route);
 
         // O(1) fast path: index static routes (no params) by "{method}:{path}"
+        // First registration wins (same as linear-scan first-match).
         if (parsed.param_names.len == 0) {
             var key_buf: [256]u8 = undefined;
             const key = staticRouteKey(method, owned_path, &key_buf);
             const key_owned = try self.allocator.dupe(u8, key);
             errdefer self.allocator.free(key_owned);
-            try self.static_routes.put(key_owned, self.routes.items.len - 1);
+            const gop = try self.static_routes.getOrPut(key_owned);
+            if (gop.found_existing) {
+                self.allocator.free(key_owned);
+            } else {
+                gop.value_ptr.* = self.routes.items.len - 1;
+            }
         }
     }
 
@@ -254,23 +286,31 @@ pub const Router = struct {
 
     /// 查找匹配的路由
     pub fn match(self: *Router, path: []const u8, method: HttpMethod) ?*Route {
+        return if (self.matchIndex(path, method)) |idx| &self.routes.items[idx] else null;
+    }
+
+    /// Like `match`, but returns a stable route index (safe across concurrent
+    /// param-cache updates; prefer this inside `execute`).
+    pub fn matchIndex(self: *Router, path: []const u8, method: HttpMethod) ?usize {
         // O(1) fast path for exact-match static routes
         var key_buf: [256]u8 = undefined;
         const method_key = staticRouteKey(method, path, &key_buf);
         if (self.static_routes.get(method_key)) |idx| {
-            return &self.routes.items[idx];
+            return idx;
         }
         // Also try ANY-method static routes
         const any_key = staticRouteKey(.ANY, path, &key_buf);
         if (self.static_routes.get(any_key)) |idx| {
-            return &self.routes.items[idx];
+            return idx;
         }
 
         // Parameterized-route cache (FIFO, capped). Key includes method
         // so GET /users/42 and POST /users/42 don't collide.
         const cache_key = staticRouteKey(method, path, &key_buf);
-        if (self.param_route_cache.get(cache_key)) |cached_idx| {
-            return if (cached_idx) |idx| &self.routes.items[idx] else null;
+        switch (self.paramCacheLookup(cache_key)) {
+            .hit => |idx| return idx,
+            .negative => return null,
+            .miss => {},
         }
 
         // Fall back to O(n) linear scan for parameterized routes
@@ -284,41 +324,12 @@ pub const Router = struct {
         // Cache the result (or negative result) to skip the scan on
         // repeat hits to the same parameterized URL.
         self.paramCachePut(cache_key, found) catch {};
-        return if (found) |idx| &self.routes.items[idx] else null;
+        return found;
     }
 
     /// 执行路由处理
     pub fn execute(self: *Router, path: []const u8, method: HttpMethod, ctx: *Context) !void {
-        if (self.match(path, method)) |route| {
-            // 提取路径参数
-            if (route.param_names.len > 0) {
-                ctx.path_params = try route.extractParams(path, self.allocator);
-            }
-
-            // 执行拦截器链
-            if (self.global_interceptors.interceptors.items.len > 0 or route.interceptors.interceptors.items.len > 0) {
-                var combined = InterceptorChain.init(self.allocator);
-                defer combined.deinit();
-
-                // Pre-allocate to avoid reallocation during appends
-                const total_count = self.global_interceptors.interceptors.items.len + route.interceptors.interceptors.items.len;
-                try combined.interceptors.ensureTotalCapacity(self.allocator, total_count);
-
-                // 添加全局拦截器
-                for (self.global_interceptors.interceptors.items) |interceptor| {
-                    combined.interceptors.appendAssumeCapacity(interceptor);
-                }
-
-                // 添加路由特定拦截器
-                for (route.interceptors.interceptors.items) |interceptor| {
-                    combined.interceptors.appendAssumeCapacity(interceptor);
-                }
-
-                try combined.execute(ctx, route.handler);
-            } else {
-                try route.handler(ctx);
-            }
-        } else {
+        const idx = self.matchIndex(path, method) orelse {
             // Route not matched — still run global interceptors (e.g. CORS preflight)
             for (self.global_interceptors.interceptors.items) |interceptor| {
                 if (interceptor.before) |before| {
@@ -327,6 +338,38 @@ pub const Router = struct {
             }
             ctx.res_status = .not_found;
             try ctx.renderText("404 Not Found");
+            return;
+        };
+
+        // Snapshot handler by index; re-read route fields after allocations so
+        // we never keep a dangling `*Route` across param-cache / chain setup.
+        const handler = self.routes.items[idx].handler;
+
+        if (self.routes.items[idx].param_names.len > 0) {
+            ctx.path_params = try self.routes.items[idx].extractParams(path, self.allocator);
+        }
+
+        const has_interceptors = self.global_interceptors.interceptors.items.len > 0 or
+            self.routes.items[idx].interceptors.interceptors.items.len > 0;
+
+        if (has_interceptors) {
+            var combined = InterceptorChain.init(self.allocator);
+            defer combined.deinit();
+
+            const total_count = self.global_interceptors.interceptors.items.len +
+                self.routes.items[idx].interceptors.interceptors.items.len;
+            try combined.interceptors.ensureTotalCapacity(self.allocator, total_count);
+
+            for (self.global_interceptors.interceptors.items) |interceptor| {
+                combined.interceptors.appendAssumeCapacity(interceptor);
+            }
+            for (self.routes.items[idx].interceptors.interceptors.items) |interceptor| {
+                combined.interceptors.appendAssumeCapacity(interceptor);
+            }
+
+            try combined.execute(ctx, handler);
+        } else {
+            try handler(ctx);
         }
     }
 };
@@ -508,4 +551,38 @@ test "param route cache FIFO eviction no double-free" {
     // Hot path after eviction still resolves (may miss cache → rescan → reinsert).
     try std.testing.expect(router.match("/users/0", .GET) != null);
     try std.testing.expect(router.match("/users/63", .GET) != null);
+}
+
+test "param cache + route interceptors survive eviction" {
+    const allocator = std.testing.allocator;
+    var router = Router.init(allocator);
+    defer router.deinit();
+    router.param_cache_max = 4;
+
+    const before_fn = struct {
+        fn f(_: *Context) !bool {
+            return true;
+        }
+    }.f;
+
+    var chain = InterceptorChain.init(allocator);
+    try chain.add(.{ .name = "count", .before = before_fn });
+
+    const h = struct {
+        fn f(_: *Context) !void {}
+    }.f;
+    try router.addWithMethodAndInterceptors("/items/:id", .GET, h, chain);
+
+    var buf: [64]u8 = undefined;
+    var i: usize = 0;
+    while (i < 32) : (i += 1) {
+        const path = try std.fmt.bufPrint(&buf, "/items/{d}", .{i});
+        const route = router.match(path, .GET).?;
+        try std.testing.expect(route.interceptors.interceptors.items.len == 1);
+        try std.testing.expectEqualStrings("count", route.interceptors.interceptors.items[0].name);
+        try std.testing.expect(route.interceptors.interceptors.items[0].before != null);
+    }
+    const again = router.match("/items/0", .GET).?;
+    try std.testing.expect(again.interceptors.interceptors.items.len == 1);
+    try std.testing.expectEqualStrings("count", again.interceptors.interceptors.items[0].name);
 }
