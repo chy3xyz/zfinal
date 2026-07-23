@@ -186,6 +186,7 @@ pub fn build(b: *std.Build) void {
     addExample(b, zfinal_mod, "auth", "examples/auth/main.zig", "Run auth demo");
     addExample(b, zfinal_mod, "captcha", "examples/captcha/main.zig", "Run captcha demo");
     addExample(b, zfinal_mod, "production", "examples/production/main.zig", "Run production example");
+    addExample(b, zfinal_mod, "ports-l2", "examples/ports-l2/main.zig", "Run L2 ports DI demo (store/cache/bus)");
     // RuoYi example — needs MySQL driver
     {
         const ruoyi_mod = b.createModule(.{
@@ -391,6 +392,11 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "zent_codegen", .module = zent_cg_mod },
                 .{ .name = "openapi", .module = openapi_mod },
                 .{ .name = "zfinal_version", .module = version_mod },
+                .{ .name = "zone_merge", .module = b.createModule(.{
+                    .root_source_file = b.path("tools/zf/zone_merge.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                }) },
             },
         });
         zf_test_mod.link_libc = true;

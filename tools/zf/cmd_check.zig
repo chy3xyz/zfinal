@@ -7,7 +7,8 @@ const readFileAlloc = zf_shared.readFileAlloc;
 
 /// Audit project for AI compliance: .gen.zig boundaries, ext/ structure, import correctness.
 /// With --heal: automatically patch known issues (stale getPool pattern, missing getters, etc.)
-pub fn handleCheck(allocator: std.mem.Allocator, heal: bool, ai_zones: bool, prod: bool) !void {
+/// `prod_root`: directory to scan for `--prod` (default `examples/production`).
+pub fn handleCheck(allocator: std.mem.Allocator, heal: bool, ai_zones: bool, prod: bool, prod_root: []const u8) !void {
     if (ai_zones) {
         try printAiZones(allocator);
         return;
@@ -66,7 +67,7 @@ pub fn handleCheck(allocator: std.mem.Allocator, heal: bool, ai_zones: bool, pro
     checkOrphanHandlers(allocator, &warn);
 
     if (prod) {
-        try checkProdContract(allocator, &pass, &warn, &fail);
+        try checkProdContract(allocator, prod_root, &pass, &warn, &fail);
     }
 
     std.debug.print("\n═══════════════════════════════\n", .{});
@@ -82,87 +83,116 @@ pub fn handleCheck(allocator: std.mem.Allocator, heal: bool, ai_zones: bool, pro
 }
 
 /// Heuristic scan for PRODUCTION_AUDIT deployment-contract anti-patterns.
-fn checkProdContract(allocator: std.mem.Allocator, pass: *u32, warn: *u32, fail: *u32) !void {
-    std.debug.print("\n--- Production contract (--prod) ---\n", .{});
-    const roots = [_][]const u8{"examples/production"};
+/// `root` is the app directory (e.g. `examples/production` or your app root).
+fn checkProdContract(allocator: std.mem.Allocator, root: []const u8, pass: *u32, warn: *u32, fail: *u32) !void {
+    std.debug.print("\n--- Production contract (--prod) root={s} ---\n", .{root});
+    const is_reference = std.mem.eql(u8, root, "examples/production");
     var banned_auth: u32 = 0;
     var banned_cors_star: u32 = 0;
     var experimental: u32 = 0;
     var force_ka_off: u32 = 0;
 
-    for (roots) |root| {
-        var dir = std.Io.Dir.cwd().openDir(zf_shared.io, root, .{ .iterate = true }) catch continue;
-        defer dir.close(zf_shared.io);
-        var walker = dir.walk(allocator) catch continue;
-        defer walker.deinit();
-        while (walker.next(zf_shared.io) catch null) |entry| {
-            if (entry.kind != .file) continue;
-            if (!std.mem.endsWith(u8, entry.basename, ".zig")) continue;
-            const rel = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ root, entry.path });
-            defer allocator.free(rel);
-            const content = readFileAlloc(allocator, rel) catch continue;
-            defer allocator.free(content);
-            if (std.mem.indexOf(u8, content, "AuthInterceptor") != null and
-                std.mem.indexOf(u8, content, "createJwtAuthInterceptor") == null and
-                std.mem.indexOf(u8, content, "Demo-only") == null)
-            {
-                banned_auth += 1;
-                std.debug.print("⚠️  WARN: {s} references AuthInterceptor (prefer createJwtAuthInterceptor)\n", .{rel});
-            }
-            if (std.mem.indexOf(u8, content, "CORSInterceptor") != null and
-                std.mem.indexOf(u8, content, "createCors") == null)
-            {
-                banned_cors_star += 1;
-                std.debug.print("⚠️  WARN: {s} uses CORSInterceptor (wildcard) — prefer createCorsAllowlistInterceptor\n", .{rel});
-            }
-            if (std.mem.indexOf(u8, content, "zfinal.experimental.") != null) {
-                experimental += 1;
-                std.debug.print("⚠️  WARN: {s} uses zfinal.experimental.*\n", .{rel});
-            }
-            if (std.mem.indexOf(u8, content, "force_connection_close = false") != null or
-                std.mem.indexOf(u8, content, ".force_connection_close = false") != null)
-            {
-                force_ka_off += 1;
-                std.debug.print("⚠️  WARN: {s} disables force_connection_close (keep-alive experimental)\n", .{rel});
-            }
+    var dir = std.Io.Dir.cwd().openDir(zf_shared.io, root, .{ .iterate = true }) catch {
+        fail.* += 1;
+        std.debug.print("❌ FAIL: cannot open --root {s}\n", .{root});
+        return;
+    };
+    defer dir.close(zf_shared.io);
+    var walker = dir.walk(allocator) catch {
+        fail.* += 1;
+        std.debug.print("❌ FAIL: cannot walk --root {s}\n", .{root});
+        return;
+    };
+    defer walker.deinit();
+    while (walker.next(zf_shared.io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.basename, ".zig")) continue;
+        const rel = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ root, entry.path });
+        defer allocator.free(rel);
+        const content = readFileAlloc(allocator, rel) catch continue;
+        defer allocator.free(content);
+        if (std.mem.indexOf(u8, content, "AuthInterceptor") != null and
+            std.mem.indexOf(u8, content, "createJwtAuthInterceptor") == null and
+            std.mem.indexOf(u8, content, "Demo-only") == null)
+        {
+            banned_auth += 1;
+            std.debug.print("⚠️  WARN: {s} references AuthInterceptor (prefer createJwtAuthInterceptor)\n", .{rel});
+        }
+        if (std.mem.indexOf(u8, content, "CORSInterceptor") != null and
+            std.mem.indexOf(u8, content, "createCors") == null)
+        {
+            banned_cors_star += 1;
+            std.debug.print("⚠️  WARN: {s} uses CORSInterceptor (wildcard) — prefer createCorsAllowlistInterceptor\n", .{rel});
+        }
+        if (std.mem.indexOf(u8, content, "zfinal.experimental.") != null) {
+            experimental += 1;
+            std.debug.print("⚠️  WARN: {s} uses zfinal.experimental.*\n", .{rel});
+        }
+        if (std.mem.indexOf(u8, content, "force_connection_close = false") != null or
+            std.mem.indexOf(u8, content, ".force_connection_close = false") != null)
+        {
+            force_ka_off += 1;
+            std.debug.print("⚠️  WARN: {s} disables force_connection_close (keep-alive experimental)\n", .{rel});
         }
     }
 
     var prod_fail: u32 = 0;
+    var prod_warn: u32 = 0;
 
-    // Required production wiring checks on the reference example.
-    const prod_main = "examples/production/main.zig";
-    if (readFileAlloc(allocator, prod_main)) |content| {
+    const main_path = try resolveAppMain(allocator, root);
+    defer allocator.free(main_path);
+
+    if (readFileAlloc(allocator, main_path)) |content| {
         defer allocator.free(content);
-        if (std.mem.indexOf(u8, content, "createSecurityHeadersInterceptor") == null) {
-            prod_fail += 1;
-            std.debug.print("❌ FAIL: {s} missing createSecurityHeadersInterceptor\n", .{prod_main});
-        }
-        if (std.mem.indexOf(u8, content, "createRequestIdInterceptor") == null) {
-            prod_fail += 1;
-            std.debug.print("❌ FAIL: {s} missing createRequestIdInterceptor\n", .{prod_main});
-        }
-        if (std.mem.indexOf(u8, content, "createJwtAuthInterceptorWithOptions") == null) {
-            prod_fail += 1;
-            std.debug.print("❌ FAIL: {s} missing createJwtAuthInterceptorWithOptions\n", .{prod_main});
-        }
-        if (std.mem.indexOf(u8, content, "metricsHandlerFor") == null) {
-            prod_fail += 1;
-            std.debug.print("❌ FAIL: {s} missing /metrics wiring\n", .{prod_main});
+        const checks = [_]struct { needle: []const u8, label: []const u8 }{
+            .{ .needle = "createSecurityHeadersInterceptor", .label = "createSecurityHeadersInterceptor" },
+            .{ .needle = "createRequestIdInterceptor", .label = "createRequestIdInterceptor" },
+            .{ .needle = "createJwtAuthInterceptorWithOptions", .label = "createJwtAuthInterceptorWithOptions" },
+            .{ .needle = "metricsHandlerFor", .label = "/metrics wiring (metricsHandlerFor)" },
+        };
+        for (checks) |c| {
+            if (std.mem.indexOf(u8, content, c.needle) == null) {
+                if (is_reference) {
+                    prod_fail += 1;
+                    std.debug.print("❌ FAIL: {s} missing {s}\n", .{ main_path, c.label });
+                } else {
+                    prod_warn += 1;
+                    std.debug.print("⚠️  WARN: {s} missing {s} (required for internet-facing BFF)\n", .{ main_path, c.label });
+                }
+            }
         }
     } else |_| {
-        prod_fail += 1;
-        std.debug.print("❌ FAIL: missing {s}\n", .{prod_main});
+        if (is_reference) {
+            prod_fail += 1;
+            std.debug.print("❌ FAIL: missing {s}\n", .{main_path});
+        } else {
+            prod_warn += 1;
+            std.debug.print("⚠️  WARN: no main.zig under {s} (tried main.zig / src/main.zig)\n", .{root});
+        }
     }
 
     fail.* += prod_fail;
+    warn.* += prod_warn;
 
-    if (banned_auth == 0 and banned_cors_star == 0 and experimental == 0 and force_ka_off == 0 and prod_fail == 0) {
-        std.debug.print("✅ PASS: production example meets deployment contract\n", .{});
+    if (banned_auth == 0 and banned_cors_star == 0 and experimental == 0 and force_ka_off == 0 and prod_fail == 0 and prod_warn == 0) {
+        std.debug.print("✅ PASS: {s} meets deployment contract\n", .{root});
         pass.* += 1;
     } else if (prod_fail == 0) {
         warn.* += banned_auth + banned_cors_star + experimental + force_ka_off;
     }
+}
+
+fn resolveAppMain(allocator: std.mem.Allocator, root: []const u8) ![]u8 {
+    const candidates = [_][]const u8{ "main.zig", "src/main.zig" };
+    for (candidates) |rel| {
+        const path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ root, rel });
+        if (std.Io.Dir.cwd().access(zf_shared.io, path, .{})) |_| {
+            return path;
+        } else |_| {
+            allocator.free(path);
+        }
+    }
+    return try std.fmt.allocPrint(allocator, "{s}/main.zig", .{root});
 }
 
 fn countGenFiles(allocator: std.mem.Allocator, count: *u32) void {

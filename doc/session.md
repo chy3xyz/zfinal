@@ -10,7 +10,9 @@ Production apps should prefer **`createJwtAuthInterceptorWithOptions`** (or
 - Rejects `alg=none`; supports `previous_secret` for HMAC key rotation
 - Env knobs in the reference example: `JWT_SECRET`, `JWT_SECRET_PREVIOUS`,
   `JWT_ISS`, `JWT_AUD`
-- RS256 is **not** implemented yet — terminate OIDC at a gateway or contribute later
+- **RS256 verify**: `jwtVerifyRs256` / `jwt.verifyRs256` accepts PEM
+  (`PUBLIC KEY` / `RSA PUBLIC KEY`) or PKCS#1 DER — for OIDC / gateway-signed
+  tokens. In-process **signing** remains HS256.
 
 ## Baseline HTTP hardening (opt-in)
 

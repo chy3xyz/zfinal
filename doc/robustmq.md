@@ -61,38 +61,31 @@ Skipped automatically when env is unset.
 |------------|--------|
 | ApiVersions + Produce + Fetch | Done |
 | RecordBatch value decode | Done (`parseFetchValues`) |
-| Local offset cursor + `commitLocal` | Done |
+| Local offset cursor + `commitLocal` | Done (per topic/partition) |
 | OffsetCommit wire (API key 8) | Done — pass generation/member from `join()` |
-| JoinGroup / SyncGroup / Heartbeat | Done (single-member / partition-0 assign) |
+| JoinGroup / SyncGroup / Heartbeat | Done |
+| OffsetFetch / LeaveGroup | Done — `fetchCommittedOffset` / `leave` |
+| Classic **range** rebalance | Done — leader divides `0..partition_count-1` by member_id; `poll` uses assigned partitions |
 
-### L3 consume guidance (NATS-first for multi-instance)
+### L3 consume guidance
 
-- **Publish** to RobustMQ/Kafka: `QueueRobustMQClient` / `KafkaProducer` — production-ready.
-- **Single-process Kafka consume**: `subscribe` → `join()` → `poll` / `commit` (+ optional `heartbeat`).
-- **Consume across instances**: prefer **`QueueNatsClient`** (queue groups) until a full range rebalance assigner lands. `join()` today assigns partition `0` to the leader only.
+- **Publish** to RobustMQ/Kafka: `QueueRobustMQClient` / `KafkaProducer`.
+- **Multi-instance Kafka consume** (same group): set `partition_count` to the topic’s real partition count, then `subscribe` → `join()` → `poll` / `heartbeat` → `leave()`.
+- **NATS** remains a good alternative when you want queue-groups without managing partitions.
 
 ```zig
 var consumer = zfinal.KafkaConsumer.initWithIo(allocator, zfinal.io_instance.io, .{
     .bootstrap_servers = "127.0.0.1:9092",
     .group_id = "orders-workers",
+    .partition_count = 4, // must match topic
 });
 defer consumer.deinit();
 try consumer.subscribe("orders.created", onMsg);
-try consumer.join(); // JoinGroup + SyncGroup
+try consumer.join(); // range-assigns partitions across group members
 consumer.start();
 _ = try consumer.poll();
 try consumer.heartbeat();
-```
-
-```zig
-// Multi-instance bus consume — use NATS
-var nats = try zfinal.QueueNatsClient.connect(allocator, "nats://127.0.0.1:4222");
-defer nats.deinit();
-
-// Kafka publish remains fine on RobustMQ
-var kafka = zfinal.QueueRobustMQClient.connect(allocator, "127.0.0.1:9092");
-defer kafka.deinit();
-try kafka.publish("orders.created", "{\"id\":1}");
+try consumer.leave();
 ```
 
 See also: [nats.md](nats.md), [progressive_architecture.md](progressive_architecture.md), [scale_to_millions.md](scale_to_millions.md).

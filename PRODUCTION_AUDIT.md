@@ -17,11 +17,11 @@
 | Dimension | Score | Evidence |
 |-----------|-------|----------|
 | Correctness / reliability | **9.8 / 10** | **`read_timeout_ms` via `operateTimeout(net_read)`** + idle watchdog; **`write_timeout_ms` wall-clock from first response drain**; body drain all renders; keep-alive opt-in |
-| Security | **9.7 / 10** | JWT nbf/iss/aud + alg=none + rotation (`createJwtAuthInterceptorWithOptions`); CORS allow-list; **security headers + request ID**; CSRF/rate-limit audit; `zf check --prod` |
+| Security | **9.8 / 10** | JWT HS256 + **RS256 verify** + nbf/iss/aud + rotation; CORS allow-list; security headers + request ID; CSRF/rate-limit; `zf check --prod --root` |
 | Observability | **9.9 / 10** | Auto Metrics + latency histogram + route-class counters + **route-class latency sum/count**; `/metrics`; probe health |
 | Ops / deployability | **9.7 / 10** | CI matrix + drivers compile + live PG/MySQL + production binary + **`zf check --prod` in lint job** |
-| Docs / AI tooling | **9.5 / 10** | `src/version.zig` single source; session.md, zent SLA, robustmq decode notes, dual AI path; regen = `.gen.new` (documented) |
-| Optional (PG/MySQL/zent/messaging) | **9.0 / 10** | Live CI; Redis deadlines; RobustMQ RecordBatch decode; MQTT TLS sentinel; group consume still open |
+| Docs / AI tooling | **9.8 / 10** | version SSoT; zone-preserving regen; ports codegen + `examples/ports-l2`; dual AI path |
+| Optional (PG/MySQL/zent/messaging) | **9.3 / 10** | Live CI; Redis deadlines; RobustMQ JoinGroup + range rebalance + OffsetFetch/LeaveGroup; MQTT TLS still proxy |
 | **Overall (contractual)** | **9.8 / 10** | Internet-facing BFF behind proxy: ready |
 | Absolute (toolchain) | **~9.2 / 10** | Zig-dev + keep-alive still default-forced |
 
@@ -51,11 +51,11 @@
 |-----|----------|--------|
 | Zig **0.17-dev** drift | P1 | Pin + CI |
 | Keep-alive unsafe by default | P1 | `force_connection_close=true`; wait #25017 |
-| RobustMQ consumer group | P2 | JoinGroup/SyncGroup/Heartbeat + single-member assign done; multi-instance Kafka rebalance still NATS-first |
+| RobustMQ consumer group | P2 | JoinGroup/SyncGroup/Heartbeat/OffsetFetch/LeaveGroup + classic range rebalance (`partition_count`); Metadata API still optional |
 | MQTT native TLS | P2 | Proxy / `TlsNotImplemented` |
-| Zone-preserving regen merge | P2 | Today: `.gen.new` + manual merge / `--force` |
-| `zf check --prod` scoped to `examples/production` | P2 | Extend to app `--root` |
-| JWT RS256 | P3 | HS256 + rotation |
+| Zone-preserving regen merge | P2 | **Done** — `zone_merge` in `safeWrite`; fallback `.gen.new` / `--force` |
+| `zf check --prod` scoped to `examples/production` | P2 | **Done** — `--root <dir>`; reference root still FAIL-strict |
+| JWT RS256 | P3 | **Done (verify)** — `jwtVerifyRs256`; sign remains HS256 |
 | High-cardinality route labels | P3 | Coarse health/metrics/api/other only |
 
 ## Gaps closed (0.20.x)

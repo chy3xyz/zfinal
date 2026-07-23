@@ -12,7 +12,28 @@
 const std = @import("std");
 const codegen = @import("codegen");
 const zent_codegen = @import("zent_codegen");
+const zone_merge = @import("zone_merge");
 
+test "zone_merge: preserves named ai-edit-zone body" {
+    const allocator = std.testing.allocator;
+    const existing =
+        \\// ── ai-edit-zone: business rules ──
+        \\    try validate(x);
+        \\// ── end ai-edit-zone ──
+        \\
+    ;
+    const generated =
+        \\// ── ai-edit-zone: business rules ──
+        \\    // TODO
+        \\// ── end ai-edit-zone ──
+        \\
+    ;
+    const merged = try zone_merge.mergeAiEditZones(allocator, existing, generated);
+    defer if (merged) |m| allocator.free(m);
+    try std.testing.expect(merged != null);
+    try std.testing.expect(std.mem.indexOf(u8, merged.?, "try validate(x);") != null);
+    try std.testing.expect(std.mem.indexOf(u8, merged.?, "// TODO") == null);
+}
 /// Run `body` with a `*codegen.Table` parsed from a single CREATE TABLE
 /// statement. Cleans up tables array and the borrowed Table after the
 /// body returns. Avoids lifetime gotchas with ArrayList by-pointer.

@@ -92,6 +92,7 @@ pub const Jwt = @import("auth/jwt.zig");
 pub const jwtSign = @import("auth/jwt.zig").sign;
 pub const jwtVerify = @import("auth/jwt.zig").verify;
 pub const jwtVerifyWithOptions = @import("auth/jwt.zig").verifyWithOptions;
+pub const jwtVerifyRs256 = @import("auth/jwt.zig").verifyRs256;
 pub const jwtFreeClaims = @import("auth/jwt.zig").freeClaims;
 pub const JwtClaims = @import("auth/jwt.zig").Claims;
 pub const JwtVerifyOptions = @import("auth/jwt.zig").VerifyOptions;

@@ -4,6 +4,28 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+## 2026-07-23 — score lift: JWT RS256 verify + OffsetFetch/LeaveGroup
+
+**Session**: Continue score improvements
+**Changes**:
+1. `jwt.verifyRs256` / `jwtVerifyRs256` — OIDC/gateway RS256 verify (PEM/DER); fixtures under `src/auth/testdata_*`
+2. RobustMQ OffsetFetch + LeaveGroup wire; `KafkaConsumer.fetchCommittedOffset` / `leave`
+3. PRODUCTION_AUDIT scorecard bump (Security/Docs/Optional)
+**Tests**: `zig test src/auth/jwt.zig` (4) + `zig build test` (225 passed; 11 skipped) + install-zf
+
+---
+
+## 2026-07-23 — zone merge + check --root + ports-l2 example
+
+**Session**: P1/P2 backlog items 1–3
+**Changes**:
+1. `tools/zf/zone_merge.zig` + `safeWrite` preserves matching `ai-edit-zone` bodies (else `.gen.new`)
+2. `zf check --prod --root <dir>` — portable contract scan; reference root FAIL-strict
+3. `examples/ports-l2` L2 DI demo + `zig build run-ports-l2`
+**Tests**: `zig test tools/zf/zone_merge.zig` (3) + `zig build test-zf` (27) + `zig build test` (224 passed; 11 skipped) + `zf check --prod` / `--root examples/ports-l2` + `ports-l2` binary
+
+---
+
 ## 2026-07-23 — ports codegen + RobustMQ JoinGroup
 
 **Session**: `zf g port` + Kafka consumer group membership
@@ -24,6 +46,17 @@ Chronological record of every significant change. Append-only. Newest first.
 3. `zf_shared.zig` — `appendJsonString` + `writeAiConfigs` (shared by scaffold + CRUD bootstrap)
 4. `main.zig` dispatcher ~2754 → ~1372 lines
 **Tests**: `zig build install-zf` (recompiled) + `zig build test` (220 passed; 11 skipped) + `zig build test-zf` (26 passed) + crud:sql smoke
+
+---
+
+## 2026-07-23 — Kafka classic range rebalance + score lift
+
+**Session**: Multi-instance Kafka consume + JWT RS256 / OffsetFetch
+**Changes**:
+1. `KafkaConsumer.join` — classic range assignor over `partition_count`; SyncGroup assignment parse; multi-partition `poll`/offsets
+2. JWT RS256 verify; OffsetFetch/LeaveGroup; zone-preserving regen; `zf check --prod --root`; ports-l2 example
+3. Docs: `robustmq.md` / `PRODUCTION_AUDIT` / CHANGELOG
+**Tests**: `zig build test` → 227 passed; 11 skipped; 0 failed
 
 ---
 

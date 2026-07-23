@@ -122,10 +122,8 @@ pub fn handleOpenapi(allocator: std.mem.Allocator, out_path: []const u8) !void {
 
     std.debug.print("   routes found: {d}\n", .{spec.routes.items.len});
 
-    // safeWrite semantics: never overwrite an existing file. The user must
-    // remove it (or merge a `.gen.new` by hand) to pick up regenerated output.
-    // This is the same policy as `zf crud:sql` so behavior is consistent
-    // across generators.
+    // safeWrite: merge ai-edit-zones when present; else `.gen.new`.
+    // OpenAPI YAML usually has no zones → expect `.gen.new` on re-run.
     try safeWrite(allocator, out_path, yaml, false);
     std.debug.print("\nTip: feed this file to Swagger UI / Redoc / openapi-generator.\n", .{});
 }

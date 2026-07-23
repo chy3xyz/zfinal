@@ -23,6 +23,21 @@ zf g port bus --json     # → src/ports/bus.zig + memory_bus / nats_bus / robus
 
 Edit only `// ── ai-edit-zone` blocks; wire adapters in `main.zig` as in
 [progressive_architecture.md](progressive_architecture.md).
+Runnable reference: `examples/ports-l2` (`zig build run-ports-l2`).
+
+## Regeneration / ai-edit-zone merge
+
+When a generated file already exists:
+
+1. Matching `ai-edit-zone: <name>` blocks are **preserved** from the old file into the new template.
+2. If no matching zones → write `<path>.gen.new` (review with `diff`).
+3. `--force` overwrites the whole file (skips merge).
+
+```bash
+zf crud:sql schema.sql        # merges zones when present
+zf check --prod               # reference: examples/production
+zf check --prod --root src    # your app root (or examples/ports-l2)
+```
 
 ## gen + ext Pattern
 

@@ -51,6 +51,16 @@ JWT authentication demo.
 |------|----------|---------|
 | `main.zig` | ✅ YES | JWT setup, login route. |
 
+### `ports-l2/`
+L2 ports DI demo (`zig build run-ports-l2`) — store/cache/bus + memory adapters.
+
+| File | AI Edit? | Purpose |
+|------|----------|---------|
+| `main.zig` | ✅ YES | Assemble adapters → ports → service → routes |
+| `ports/*.zig` | ✅ YES | Port surfaces (`ai-edit-zone`) |
+| `adapters/*.zig` | ✅ YES | Memory adapters (`ai-edit-zone`) |
+| `service/orders.zig` | ✅ YES | Business logic via ports only |
+
 ### `websocket/`
 WebSocket server demo.
 

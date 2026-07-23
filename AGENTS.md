@@ -43,9 +43,9 @@ Pick **one stack per module**. Do not mix drivers in one transaction. Details: `
 ```
 
 Generated files have `// @generated` header — safe to edit when header says
-"AI: edit directly". Re-running generators does **not** merge ai-edit-zones:
-existing files are left alone and new output goes to `<path>.gen.new`
-(use `--force` to overwrite). Review with `diff`, then merge by hand.
+"AI: edit directly". Re-running generators **merges** matching
+`// ── ai-edit-zone: <name>` bodies into the existing file. If no zones match,
+new output goes to `<path>.gen.new` (use `--force` to overwrite everything).
 
 ## ❌ NEVER
 

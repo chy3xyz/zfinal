@@ -5,7 +5,13 @@
 
 ### Added
 - **`zf g port store|cache|bus`**: generates `src/ports/{name}.zig` + matching `src/adapters/*` stubs aligned with L2/L3 in `doc/progressive_architecture.md` (`--json` / `--force`).
-- **RobustMQ JoinGroup / SyncGroup / Heartbeat**: wire builders + `KafkaConsumer.join` / `heartbeat`; `OffsetCommit` now carries generation/member from join. Multi-instance Kafka rebalance still NATS-first.
+- **`examples/ports-l2`**: runnable L2 DI demo (store/cache/bus ports + memory adapters + OrdersService). `zig build run-ports-l2`.
+- **`zf check --prod --root <dir>`**: portable production-contract scan (default root `examples/production`; custom roots warn on missing BFF wiring).
+- **ai-edit-zone preserving regen**: `safeWrite` merges matching zone bodies via `tools/zf/zone_merge.zig` before falling back to `.gen.new`.
+- **JWT RS256 verify**: `jwtVerifyRs256` / `jwt.verifyRs256` (PEM SPKI / RSA PUBLIC KEY or PKCS#1 DER) for OIDC/gateway tokens; sign remains HS256.
+- **RobustMQ OffsetFetch / LeaveGroup**: wire + `KafkaConsumer.fetchCommittedOffset` / `leave`.
+- **RobustMQ JoinGroup / SyncGroup / Heartbeat**: wire builders + `KafkaConsumer.join` / `heartbeat`; `OffsetCommit` now carries generation/member from join.
+- **Kafka classic range rebalance**: leader divides `0..partition_count-1` across members; `poll` / offsets are per assigned partition. Set `KafkaConsumerConfig.partition_count` to match the topic.
 - **RobustMQ OffsetCommit wire**: `KafkaWireFormat.buildOffsetCommitRequest` + `RobustMQTransport.offsetCommit` + `KafkaConsumer.commitLocal` / `commit`.
 
 ### Fixed
@@ -13,7 +19,7 @@
 - **Version / manifest drift**: `src/version.zig` is the single runtime/codegen source of truth (must match `build.zig.zon`); CLI + `zf crud:* --json` / `ZfTool` manifests no longer hardcode stale `0.13.11` / `0.9.x` strings.
 
 ### Docs
-- Clarified regeneration semantics: existing files → `<path>.gen.new` (or `--force`); no automatic ai-edit-zone merge yet.
+- Clarified regeneration: matching `ai-edit-zone` names are **merged** into the existing file; otherwise `<path>.gen.new` (or `--force`).
 - Refreshed `PRODUCTION_AUDIT.md` / `SECURITY.md` / agent docs to **0.20.3**.
 - `doc/robustmq.md`: JoinGroup status + single-process consume path; NATS-first for multi-instance.
 - `doc/codegen.md` / `doc/progressive_architecture.md`: ports codegen.

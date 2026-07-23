@@ -69,9 +69,20 @@ pub fn pascalCaseConvert(allocator: std.mem.Allocator, name: []const u8) ![]cons
     return result.toOwnedSlice(allocator);
 }
 
-/// Write file safely: if file already exists, generate to .gen.new instead.
-/// This prevents accidental overwrite of business logic added after initial generation.
-/// User must manually review and merge the .gen.new file.
+const zone_merge = @import("zone_merge.zig");
+
+pub fn flagValue(args: []const []const u8, flag: []const u8) ?[]const u8 {
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], flag) and i + 1 < args.len) return args[i + 1];
+    }
+    return null;
+}
+
+/// Write file safely:
+/// 1. Missing or `--force` → write `data` to `path`.
+/// 2. Existing file with matching `ai-edit-zone` names → merge zones into `path`.
+/// 3. Else → write `data` to `path.gen.new` (no overwrite).
 pub fn safeWrite(allocator: std.mem.Allocator, path: []const u8, data: []const u8, force: bool) !void {
     const exists = std.Io.Dir.cwd().access(io, path, .{}) != error.FileNotFound;
     if (!exists or force) {
@@ -81,12 +92,27 @@ pub fn safeWrite(allocator: std.mem.Allocator, path: []const u8, data: []const u
         return;
     }
 
-    // File exists — write to .gen.new to avoid overwriting business logic
+    const existing = readFileAlloc(allocator, path) catch {
+        const new_path = try std.fmt.allocPrint(allocator, "{s}.gen.new", .{path});
+        defer allocator.free(new_path);
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = new_path, .data = data });
+        std.debug.print("⚠️  EXISTS: {s} — generated to {s} (could not read original)\n", .{ path, new_path });
+        return;
+    };
+    defer allocator.free(existing);
+
+    if (try zone_merge.mergeAiEditZones(allocator, existing, data)) |merged| {
+        defer allocator.free(merged);
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = merged });
+        std.debug.print("✅ Merged ai-edit-zones: {s}\n", .{path});
+        return;
+    }
+
     const new_path = try std.fmt.allocPrint(allocator, "{s}.gen.new", .{path});
     defer allocator.free(new_path);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = new_path, .data = data });
-    std.debug.print("⚠️  EXISTS: {s} — generated to {s}.gen.new\n", .{ path, path });
-    std.debug.print("   Review with: diff {s} {s}.gen.new  then merge, or use --force\n", .{ path, path });
+    std.debug.print("⚠️  EXISTS: {s} — no matching ai-edit-zones; wrote {s}\n", .{ path, new_path });
+    std.debug.print("   Review with: diff {s} {s}  then merge, or use --force\n", .{ path, new_path });
 }
 
 /// Append a JSON-escaped string (no surrounding quotes).

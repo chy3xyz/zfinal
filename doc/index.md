@@ -17,7 +17,7 @@ the generator from code. The result: an AI can add a CRUD feature in
 | Property | Why it matters for AI |
 |----------|----------------------|
 | `zf crud:sql <file> --json` | Emits a manifest the AI parses instead of grepping the working tree |
-| `// ── ai-edit-zone: ...` markers | Tells the AI exactly where to edit; re-run writes `.gen.new` unless `--force` |
+| `// ── ai-edit-zone: ...` markers | Edit only these blocks; regen **merges** matching zones (else `.gen.new` / `--force`) |
 | `zfinal.ZfTool` (in-framework) | The AI can call the generator from Zig code, no shell out |
 | `zig fmt` clean | 346+ files, all formatted; AI doesn't have to fight style |
 | `zf check` | Audits AI boundary compliance; catches hand-edited generated code |

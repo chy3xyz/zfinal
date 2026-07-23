@@ -259,7 +259,7 @@ pub fn main(init: std.process.Init) !void {
             if (args.len < 3) {
                 std.debug.print("Usage: {s} crud:sql <sql_file> [project_name] [--force] [--json] [--admin] [--explain] [--dry-run]\n", .{args[0]});
                 std.debug.print("  project_name  Optional. Creates project dir and generates inside it.\n", .{});
-                std.debug.print("  --force       Overwrite existing files instead of generating .gen.new\n", .{});
+                std.debug.print("  --force       Overwrite existing files (skip ai-edit-zone merge)\n", .{});
                 std.debug.print("  --json        Emit machine-readable manifest for AI agents.\n", .{});
                 std.debug.print("  --admin       Also emit vben-style admin HTML (htmx + alpine + tailwind, CDN).\n", .{});
                 std.debug.print("  --explain     Print decision rationale for each generated file (AI-friendly).\n", .{});
@@ -279,7 +279,7 @@ pub fn main(init: std.process.Init) !void {
                 std.debug.print("Usage: {s} crud:zent <schema.zent|schema.json> [--force] [--json] [--explain] [--dry-run] [--out <dir>]\n", .{args[0]});
                 std.debug.print("  Generate zent-primary module: model/persistence/service/handler/routes.\n", .{});
                 std.debug.print("  AI-first: always pass --json; edit only ai-edit-zone blocks.\n", .{});
-                std.debug.print("  --force    Overwrite existing files (else write *.gen.new)\n", .{});
+                std.debug.print("  --force    Overwrite existing files (skip zone merge; else merge ai-edit-zones or write *.gen.new)\n", .{});
                 std.debug.print("  --json     Emit machine-readable manifest for AI agents\n", .{});
                 std.debug.print("  --explain  Print plan + AI edit zones before writing\n", .{});
                 std.debug.print("  --dry-run  Print plan only; do not write files\n", .{});
@@ -328,7 +328,12 @@ pub fn main(init: std.process.Init) !void {
             const heal = hasFlag(args, "--heal");
             const ai_zones = hasFlag(args, "--ai-zones");
             const prod = hasFlag(args, "--prod");
-            try handleCheck(allocator, heal, ai_zones, prod);
+            const prod_root = zf_shared.flagValue(args, "--root") orelse "examples/production";
+            if (zf_shared.flagValue(args, "--root") != null and !prod) {
+                std.debug.print("Note: --root implies --prod\n", .{});
+            }
+            const do_prod = prod or zf_shared.flagValue(args, "--root") != null;
+            try handleCheck(allocator, heal, ai_zones, do_prod, prod_root);
         },
         .upgrade => {
             try handleUpgrade(allocator);
@@ -406,7 +411,7 @@ fn printHelp(exe_name: []const u8) void {
     std.debug.print("  crud:zent <file>        Generate from .zent/.json (zent primary data layer).\n", .{});
     std.debug.print("  admin <file>            Generate vben-style admin HTML (htmx + alpine + tailwind, CDN)\n", .{});
     std.debug.print("  check                   Audit project for AI compliance (gen/ext boundaries)\n", .{});
-    std.debug.print("  check --prod            Also scan for production-contract anti-patterns\n", .{});
+    std.debug.print("  check --prod [--root R] Production-contract scan (default root: examples/production)\n", .{});
     std.debug.print("  upgrade                 Upgrade zfinal dependency to latest release\n", .{});
     std.debug.print("  docker                  Generate Dockerfile\n", .{});
     std.debug.print("  deploy                  Deploy application\n", .{});
