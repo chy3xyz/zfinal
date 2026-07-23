@@ -677,6 +677,13 @@ test "openapi: renderYaml produces minimal OpenAPI 3.0.3" {
     try std.testing.expect(std.mem.indexOf(u8, yaml, "required: true") != null);
     try std.testing.expect(std.mem.indexOf(u8, yaml, "responses:") != null);
     try std.testing.expect(std.mem.indexOf(u8, yaml, "'200':") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "'400':") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "components:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "bearerAuth:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "requestBody:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "security:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "'401':") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "'404':") != null);
 }
 
 test "openapi: YAML output is stable across runs" {

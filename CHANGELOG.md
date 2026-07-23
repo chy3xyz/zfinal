@@ -13,7 +13,14 @@
 - **RobustMQ JoinGroup / SyncGroup / Heartbeat**: wire builders + `KafkaConsumer.join` / `heartbeat`; `OffsetCommit` now carries generation/member from join.
 - **Kafka classic range rebalance**: leader divides partitions across members; `poll` / offsets are per assigned partition.
 - **Kafka Metadata partition discovery**: Metadata API v1; `partition_count=0` (default) auto-discovers per topic; `>0` overrides.
-- **Keep-alive safety suite**: `keepalive_safety.zig` — drain/#25017 live regression + `force_connection_close` default assert; wired from `Context` drain.
+- **Kafka sticky assignor**: `KafkaConsumerConfig.assignor = .sticky` (classic sticky; cold start ≈ range).
+- **Keep-alive safety suite**: `keepalive_safety.zig` — drain/#25017 live regression + `force_connection_close` default assert.
+- **MQTT native TLS**: `MqttConfig.use_tls` via `std.crypto.tls.Client` (`tls_insecure` / `tls_server_name`).
+- **JWT RS256 sign**: `jwtSignRs256` / `jwt.signRs256` (PKCS#1 / PKCS#8 private key PEM/DER).
+- **Metrics route classes**: health/metrics/api/admin/static/other + `routeTemplate` helper.
+- **`zf openapi` deepen**: bearerAuth, JSON requestBody, 400/401/404 responses.
+- **`examples/ports-l3`**: tenant + outbox + bus L3 DI demo (`zig build run-ports-l3`).
+- **Benchmark baseline**: `benchmark/BASELINE.md` + ReleaseSafe/force-close guidance.
 - **RobustMQ OffsetCommit wire**: `KafkaWireFormat.buildOffsetCommitRequest` + `RobustMQTransport.offsetCommit` + `KafkaConsumer.commitLocal` / `commit`.
 
 ### Fixed

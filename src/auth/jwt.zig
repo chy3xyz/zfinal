@@ -1,6 +1,6 @@
-//! HS256 + RS256 (verify) JWT (RFC 7519) — production auth building block.
+//! HS256 + RS256 sign/verify JWT (RFC 7519) — production auth building block.
 //! Rejects `alg=none`. Supports nbf/iss/aud + dual-secret rotation (HS256).
-//! RS256 is **verify-only** (OIDC / gateway-signed tokens) via PKCS#1 or SPKI public key.
+//! RS256 sign/verify via PKCS#1 or SPKI keys (OIDC / gateway tokens).
 //! No third-party deps; uses `std.crypto` HMAC-SHA256 + Certificate.rsa.
 
 const std = @import("std");
@@ -18,6 +18,7 @@ pub const JwtError = error{
     InvalidAudience,
     UnsupportedAlgorithm,
     InvalidPublicKey,
+    InvalidPrivateKey,
     OutOfMemory,
     WriteFailed,
 };
@@ -51,14 +52,9 @@ pub const VerifyOptions = struct {
     previous_secret: ?[]const u8 = null,
 };
 
-/// Sign HS256 JWT. Caller owns returned slice.
-pub fn sign(allocator: std.mem.Allocator, secret: []const u8, claims: Claims) JwtError![]u8 {
-    const header_json = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
-    const header_b64 = try base64UrlEncode(allocator, header_json);
-    defer allocator.free(header_b64);
-
+fn encodeClaimsJson(allocator: std.mem.Allocator, claims: Claims) JwtError![]u8 {
     var payload_buf: std.Io.Writer.Allocating = .init(allocator);
-    defer payload_buf.deinit();
+    errdefer payload_buf.deinit();
     const w = &payload_buf.writer;
     try w.writeAll("{\"sub\":\"");
     try writeJsonEscaped(w, claims.sub);
@@ -81,7 +77,16 @@ pub fn sign(allocator: std.mem.Allocator, secret: []const u8, claims: Claims) Jw
         try w.writeAll("\"");
     }
     try w.writeAll("}");
-    const payload = try payload_buf.toOwnedSlice();
+    return payload_buf.toOwnedSlice() catch return error.OutOfMemory;
+}
+
+/// Sign HS256 JWT. Caller owns returned slice.
+pub fn sign(allocator: std.mem.Allocator, secret: []const u8, claims: Claims) JwtError![]u8 {
+    const header_json = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
+    const header_b64 = try base64UrlEncode(allocator, header_json);
+    defer allocator.free(header_b64);
+
+    const payload = try encodeClaimsJson(allocator, claims);
     defer allocator.free(payload);
 
     const payload_b64 = try base64UrlEncode(allocator, payload);
@@ -95,6 +100,60 @@ pub fn sign(allocator: std.mem.Allocator, secret: []const u8, claims: Claims) Jw
     const sig_b64 = try base64UrlEncode(allocator, &mac);
     defer allocator.free(sig_b64);
 
+    return try std.fmt.allocPrint(allocator, "{s}.{s}", .{ signing_input, sig_b64 });
+}
+
+/// Sign RS256 JWT with a PEM (`RSA PRIVATE KEY` / `PRIVATE KEY`) or DER PKCS#1 private key.
+/// Caller owns returned slice.
+pub fn signRs256(
+    allocator: std.mem.Allocator,
+    private_key_pem_or_der: []const u8,
+    claims: Claims,
+) JwtError![]u8 {
+    const header_json = "{\"alg\":\"RS256\",\"typ\":\"JWT\"}";
+    const header_b64 = try base64UrlEncode(allocator, header_json);
+    defer allocator.free(header_b64);
+
+    const payload = try encodeClaimsJson(allocator, claims);
+    defer allocator.free(payload);
+
+    const payload_b64 = try base64UrlEncode(allocator, payload);
+    defer allocator.free(payload_b64);
+
+    const signing_input = try std.fmt.allocPrint(allocator, "{s}.{s}", .{ header_b64, payload_b64 });
+    defer allocator.free(signing_input);
+
+    const rsa_der = try loadRsaPrivateKeyDer(allocator, private_key_pem_or_der);
+    defer allocator.free(rsa_der);
+    const key_comps = parsePrivateKeyDer(rsa_der) catch return error.InvalidPrivateKey;
+
+    const mod_len = key_comps.modulus.len;
+    return switch (mod_len) {
+        256 => try finishRs256Token(allocator, signing_input, try signRs256Fixed(
+            256,
+            signing_input,
+            key_comps.modulus,
+            key_comps.private_exponent,
+        )),
+        384 => try finishRs256Token(allocator, signing_input, try signRs256Fixed(
+            384,
+            signing_input,
+            key_comps.modulus,
+            key_comps.private_exponent,
+        )),
+        512 => try finishRs256Token(allocator, signing_input, try signRs256Fixed(
+            512,
+            signing_input,
+            key_comps.modulus,
+            key_comps.private_exponent,
+        )),
+        else => error.UnsupportedAlgorithm,
+    };
+}
+
+fn finishRs256Token(allocator: std.mem.Allocator, signing_input: []const u8, sig: anytype) JwtError![]u8 {
+    const sig_b64 = try base64UrlEncode(allocator, &sig);
+    defer allocator.free(sig_b64);
     return try std.fmt.allocPrint(allocator, "{s}.{s}", .{ signing_input, sig_b64 });
 }
 
@@ -143,7 +202,6 @@ pub fn verifyWithOptions(
 }
 
 /// Verify RS256 JWT with a PEM (`PUBLIC KEY` / `RSA PUBLIC KEY`) or DER RSA public key.
-/// Signing remains HS256-only in-process; use this for OIDC / gateway-issued tokens.
 pub fn verifyRs256(
     allocator: std.mem.Allocator,
     public_key_pem_or_der: []const u8,
@@ -291,6 +349,103 @@ fn verifyRs256Fixed(
     var sig_arr: [modulus_len]u8 = undefined;
     @memcpy(&sig_arr, sig[0..modulus_len]);
     rsa.PKCS1v1_5Signature.verify(modulus_len, sig_arr, signing_input, pk, Sha256) catch return error.InvalidSignature;
+}
+
+fn signRs256Fixed(
+    comptime modulus_len: usize,
+    signing_input: []const u8,
+    modulus: []const u8,
+    private_exponent: []const u8,
+) JwtError![modulus_len]u8 {
+    const pk = rsa.PublicKey.fromBytes(&[_]u8{ 0x01, 0x00, 0x01 }, modulus) catch return error.InvalidPrivateKey;
+    const em = emsaPkcs1V15EncodeSha256(&.{signing_input}, modulus_len) catch return error.InvalidPrivateKey;
+    const Fe = @TypeOf(pk.n).Fe;
+    const m = Fe.fromBytes(pk.n, &em, .big) catch return error.InvalidPrivateKey;
+    const sig_fe = pk.n.powWithEncodedExponent(m, private_exponent, .big) catch return error.InvalidPrivateKey;
+    var sig: [modulus_len]u8 = undefined;
+    sig_fe.toBytes(&sig, .big) catch return error.InvalidPrivateKey;
+    return sig;
+}
+
+fn emsaPkcs1V15EncodeSha256(msg: []const []const u8, comptime em_len: usize) ![em_len]u8 {
+    comptime var em_index = em_len;
+    var em: [em_len]u8 = undefined;
+
+    var hasher: Sha256 = .init(.{});
+    for (msg) |part| hasher.update(part);
+    em_index -= Sha256.digest_length;
+    hasher.final(em[em_index..]);
+
+    const hash_der: []const u8 = &.{
+        0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86,
+        0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05,
+        0x00, 0x04, 0x20,
+    };
+    em_index -= hash_der.len;
+    @memcpy(em[em_index..][0..hash_der.len], hash_der);
+
+    em_index -= 1;
+    @memset(em[2..em_index], 0xff);
+    em[em_index] = 0x00;
+    em[1] = 0x01;
+    em[0] = 0x00;
+    return em;
+}
+
+fn trimLeadingZeroes(raw: []const u8) []const u8 {
+    const offset = for (raw, 0..) |byte, i| {
+        if (byte != 0) break i;
+    } else raw.len;
+    return raw[offset..];
+}
+
+fn parsePrivateKeyDer(der: []const u8) JwtError!struct { modulus: []const u8, private_exponent: []const u8 } {
+    const Element = std.crypto.Certificate.der.Element;
+    const seq = Element.parse(der, 0) catch return error.InvalidPrivateKey;
+    if (seq.identifier.tag != .sequence) return error.InvalidPrivateKey;
+    var elem = Element.parse(der, seq.slice.start) catch return error.InvalidPrivateKey; // version
+    elem = Element.parse(der, elem.slice.end) catch return error.InvalidPrivateKey; // modulus
+    if (elem.identifier.tag != .integer) return error.InvalidPrivateKey;
+    const modulus = trimLeadingZeroes(der[elem.slice.start..elem.slice.end]);
+    elem = Element.parse(der, elem.slice.end) catch return error.InvalidPrivateKey; // publicExponent
+    elem = Element.parse(der, elem.slice.end) catch return error.InvalidPrivateKey; // privateExponent
+    if (elem.identifier.tag != .integer) return error.InvalidPrivateKey;
+    const private_exponent = trimLeadingZeroes(der[elem.slice.start..elem.slice.end]);
+    return .{ .modulus = modulus, .private_exponent = private_exponent };
+}
+
+/// Decode PEM or accept raw DER; return owned PKCS#1 RSAPrivateKey DER.
+fn loadRsaPrivateKeyDer(allocator: std.mem.Allocator, input: []const u8) JwtError![]u8 {
+    const trimmed = std.mem.trim(u8, input, " \t\r\n");
+    if (std.mem.indexOf(u8, trimmed, "-----BEGIN") != null) {
+        const der = decodePemBody(allocator, trimmed) catch return error.InvalidPrivateKey;
+        errdefer allocator.free(der);
+        if (parsePrivateKeyDer(der)) |_| {
+            return der;
+        } else |_| {
+            const inner = unwrapPkcs8PrivateKey(der) catch return error.InvalidPrivateKey;
+            const owned = try allocator.dupe(u8, inner);
+            allocator.free(der);
+            return owned;
+        }
+    }
+    if (parsePrivateKeyDer(trimmed)) |_| {
+        return try allocator.dupe(u8, trimmed);
+    } else |_| {
+        const inner = unwrapPkcs8PrivateKey(trimmed) catch return error.InvalidPrivateKey;
+        return try allocator.dupe(u8, inner);
+    }
+}
+
+fn unwrapPkcs8PrivateKey(der_bytes: []const u8) JwtError![]const u8 {
+    const Element = std.crypto.Certificate.der.Element;
+    const top = Element.parse(der_bytes, 0) catch return error.InvalidPrivateKey;
+    if (top.identifier.tag != .sequence) return error.InvalidPrivateKey;
+    var elem = Element.parse(der_bytes, top.slice.start) catch return error.InvalidPrivateKey; // version
+    elem = Element.parse(der_bytes, elem.slice.end) catch return error.InvalidPrivateKey; // algorithm
+    elem = Element.parse(der_bytes, elem.slice.end) catch return error.InvalidPrivateKey; // privateKey
+    if (elem.identifier.tag != .octetstring) return error.InvalidPrivateKey;
+    return der_bytes[elem.slice.start..elem.slice.end];
 }
 
 /// Decode PEM or accept raw DER; return owned PKCS#1 RSAPublicKey DER.
@@ -462,6 +617,26 @@ test "jwt: previous_secret rotation" {
     const claims = try verifyWithOptions(allocator, new_sec, token, now, .{ .previous_secret = old_sec });
     defer freeClaims(allocator, claims);
     try std.testing.expectEqualStrings("u", claims.sub);
+}
+
+test "jwt: RS256 sign and verify roundtrip" {
+    const allocator = std.testing.allocator;
+    const priv_der = @embedFile("testdata_rs256_priv.der");
+    const pub_pem = @embedFile("testdata_rs256_sign_pub.pem");
+    const now: i64 = 1_700_000_000;
+
+    const token = try signRs256(allocator, priv_der, .{
+        .sub = "bob",
+        .exp = now + 3600,
+        .iat = now,
+        .role = "user",
+    });
+    defer allocator.free(token);
+
+    const claims = try verifyRs256(allocator, pub_pem, token, now, .{});
+    defer freeClaims(allocator, claims);
+    try std.testing.expectEqualStrings("bob", claims.sub);
+    try std.testing.expectEqualStrings("user", claims.role.?);
 }
 
 test "jwt: RS256 verify with PKCS#1 DER and SPKI PEM" {

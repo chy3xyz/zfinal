@@ -5,7 +5,10 @@ const Metrics = @import("../core/metrics.zig").Metrics;
 pub const MetricsExporter = struct {
     /// Prometheus exposition format (text/plain; version=0.0.4).
     pub fn toPrometheus(metrics: *const Metrics, allocator: std.mem.Allocator) ![]const u8 {
-        return try std.fmt.allocPrint(allocator,
+        var out = std.ArrayList(u8).empty;
+        errdefer out.deinit(allocator);
+
+        const head = try std.fmt.allocPrint(allocator,
             \\# HELP zfinal_uptime_seconds Process uptime in seconds.
             \\# TYPE zfinal_uptime_seconds gauge
             \\zfinal_uptime_seconds {d}
@@ -33,22 +36,6 @@ pub const MetricsExporter = struct {
             \\zfinal_request_duration_ms_bucket{{le="+Inf"}} {d}
             \\zfinal_request_duration_ms_sum {d}
             \\zfinal_request_duration_ms_count {d}
-            \\# HELP zfinal_requests_by_route_total Coarse path-class request counts.
-            \\# TYPE zfinal_requests_by_route_total counter
-            \\zfinal_requests_by_route_total{{route="health"}} {d}
-            \\zfinal_requests_by_route_total{{route="metrics"}} {d}
-            \\zfinal_requests_by_route_total{{route="api"}} {d}
-            \\zfinal_requests_by_route_total{{route="other"}} {d}
-            \\# HELP zfinal_request_duration_by_route_ms Coarse path-class latency (ms).
-            \\# TYPE zfinal_request_duration_by_route_ms summary
-            \\zfinal_request_duration_by_route_ms_sum{{route="health"}} {d}
-            \\zfinal_request_duration_by_route_ms_count{{route="health"}} {d}
-            \\zfinal_request_duration_by_route_ms_sum{{route="metrics"}} {d}
-            \\zfinal_request_duration_by_route_ms_count{{route="metrics"}} {d}
-            \\zfinal_request_duration_by_route_ms_sum{{route="api"}} {d}
-            \\zfinal_request_duration_by_route_ms_count{{route="api"}} {d}
-            \\zfinal_request_duration_by_route_ms_sum{{route="other"}} {d}
-            \\zfinal_request_duration_by_route_ms_count{{route="other"}} {d}
             \\
         , .{
             metrics.uptime(),
@@ -68,10 +55,41 @@ pub const MetricsExporter = struct {
             cumBucket(metrics, 7),
             metrics.latency_sum_ms.load(.monotonic),
             metrics.total_requests.load(.monotonic),
+        });
+        defer allocator.free(head);
+        try out.appendSlice(allocator, head);
+
+        const routes = try std.fmt.allocPrint(allocator,
+            \\# HELP zfinal_requests_by_route_total Coarse path-class request counts.
+            \\# TYPE zfinal_requests_by_route_total counter
+            \\zfinal_requests_by_route_total{{route="health"}} {d}
+            \\zfinal_requests_by_route_total{{route="metrics"}} {d}
+            \\zfinal_requests_by_route_total{{route="api"}} {d}
+            \\zfinal_requests_by_route_total{{route="admin"}} {d}
+            \\zfinal_requests_by_route_total{{route="static"}} {d}
+            \\zfinal_requests_by_route_total{{route="other"}} {d}
+            \\# HELP zfinal_request_duration_by_route_ms Coarse path-class latency (ms).
+            \\# TYPE zfinal_request_duration_by_route_ms summary
+            \\zfinal_request_duration_by_route_ms_sum{{route="health"}} {d}
+            \\zfinal_request_duration_by_route_ms_count{{route="health"}} {d}
+            \\zfinal_request_duration_by_route_ms_sum{{route="metrics"}} {d}
+            \\zfinal_request_duration_by_route_ms_count{{route="metrics"}} {d}
+            \\zfinal_request_duration_by_route_ms_sum{{route="api"}} {d}
+            \\zfinal_request_duration_by_route_ms_count{{route="api"}} {d}
+            \\zfinal_request_duration_by_route_ms_sum{{route="admin"}} {d}
+            \\zfinal_request_duration_by_route_ms_count{{route="admin"}} {d}
+            \\zfinal_request_duration_by_route_ms_sum{{route="static"}} {d}
+            \\zfinal_request_duration_by_route_ms_count{{route="static"}} {d}
+            \\zfinal_request_duration_by_route_ms_sum{{route="other"}} {d}
+            \\zfinal_request_duration_by_route_ms_count{{route="other"}} {d}
+            \\
+        , .{
             metrics.route_hits[0].load(.monotonic),
             metrics.route_hits[1].load(.monotonic),
             metrics.route_hits[2].load(.monotonic),
             metrics.route_hits[3].load(.monotonic),
+            metrics.route_hits[4].load(.monotonic),
+            metrics.route_hits[5].load(.monotonic),
             metrics.route_latency_sum_ms[0].load(.monotonic),
             metrics.route_latency_count[0].load(.monotonic),
             metrics.route_latency_sum_ms[1].load(.monotonic),
@@ -80,7 +98,15 @@ pub const MetricsExporter = struct {
             metrics.route_latency_count[2].load(.monotonic),
             metrics.route_latency_sum_ms[3].load(.monotonic),
             metrics.route_latency_count[3].load(.monotonic),
+            metrics.route_latency_sum_ms[4].load(.monotonic),
+            metrics.route_latency_count[4].load(.monotonic),
+            metrics.route_latency_sum_ms[5].load(.monotonic),
+            metrics.route_latency_count[5].load(.monotonic),
         });
+        defer allocator.free(routes);
+        try out.appendSlice(allocator, routes);
+
+        return try out.toOwnedSlice(allocator);
     }
 
     fn cumBucket(metrics: *const Metrics, idx: usize) u64 {

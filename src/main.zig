@@ -91,6 +91,7 @@ pub const createJwtAuthInterceptorWithOptions = @import("interceptor/interceptor
 // Auth
 pub const Jwt = @import("auth/jwt.zig");
 pub const jwtSign = @import("auth/jwt.zig").sign;
+pub const jwtSignRs256 = @import("auth/jwt.zig").signRs256;
 pub const jwtVerify = @import("auth/jwt.zig").verify;
 pub const jwtVerifyWithOptions = @import("auth/jwt.zig").verifyWithOptions;
 pub const jwtVerifyRs256 = @import("auth/jwt.zig").verifyRs256;

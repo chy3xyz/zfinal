@@ -21,16 +21,16 @@ pub const Metrics = struct {
         .init(0), .init(0), .init(0), .init(0), .init(0), .init(0), .init(0), .init(0),
     },
     latency_sum_ms: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
-    /// Coarse path-class counters: health, metrics, api, other.
-    route_hits: [4]std.atomic.Value(u64) = .{
-        .init(0), .init(0), .init(0), .init(0),
+    /// Coarse path-class counters: health, metrics, api, admin, static, other.
+    route_hits: [6]std.atomic.Value(u64) = .{
+        .init(0), .init(0), .init(0), .init(0), .init(0), .init(0),
     },
     /// Per route-class latency sum/count for Prometheus averages.
-    route_latency_sum_ms: [4]std.atomic.Value(u64) = .{
-        .init(0), .init(0), .init(0), .init(0),
+    route_latency_sum_ms: [6]std.atomic.Value(u64) = .{
+        .init(0), .init(0), .init(0), .init(0), .init(0), .init(0),
     },
-    route_latency_count: [4]std.atomic.Value(u64) = .{
-        .init(0), .init(0), .init(0), .init(0),
+    route_latency_count: [6]std.atomic.Value(u64) = .{
+        .init(0), .init(0), .init(0), .init(0), .init(0), .init(0),
     },
     /// Ring buffer for recent errors (last N errors). Protected by `error_mutex`.
     recent_errors: std.ArrayList(ErrorEntry),
@@ -89,7 +89,7 @@ pub const Metrics = struct {
         _ = self.latency_bucket_counts[latency_bounds_ms.len].fetchAdd(1, .monotonic);
     }
 
-    pub const route_labels = [_][]const u8{ "health", "metrics", "api", "other" };
+    pub const route_labels = [_][]const u8{ "health", "metrics", "api", "admin", "static", "other" };
 
     /// Coarse route class to keep Prometheus cardinality bounded.
     pub fn recordRoute(self: *Metrics, path: []const u8) void {
@@ -107,7 +107,61 @@ pub const Metrics = struct {
         if (std.mem.eql(u8, path, "/health") or std.mem.startsWith(u8, path, "/health/")) return 0;
         if (std.mem.eql(u8, path, "/metrics") or std.mem.startsWith(u8, path, "/metrics/")) return 1;
         if (std.mem.startsWith(u8, path, "/api")) return 2;
-        return 3;
+        if (std.mem.startsWith(u8, path, "/admin") or std.mem.eql(u8, path, "/admin")) return 3;
+        if (isStaticPath(path)) return 4;
+        return 5;
+    }
+
+    fn isStaticPath(path: []const u8) bool {
+        if (std.mem.startsWith(u8, path, "/static") or
+            std.mem.startsWith(u8, path, "/assets") or
+            std.mem.startsWith(u8, path, "/public"))
+            return true;
+        const static_suffixes = [_][]const u8{ ".css", ".js", ".ico", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".woff", ".woff2", ".map" };
+        for (static_suffixes) |suf| {
+            if (path.len >= suf.len and std.mem.endsWith(u8, path, suf)) return true;
+        }
+        return false;
+    }
+
+    /// Replace numeric path segments with `:id` (docs/tests; not used in metrics).
+    pub fn routeTemplate(path: []const u8, buf: []u8) []const u8 {
+        var out_len: usize = 0;
+        var seg_start: ?usize = null;
+        var i: usize = 0;
+        while (i <= path.len) : (i += 1) {
+            const at_end = i == path.len;
+            const is_slash = !at_end and path[i] == '/';
+            if (at_end or is_slash) {
+                if (seg_start) |start| {
+                    const seg = path[start..i];
+                    const is_numeric = seg.len > 0 and blk: {
+                        for (seg) |c| {
+                            if (c < '0' or c > '9') break :blk false;
+                        }
+                        break :blk true;
+                    };
+                    if (is_numeric) {
+                        const token = ":id";
+                        if (out_len + token.len > buf.len) return path;
+                        @memcpy(buf[out_len .. out_len + token.len], token);
+                        out_len += token.len;
+                    } else {
+                        if (out_len + seg.len > buf.len) return path;
+                        @memcpy(buf[out_len .. out_len + seg.len], seg);
+                        out_len += seg.len;
+                    }
+                    seg_start = null;
+                }
+                if (!at_end) {
+                    if (out_len + 1 > buf.len) return path;
+                    buf[out_len] = '/';
+                    out_len += 1;
+                    seg_start = i + 1;
+                }
+            }
+        }
+        return buf[0..out_len];
     }
 
     /// Record an error (best-effort, may drop entries under contention).
@@ -228,4 +282,20 @@ pub fn metricsHandlerFor(comptime metrics: *Metrics) *const fn (*@import("contex
             try ctx.renderText(text);
         }
     }.handler;
+}
+
+test "metrics routeClass coarse buckets" {
+    try std.testing.expectEqual(@as(usize, 0), Metrics.routeClass("/health"));
+    try std.testing.expectEqual(@as(usize, 1), Metrics.routeClass("/metrics"));
+    try std.testing.expectEqual(@as(usize, 2), Metrics.routeClass("/api/users"));
+    try std.testing.expectEqual(@as(usize, 3), Metrics.routeClass("/admin/users"));
+    try std.testing.expectEqual(@as(usize, 4), Metrics.routeClass("/static/app.js"));
+    try std.testing.expectEqual(@as(usize, 4), Metrics.routeClass("/assets/logo.png"));
+    try std.testing.expectEqual(@as(usize, 5), Metrics.routeClass("/orders"));
+}
+
+test "metrics routeTemplate replaces numeric segments" {
+    var buf: [64]u8 = undefined;
+    const t = Metrics.routeTemplate("/api/users/42/posts/7", &buf);
+    try std.testing.expectEqualStrings("/api/users/:id/posts/:id", t);
 }

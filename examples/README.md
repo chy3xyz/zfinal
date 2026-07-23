@@ -71,6 +71,16 @@ L2 ports DI demo (`zig build run-ports-l2`) — store/cache/bus + memory adapter
 | `adapters/*.zig` | ✅ YES | Memory adapters (`ai-edit-zone`) |
 | `service/orders.zig` | ✅ YES | Business logic via ports only |
 
+### `ports-l3/`
+L3 ports DI demo (`zig build run-ports-l3`) — tenant header + outbox + store/cache/bus.
+
+| File | AI Edit? | Purpose |
+|------|----------|---------|
+| `main.zig` | ✅ YES | Tenant header, adapter wiring, routes |
+| `ports/*.zig` | ✅ YES | store/cache/bus/outbox ports |
+| `adapters/*.zig` | ✅ YES | memory_* including `memory_outbox` |
+| `service/orders.zig` | ✅ YES | `placeOrder` with idempotency + outbox + bus |
+
 ### `websocket/`
 WebSocket server demo.
 

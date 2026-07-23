@@ -76,6 +76,10 @@ pub const KafkaConsumerConfig = struct {
     /// Partitions per topic for classic **range** assignor.
     /// `0` = discover via Metadata API (per topic); `>0` = force this count for every topic.
     partition_count: i32 = 0,
+    /// Consumer group partition assignor advertised on JoinGroup.
+    assignor: Assignor = .range,
+
+    pub const Assignor = enum { range, sticky };
 };
 
 /// Low-level Kafka wire client used by producer/consumer against RobustMQ.
@@ -730,7 +734,7 @@ pub const KafkaConsumer = struct {
         try self.commitBroker(topic, partition, offset);
     }
 
-    /// JoinGroup + SyncGroup with classic **range** assignor.
+    /// JoinGroup + SyncGroup with **range** or **sticky** assignor (`config.assignor`).
     /// Leader divides partitions across members (lexicographic member_id) per topic.
     /// `partition_count == 0` → Metadata API per topic; otherwise that count for all topics.
     pub fn join(self: *Self) !void {
@@ -750,13 +754,18 @@ pub const KafkaConsumer = struct {
         const meta = try KafkaWireFormat.buildConsumerProtocolMetadata(self.allocator, topics.items);
         defer self.allocator.free(meta);
 
+        const protocol_name: []const u8 = switch (self.config.assignor) {
+            .range => "range",
+            .sticky => "sticky",
+        };
+
         var result = try self.transport.?.joinGroup(
             self.config.group_id,
             self.member_id,
             @intCast(self.config.session_timeout_ms),
             30000,
             "consumer",
-            "range",
+            protocol_name,
             meta,
         );
         defer result.deinit(self.allocator);
@@ -846,7 +855,27 @@ pub const KafkaConsumer = struct {
         }
         for (topics, 0..) |t, ti| {
             const pc = try self.resolvePartitionCount(t);
-            topic_ranges[ti] = try KafkaWireFormat.rangeAssign(self.allocator, pc, member_ids.len);
+            topic_ranges[ti] = switch (self.config.assignor) {
+                .range => try KafkaWireFormat.rangeAssign(self.allocator, pc, member_ids.len),
+                .sticky => blk: {
+                    var previous = try self.allocator.alloc(?[]const i32, member_ids.len);
+                    defer {
+                        for (previous) |prev| {
+                            if (prev) |p| self.allocator.free(p);
+                        }
+                        self.allocator.free(previous);
+                    }
+                    for (member_ids, 0..) |mid, mi| {
+                        previous[mi] = try KafkaWireFormat.previousPartitionsForTopic(
+                            self.allocator,
+                            result.members,
+                            mid,
+                            t,
+                        );
+                    }
+                    break :blk try KafkaWireFormat.stickyAssign(self.allocator, pc, member_ids.len, previous);
+                },
+            };
             topics_filled = ti + 1;
         }
         defer {
@@ -1365,6 +1394,115 @@ pub const KafkaWireFormat = struct {
             out[filled] = slice;
         }
         return out;
+    }
+
+    /// Sticky assignor for one topic. `previous[mi]` = sorted member `mi`'s prior
+    /// partitions (null/empty = none). Keeps valid prior partitions; distributes
+    /// the rest to balance member counts. Empty previous for all members equals
+    /// `rangeAssign`.
+    pub fn stickyAssign(
+        allocator: std.mem.Allocator,
+        partition_count: i32,
+        member_count: usize,
+        previous: []const ?[]const i32,
+    ) ![][]i32 {
+        if (member_count == 0) return error.InvalidMemberCount;
+        if (partition_count < 1) return error.InvalidPartitionCount;
+        if (previous.len != member_count) return error.InvalidPrevious;
+
+        var all_empty = true;
+        for (previous) |prev| {
+            if (prev) |parts| {
+                if (parts.len > 0) {
+                    all_empty = false;
+                    break;
+                }
+            }
+        }
+        if (all_empty) return rangeAssign(allocator, partition_count, member_count);
+
+        const pc: usize = @intCast(partition_count);
+        var out = try allocator.alloc([]i32, member_count);
+        var filled: usize = 0;
+        errdefer {
+            for (out[0..filled]) |s| allocator.free(s);
+            allocator.free(out);
+        }
+
+        var claimed = try allocator.alloc(bool, pc);
+        defer allocator.free(claimed);
+        @memset(claimed, false);
+
+        var counts = try allocator.alloc(usize, member_count);
+        defer allocator.free(counts);
+        @memset(counts, 0);
+
+        for (0..member_count) |mi| {
+            var kept = std.ArrayList(i32).empty;
+            errdefer kept.deinit(allocator);
+            if (previous[mi]) |prev| {
+                for (prev) |p| {
+                    if (p < 0 or p >= partition_count) continue;
+                    const ui: usize = @intCast(p);
+                    if (claimed[ui]) continue;
+                    claimed[ui] = true;
+                    try kept.append(allocator, p);
+                }
+            }
+            out[mi] = try kept.toOwnedSlice(allocator);
+            counts[mi] = out[mi].len;
+            filled = mi + 1;
+        }
+
+        var free_parts = std.ArrayList(i32).empty;
+        defer free_parts.deinit(allocator);
+        var p: i32 = 0;
+        while (p < partition_count) : (p += 1) {
+            if (!claimed[@intCast(p)]) try free_parts.append(allocator, p);
+        }
+
+        for (free_parts.items) |part| {
+            var min_mi: usize = 0;
+            var min_count = counts[0];
+            var mi: usize = 1;
+            while (mi < member_count) : (mi += 1) {
+                if (counts[mi] < min_count) {
+                    min_count = counts[mi];
+                    min_mi = mi;
+                }
+            }
+            var list = std.ArrayList(i32).empty;
+            errdefer list.deinit(allocator);
+            try list.appendSlice(allocator, out[min_mi]);
+            try list.append(allocator, part);
+            allocator.free(out[min_mi]);
+            out[min_mi] = try list.toOwnedSlice(allocator);
+            counts[min_mi] += 1;
+        }
+
+        return out;
+    }
+
+    /// Best-effort: parse JoinGroup member metadata as a prior assignment for `topic`.
+    /// Subscription-only metadata (current join format) yields null.
+    pub fn previousPartitionsForTopic(
+        allocator: std.mem.Allocator,
+        members: []JoinGroupMember,
+        member_id: []const u8,
+        topic: []const u8,
+    ) !?[]i32 {
+        for (members) |m| {
+            if (!std.mem.eql(u8, m.member_id, member_id)) continue;
+            var parsed = parseMemberAssignment(allocator, m.metadata) catch return null;
+            defer parsed.deinit(allocator);
+            for (parsed.items) |tp| {
+                if (std.mem.eql(u8, tp.topic, topic) and tp.partitions.len > 0) {
+                    return try allocator.dupe(i32, tp.partitions);
+                }
+            }
+            return null;
+        }
+        return null;
     }
 
     pub fn parseMemberAssignment(allocator: std.mem.Allocator, bytes: []const u8) !ParsedAssignment {
@@ -2221,6 +2359,35 @@ test "KafkaConsumer commitLocal requires subscribe" {
     }.h);
     try consumer.commitLocal("t", 7);
     try std.testing.expectEqual(@as(i64, 7), consumer.getOffset("t", 0).?);
+}
+
+test "KafkaWireFormat stickyAssign keeps prior partitions" {
+    const allocator = std.testing.allocator;
+    const prev = [_]?[]const i32{ &.{ 0, 1 }, null };
+    const a = try KafkaWireFormat.stickyAssign(allocator, 4, 2, &prev);
+    defer {
+        for (a) |s| allocator.free(s);
+        allocator.free(a);
+    }
+    try std.testing.expectEqualSlices(i32, &.{ 0, 1 }, a[0]);
+    try std.testing.expectEqualSlices(i32, &.{ 2, 3 }, a[1]);
+}
+
+test "KafkaWireFormat stickyAssign empty previous equals range" {
+    const allocator = std.testing.allocator;
+    const prev = [_]?[]const i32{ null, null };
+    const sticky = try KafkaWireFormat.stickyAssign(allocator, 4, 2, &prev);
+    defer {
+        for (sticky) |s| allocator.free(s);
+        allocator.free(sticky);
+    }
+    const range = try KafkaWireFormat.rangeAssign(allocator, 4, 2);
+    defer {
+        for (range) |s| allocator.free(s);
+        allocator.free(range);
+    }
+    try std.testing.expectEqualSlices(i32, range[0], sticky[0]);
+    try std.testing.expectEqualSlices(i32, range[1], sticky[1]);
 }
 
 test "KafkaWireFormat rangeAssign classic distribution" {

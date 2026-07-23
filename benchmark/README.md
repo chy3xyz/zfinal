@@ -49,7 +49,22 @@ On a modern machine (e.g., M1/M2/M3 Mac), you should expect:
 
 ## Notes
 
-- Ensure you build in `ReleaseFast` mode for accurate performance testing of the framework itself (though `run-blog` defaults to Debug, you might want to build it with `-Doptimize=ReleaseFast`).
+- Ensure you build in `ReleaseSafe` or `ReleaseFast` mode for accurate performance testing of the framework itself (though `run-blog` defaults to Debug, you might want to build it with `-Doptimize=ReleaseSafe`).
   ```bash
-  zig build run-blog -Doptimize=ReleaseFast
+  zig build run-blog -Doptimize=ReleaseSafe
   ```
+- ZFinal defaults to `force_connection_close=true` (see [`doc/reverse_proxy.md`](../doc/reverse_proxy.md)). For apples-to-apples baselines, keep that default; optional nginx in front absorbs client keep-alive.
+
+## Formal baseline
+
+Record numbers in [`BASELINE.md`](BASELINE.md) whenever you change HTTP stack, allocator, or router hot paths.
+
+| Setting | Value |
+|---------|--------|
+| Optimize | `ReleaseSafe` (or `ReleaseFast` for peak RPS — note in BASELINE.md) |
+| `force_connection_close` | `true` (default) |
+| Server | `zig build run-blog -Doptimize=ReleaseSafe` on `:8080` |
+| Tool | `./benchmark/run_ab.sh` or `zig build run-bench -- <url> <n> <c>` |
+| Optional | nginx upstream per `examples/production/deploy/nginx.conf` |
+
+**How to record:** copy `BASELINE.md`, fill date/machine/git SHA/commands, paste `ab` or `run-bench` RPS + p50/p99. Re-run after regressions; do not compare Debug vs ReleaseSafe numbers.

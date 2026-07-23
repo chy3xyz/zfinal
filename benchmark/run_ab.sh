@@ -1,4 +1,7 @@
 #!/bin/bash
+# Apache Bench helper for ZFinal blog demo on :8080.
+# Record output in benchmark/BASELINE.md (ReleaseSafe, force_connection_close=true).
+# See benchmark/README.md for the formal baseline checklist.
 
 # Check if server is running
 curl -s http://localhost:8080 > /dev/null

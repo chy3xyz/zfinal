@@ -1,15 +1,14 @@
 //! Minimal OpenAPI 3.0.3 spec generator for ZFinal projects.
 //!
-//! Scans Zig source files for static route registrations and renders a
-//! minimal OpenAPI YAML document covering:
+//! Scans Zig source files for static route registrations and renders an
+//! OpenAPI YAML document covering:
 //!   - `app.get/post/put/patch/delete("/path", ...)`
 //!   - `app.getWithInterceptors/...` variants
 //!   - `RouteGroup.init(&app, "/prefix")` + group `.get/post/...`
 //!
-//! v0.20 deliberately infers only path strings + path parameters. It does NOT
-//! introspect Zig types — request bodies, response schemas, security, and
-//! parameter sources beyond `path` are all out of scope. The output is meant
-//! as a starting point for downstream tooling (codegen, docs, clients).
+//! v0.21 infers path strings + path parameters, adds bearer JWT security on
+//! mutating operations, generic JSON request bodies, and standard error
+//! responses (400/401/404). Response schemas are still not introspected.
 
 const std = @import("std");
 
@@ -333,16 +332,11 @@ fn lessThanRoute(_: void, a: Route, b: Route) bool {
 // YAML renderer
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Render `spec` as a minimal OpenAPI 3.0.3 YAML document.
+/// Render `spec` as an OpenAPI 3.0.3 YAML document.
 ///
-/// Each operation has:
-///   - `parameters`: one entry per `{var}` in the path (in: path, required,
-///     schema: string)
-///   - `responses`: a single `'200': { description: OK }`
-///
-/// Paths are grouped in declaration order — same order as `spec.routes` (which
-/// is sorted by path then method). The renderer is deterministic: same spec →
-/// same bytes.
+/// Each operation has path parameters, standard responses, and (for POST/PUT/PATCH)
+/// a generic JSON request body. Mutating operations declare `bearerAuth` security.
+/// The renderer is deterministic: same spec → same bytes.
 pub fn renderYaml(allocator: std.mem.Allocator, spec: Spec) ![]u8 {
     var out = std.ArrayList(u8).empty;
     errdefer out.deinit(allocator);
@@ -355,6 +349,12 @@ pub fn renderYaml(allocator: std.mem.Allocator, spec: Spec) ![]u8 {
     try appendIndented(allocator, &out, 1, "version: ");
     try out.appendSlice(allocator, spec.version);
     try out.append(allocator, '\n');
+    try out.appendSlice(allocator, "components:\n");
+    try appendIndented(allocator, &out, 1, "securitySchemes:\n");
+    try appendIndented(allocator, &out, 2, "bearerAuth:\n");
+    try appendIndented(allocator, &out, 3, "type: http\n");
+    try appendIndented(allocator, &out, 3, "scheme: bearer\n");
+    try appendIndented(allocator, &out, 3, "bearerFormat: JWT\n");
     try out.appendSlice(allocator, "paths:\n");
 
     // Group routes by path. spec.routes is already sorted, so first-occurrence
@@ -394,9 +394,30 @@ pub fn renderYaml(allocator: std.mem.Allocator, spec: Spec) ![]u8 {
                 }
             }
 
+            if (r.method == .POST or r.method == .PUT or r.method == .PATCH) {
+                try appendIndented(allocator, &out, 3, "requestBody:\n");
+                try appendIndented(allocator, &out, 4, "required: true\n");
+                try appendIndented(allocator, &out, 4, "content:\n");
+                try appendIndented(allocator, &out, 5, "application/json:\n");
+                try appendIndented(allocator, &out, 6, "schema:\n");
+                try appendIndented(allocator, &out, 7, "type: object\n");
+                try appendIndented(allocator, &out, 3, "security:\n");
+                try appendIndented(allocator, &out, 4, "- bearerAuth: []\n");
+            }
+
             try appendIndented(allocator, &out, 3, "responses:\n");
             try appendIndented(allocator, &out, 4, "'200':\n");
             try appendIndented(allocator, &out, 5, "description: OK\n");
+            try appendIndented(allocator, &out, 4, "'400':\n");
+            try appendIndented(allocator, &out, 5, "description: Bad Request\n");
+            if (r.method != .GET) {
+                try appendIndented(allocator, &out, 4, "'401':\n");
+                try appendIndented(allocator, &out, 5, "description: Unauthorized\n");
+            }
+            if (params.len > 0) {
+                try appendIndented(allocator, &out, 4, "'404':\n");
+                try appendIndented(allocator, &out, 5, "description: Not Found\n");
+            }
             i += 1;
         }
     }

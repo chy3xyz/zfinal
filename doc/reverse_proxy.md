@@ -115,7 +115,22 @@ rate_limiter.trusted_proxies = &.{"127.0.0.1", "::1"};
 
 ---
 
-## 8. 验证
+## 9. Flipping `force_connection_close` default
+
+Zig [issue #25017](https://github.com/ziglang/zig/issues/25017) (`discardBody` assert on keep-alive) was **still present** on pinned `0.17.0-dev.1422`. Before changing ZFinal’s default to allow application-side keep-alive:
+
+1. **Pin Zig** to a build where #25017 is verified fixed (re-run the `keepalive_safety` / raw-respond repro); note the version in CHANGELOG.
+2. **Soak** — fuzz/malformed POST + keep-alive under load; no process aborts.
+3. **Tests green** — `zig build test` including `src/core/keepalive_safety.zig` (must stay green).
+4. **CI green** — full Health Stack on the pinned Zig.
+5. **Document** — update this file, `PRODUCTION_AUDIT.md`, and CHANGELOG with the flip date and migration note (nginx still recommended for TLS/client KA).
+6. **`zf check --prod`** — adjust WARN policy only after steps 1–5.
+
+Until then, leave `force_connection_close = true` as the default.
+
+---
+
+## 10. 验证
 
 ```bash
 # 应用（强制 close）

@@ -66,6 +66,7 @@ Skipped automatically when env is unset.
 | JoinGroup / SyncGroup / Heartbeat | Done |
 | OffsetFetch / LeaveGroup | Done — `fetchCommittedOffset` / `leave` |
 | Classic **range** rebalance | Done — leader divides partitions by member_id; `poll` uses assigned partitions |
+| **sticky** rebalance | Done — `KafkaConsumerConfig.assignor = .sticky`; keeps prior partitions when metadata allows |
 | **Metadata** partition discovery | Done — `partition_count=0` (default) queries Metadata v1 per topic; `>0` overrides |
 
 ### L3 consume guidance
@@ -83,11 +84,21 @@ var consumer = zfinal.KafkaConsumer.initWithIo(allocator, zfinal.io_instance.io,
 });
 defer consumer.deinit();
 try consumer.subscribe("orders.created", onMsg);
-try consumer.join(); // range-assigns partitions across group members
+try consumer.join(); // range- or sticky-assigns partitions across group members
 consumer.start();
 _ = try consumer.poll();
 try consumer.heartbeat();
 try consumer.leave();
+
+// Sticky assignor (keeps prior partitions on rebalance when member metadata carries them)
+var sticky = zfinal.KafkaConsumer.initWithIo(allocator, zfinal.io_instance.io, .{
+    .bootstrap_servers = "127.0.0.1:9092",
+    .group_id = "orders-workers",
+    .assignor = .sticky,
+});
+defer sticky.deinit();
+try sticky.subscribe("orders.created", onMsg);
+try sticky.join(); // advertises protocol "sticky"; cold start matches range
 ```
 
 See also: [nats.md](nats.md), [progressive_architecture.md](progressive_architecture.md), [scale_to_millions.md](scale_to_millions.md).

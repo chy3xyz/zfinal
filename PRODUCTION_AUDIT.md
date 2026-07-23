@@ -17,11 +17,11 @@
 | Dimension | Score | Evidence |
 |-----------|-------|----------|
 | Correctness / reliability | **9.8 / 10** | **`read_timeout_ms` via `operateTimeout(net_read)`** + idle watchdog; **`write_timeout_ms` wall-clock**; body drain; keep-alive opt-in; **#25017 regression tests** |
-| Security | **9.8 / 10** | JWT HS256 + **RS256 verify** + nbf/iss/aud + rotation; CORS allow-list; security headers + request ID; CSRF/rate-limit; `zf check --prod --root` |
-| Observability | **9.9 / 10** | Auto Metrics + latency histogram + route-class counters + **route-class latency sum/count**; `/metrics`; probe health |
-| Ops / deployability | **9.8 / 10** | CI matrix + drivers + live PG/MySQL + production binary + **`zf check --prod`** + [`doc/reverse_proxy.md`](doc/reverse_proxy.md) |
-| Docs / AI tooling | **9.8 / 10** | version SSoT; zone-preserving regen; ports-l2; reverse-proxy KA guide |
-| Optional (PG/MySQL/zent/messaging) | **9.4 / 10** | Live CI; Redis; RobustMQ JoinGroup + **Metadata** + range rebalance + OffsetFetch/LeaveGroup; MQTT TLS still proxy |
+| Security | **9.9 / 10** | JWT HS256 + **RS256 sign/verify** + nbf/iss/aud + rotation; CORS; security headers + request ID; CSRF/rate-limit; `zf check --prod --root` |
+| Observability | **9.9 / 10** | Auto Metrics + latency histogram + **6 route classes** (health/metrics/api/admin/static/other) + `routeTemplate`; `/metrics` |
+| Ops / deployability | **9.8 / 10** | CI + drivers + live PG/MySQL + production + **`zf check --prod`** + [`doc/reverse_proxy.md`](doc/reverse_proxy.md) + [`benchmark/BASELINE.md`](benchmark/BASELINE.md) |
+| Docs / AI tooling | **9.8 / 10** | zone merge; ports-l2/**ports-l3**; reverse-proxy KA; deeper `zf openapi` (bearerAuth/body/responses) |
+| Optional (PG/MySQL/zent/messaging) | **9.6 / 10** | RobustMQ Metadata + range/sticky + Offset*; **MQTT native TLS**; Redis; live CI |
 | **Overall (contractual)** | **9.8 / 10** | Internet-facing BFF behind proxy: ready |
 | Absolute (toolchain) | **~9.2 / 10** | Zig-dev + keep-alive still default-forced |
 
@@ -50,10 +50,7 @@
 | Gap | Severity | Status |
 |-----|----------|--------|
 | Zig **0.17-dev** drift | P1 | Pin + CI |
-| Keep-alive unsafe by default | P1 | force-close + proxy KA + drain helper + **CI regression**; wait #25017 to flip default |
-| MQTT native TLS | P2 | Proxy / `TlsNotImplemented` |
-| High-cardinality route labels | P3 | Coarse health/metrics/api/other only |
-| JWT RS256 sign | P3 | Verify done; sign remains HS256 |
+| Keep-alive unsafe by default | P1 | force-close + proxy KA + drain + CI regression; flip checklist in [`doc/reverse_proxy.md`](doc/reverse_proxy.md) §9; wait #25017 |
 
 ## Gaps closed (recent)
 
@@ -61,10 +58,14 @@
 |-----|-----|
 | Zone-preserving regen | `zone_merge` in `safeWrite` |
 | `zf check --prod --root` | Portable contract scan |
-| JWT RS256 verify | `jwtVerifyRs256` |
-| Kafka range rebalance | classic range + SyncGroup assignment |
-| Kafka Metadata partition count | Metadata v1; `partition_count=0` auto |
-| Reverse-proxy KA practice | `doc/reverse_proxy.md` + `examples/production/deploy/` |
+| JWT RS256 verify + sign | `jwtVerifyRs256` / `jwtSignRs256` |
+| Kafka range + sticky + Metadata | classic assignors + Metadata v1 |
+| MQTT native TLS | `std.crypto.tls.Client` + `tls_insecure` |
+| Metrics 6 route classes | health/metrics/api/admin/static/other + `routeTemplate` |
+| OpenAPI deepen | bearerAuth + JSON body + 400/401/404 |
+| L3 ports example | `examples/ports-l3` Outbox + tenant |
+| Reverse-proxy KA + flip checklist | `doc/reverse_proxy.md` §9 |
+| Benchmark baseline template | `benchmark/BASELINE.md` |
 | #25017 regression coverage | `src/core/keepalive_safety.zig` |
 
 ## Gaps closed (0.20.x)

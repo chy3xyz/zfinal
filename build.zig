@@ -187,6 +187,7 @@ pub fn build(b: *std.Build) void {
     addExample(b, zfinal_mod, "captcha", "examples/captcha/main.zig", "Run captcha demo");
     addExample(b, zfinal_mod, "production", "examples/production/main.zig", "Run production example");
     addExample(b, zfinal_mod, "ports-l2", "examples/ports-l2/main.zig", "Run L2 ports DI demo (store/cache/bus)");
+    addExample(b, zfinal_mod, "ports-l3", "examples/ports-l3/main.zig", "Run L3 ports DI demo (store/cache/bus/outbox + tenant)");
     // RuoYi example — needs MySQL driver
     {
         const ruoyi_mod = b.createModule(.{

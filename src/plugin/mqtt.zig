@@ -2,7 +2,7 @@ const std = @import("std");
 const io_instance = @import("../io_instance.zig");
 const Plugin = @import("plugin.zig").Plugin;
 
-/// MQTT 3.1.1 client configuration (TCP; TLS via reverse proxy / sidecar).
+/// MQTT 3.1.1 client configuration (TCP + optional native TLS).
 pub const MqttConfig = struct {
     broker_host: []const u8,
     broker_port: u16 = 1883,
@@ -10,8 +10,18 @@ pub const MqttConfig = struct {
     username: ?[]const u8 = null,
     password: ?[]const u8 = null,
     keep_alive: u16 = 60,
-    /// Native MQTTS not implemented — terminate TLS at a proxy, or keep false.
     use_tls: bool = false,
+    /// Skip CA verification (encrypted but not authenticated). Prefer false in production.
+    tls_insecure: bool = false,
+    /// SNI / host verification name; defaults to broker_host when null.
+    tls_server_name: ?[]const u8 = null,
+};
+
+const TlsSession = struct {
+    client: std.crypto.tls.Client,
+    stream_reader: std.Io.net.Stream.Reader,
+    stream_writer: std.Io.net.Stream.Writer,
+    buffers: []u8,
 };
 
 /// Stable MQTT 3.1.1 client: CONNECT / CONNACK / PUBLISH QoS0 / PINGREQ / DISCONNECT.
@@ -20,6 +30,7 @@ pub const MqttPlugin = struct {
     allocator: std.mem.Allocator,
     config: MqttConfig,
     stream: ?std.Io.net.Stream = null,
+    tls: ?TlsSession = null,
     connected: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, config: MqttConfig) MqttPlugin {
@@ -52,24 +63,74 @@ pub const MqttPlugin = struct {
 
     pub fn connect(self: *MqttPlugin) !void {
         if (self.connected) return;
-        if (self.config.use_tls) return error.TlsNotImplemented;
         const address = try std.Io.net.IpAddress.parseIp4(self.config.broker_host, self.config.broker_port);
         self.stream = try address.connect(io_instance.io, .{ .mode = .stream });
         errdefer self.disconnect();
+
+        if (self.config.use_tls) {
+            try self.initTls();
+        }
 
         try self.sendConnect();
         try self.readConnack();
         self.connected = true;
     }
 
+    fn initTls(self: *MqttPlugin) !void {
+        const stream = self.stream orelse return error.NotConnected;
+        const min = std.crypto.tls.Client.min_buffer_len;
+        const bufs = try self.allocator.alloc(u8, min * 4);
+        errdefer self.allocator.free(bufs);
+
+        var off: usize = 0;
+        const stream_read_buf = bufs[off..][0..min];
+        off += min;
+        const stream_write_buf = bufs[off..][0..min];
+        off += min;
+        const tls_read_buf = bufs[off..][0..min];
+        off += min;
+        const tls_write_buf = bufs[off..][0..min];
+
+        var stream_reader = stream.reader(io_instance.io, stream_read_buf);
+        var stream_writer = stream.writer(io_instance.io, stream_write_buf);
+
+        var entropy: [std.crypto.tls.Client.Options.entropy_len]u8 = undefined;
+        io_instance.io.random(&entropy);
+
+        const server_name = self.config.tls_server_name orelse self.config.broker_host;
+        const tls_client = std.crypto.tls.Client.init(
+            &stream_reader.interface,
+            &stream_writer.interface,
+            .{
+                .host = .{ .explicit = server_name },
+                .ca = if (self.config.tls_insecure) .no_verification else .self_signed,
+                .read_buffer = tls_read_buf,
+                .write_buffer = tls_write_buf,
+                .entropy = &entropy,
+                .realtime_now = std.Io.Timestamp.now(io_instance.io, .real),
+            },
+        ) catch |err| {
+            self.allocator.free(bufs);
+            return err;
+        };
+
+        self.tls = .{
+            .client = tls_client,
+            .stream_reader = stream_reader,
+            .stream_writer = stream_writer,
+            .buffers = bufs,
+        };
+    }
+
     pub fn disconnect(self: *MqttPlugin) void {
+        if (self.connected) {
+            self.writeAll(&[_]u8{ 0xE0, 0x00 }) catch {};
+        }
+        if (self.tls) |*tls| {
+            self.allocator.free(tls.buffers);
+            self.tls = null;
+        }
         if (self.stream) |s| {
-            if (self.connected) {
-                // DISCONNECT: type 14, remaining length 0
-                var wbuf: [16]u8 = undefined;
-                var writer = s.writer(io_instance.io, &wbuf);
-                writer.interface.writeAll(&[_]u8{ 0xE0, 0x00 }) catch {};
-            }
             s.close(io_instance.io);
             self.stream = null;
         }
@@ -78,6 +139,30 @@ pub const MqttPlugin = struct {
 
     fn requireStream(self: *MqttPlugin) !*std.Io.net.Stream {
         return &(self.stream orelse return error.NotConnected);
+    }
+
+    fn writeAll(self: *MqttPlugin, data: []const u8) !void {
+        if (self.tls) |*tls| {
+            try tls.client.writer.writeAll(data);
+            return;
+        }
+        const s = try self.requireStream();
+        var wbuf: [4096]u8 = undefined;
+        var writer = s.writer(io_instance.io, &wbuf);
+        try writer.interface.writeAll(data);
+    }
+
+    fn readExact(self: *MqttPlugin, buf: []u8) !void {
+        if (self.tls) |*tls| {
+            const n = try tls.client.reader.readSliceShort(buf);
+            if (n < buf.len) return error.IncompleteConnack;
+            return;
+        }
+        const s = try self.requireStream();
+        var rbuf: [64]u8 = undefined;
+        var reader = s.reader(io_instance.io, &rbuf);
+        const n = try reader.interface.readSliceShort(buf);
+        if (n < buf.len) return error.IncompleteConnack;
     }
 
     fn encodeRemainingLength(buf: *std.ArrayList(u8), allocator: std.mem.Allocator, len: usize) !void {
@@ -98,7 +183,6 @@ pub const MqttPlugin = struct {
     }
 
     fn sendConnect(self: *MqttPlugin) !void {
-        const s = try self.requireStream();
         var vh: std.ArrayList(u8) = .empty;
         defer vh.deinit(self.allocator);
 
@@ -123,19 +207,12 @@ pub const MqttPlugin = struct {
         try encodeRemainingLength(&packet, self.allocator, vh.items.len);
         try packet.appendSlice(self.allocator, vh.items);
 
-        var wbuf: [4096]u8 = undefined;
-        var writer = s.writer(io_instance.io, &wbuf);
-        try writer.interface.writeAll(packet.items);
+        try self.writeAll(packet.items);
     }
 
     fn readConnack(self: *MqttPlugin) !void {
-        const s = try self.requireStream();
-        var rbuf: [64]u8 = undefined;
-        var reader = s.reader(io_instance.io, &rbuf);
         var hdr: [4]u8 = undefined;
-        // CONNACK is fixed: 0x20 0x02 <flags> <return_code>
-        const n = try reader.interface.readSliceShort(hdr[0..]);
-        if (n < 4) return error.IncompleteConnack;
+        try self.readExact(&hdr);
         if (hdr[0] != 0x20 or hdr[1] != 0x02) return error.UnexpectedPacket;
         if (hdr[3] != 0) return error.ConnackRefused;
     }
@@ -143,7 +220,6 @@ pub const MqttPlugin = struct {
     /// PUBLISH QoS 0.
     pub fn publish(self: *MqttPlugin, topic: []const u8, payload: []const u8) !void {
         if (!self.connected) return error.NotConnected;
-        const s = try self.requireStream();
 
         var vh: std.ArrayList(u8) = .empty;
         defer vh.deinit(self.allocator);
@@ -156,17 +232,12 @@ pub const MqttPlugin = struct {
         try encodeRemainingLength(&packet, self.allocator, vh.items.len);
         try packet.appendSlice(self.allocator, vh.items);
 
-        var wbuf: [4096]u8 = undefined;
-        var writer = s.writer(io_instance.io, &wbuf);
-        try writer.interface.writeAll(packet.items);
+        try self.writeAll(packet.items);
     }
 
     pub fn ping(self: *MqttPlugin) !void {
         if (!self.connected) return error.NotConnected;
-        const s = try self.requireStream();
-        var wbuf: [16]u8 = undefined;
-        var writer = s.writer(io_instance.io, &wbuf);
-        try writer.interface.writeAll(&[_]u8{ 0xC0, 0x00 }); // PINGREQ
+        try self.writeAll(&[_]u8{ 0xC0, 0x00 }); // PINGREQ
     }
 };
 
@@ -188,4 +259,16 @@ test "mqtt: appendMqttString" {
     defer buf.deinit(std.testing.allocator);
     try MqttPlugin.appendMqttString(&buf, std.testing.allocator, "ab");
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0x00, 0x02, 'a', 'b' }, buf.items);
+}
+
+test "mqtt: use_tls no longer returns TlsNotImplemented before TCP" {
+    var plugin = MqttPlugin.init(std.testing.allocator, .{
+        .broker_host = "127.0.0.1",
+        .broker_port = 1,
+        .client_id = "test",
+        .use_tls = true,
+    });
+    defer plugin.deinit();
+    const err = plugin.connect();
+    try std.testing.expect(err != error.TlsNotImplemented);
 }

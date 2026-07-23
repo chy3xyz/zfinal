@@ -49,7 +49,16 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
-## 2026-07-23 — reverse proxy KA + Metadata + keepalive regression
+## 2026-07-23 — P1/P2/P3 backlog: sticky, MQTT TLS, RS256 sign, L3, openapi
+
+**Session**: Execute remaining improvement backlog
+**Changes**:
+1. P1: keep-alive flip checklist (`doc/reverse_proxy.md` §9)
+2. P2: Kafka sticky; MQTT TLS; ports-l3; benchmark BASELINE
+3. P3: JWT RS256 sign; 6 route classes; deeper openapi
+**Tests**: `zig build test` → 238 passed; 11 skipped; `test-zf` 27 passed
+
+---
 
 **Session**: Top-3 backlog (proxy practice, Kafka Metadata, #25017 tests)
 **Changes**:
