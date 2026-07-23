@@ -58,7 +58,7 @@ ZFinal 无状态实例 × N（ReleaseSafe，钉死 Zig）
 
 | 现状 | 千万级含义 |
 |------|------------|
-| 强制 `Connection: close` | 同样 QPS 需要更多节点；扩容时多算连接开销 |
+| 强制 `Connection: close` | 同样 QPS 需要更多节点；**客户端 keep-alive 放反代**（[reverse_proxy.md](reverse_proxy.md)） |
 | 单进程 `max_connections` 默认 1 万 | 靠多实例，不要调成「一个超大数字」指望单机扛全站 |
 | Zig 仍是 **dev** 编译器 | 钉版本 + 回归 + 灰度 |
 | PG / MySQL 默认不在 CI | 上线前对真实驱动做压测与 soak |
@@ -107,7 +107,8 @@ zig build test
 curl -sS http://127.0.0.1:8080/health
 
 # 压测前确认
-# - 反代 TLS + trusted_proxies
+# - 反代 TLS + trusted_proxies；upstream 短连接（见 reverse_proxy.md）
+# - ZFinal force_connection_close=true（默认）
 # - DB 为 PG/MySQL，非 SQLite 多写
 # - Session/热点在 Redis
 # - 连接池 × 实例数 < DB max_connections

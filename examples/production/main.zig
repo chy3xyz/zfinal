@@ -54,8 +54,11 @@ pub fn main(init: std.process.Init) !void {
 
     var app = zfinal.ZFinal.init(allocator);
     defer app.deinit();
+    // Keep force_connection_close=true (default). Put nginx/Caddy in front for
+    // client keep-alive — see doc/reverse_proxy.md and deploy/{nginx.conf,Caddyfile}.
     app.setConfig(.{
         .port = 8080,
+        .force_connection_close = true,
         .drain_timeout_ms = 15_000,
         .request_timeout_ms = 30_000,
         .read_timeout_ms = 30_000,

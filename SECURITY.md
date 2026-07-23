@@ -79,7 +79,8 @@ ZFinal 0.8+ includes defense-in-depth security across multiple layers:
 - **Rate limiting**: Enable `RateLimitHandler` on public endpoints.
 - **CORS**: Do not use default `CORSInterceptor` (`*`) for credentialed APIs; use `createCorsInterceptor("https://app.example.com")`.
 - **Auth**: `AuthInterceptor` only checks cookie presence — implement real JWT/session verification.
-- **TLS**: Terminate at reverse proxy; set proxy idle/read timeouts (framework has no per-request idle timeout yet).
+- **TLS**: Terminate at reverse proxy; set proxy idle/read timeouts.
+- **Keep-alive**: Keep `force_connection_close=true`; client keep-alive at nginx/Caddy ([`doc/reverse_proxy.md`](doc/reverse_proxy.md)). Do not disable force-close in production to chase RPS.
 - **Shutdown**: Call `zfinal.shutdown.registerHandlers()` before `app.start()`; tune `ServerConfig.drain_timeout_ms`.
 - **Allocators**: Prefer `smp_allocator` (ReleaseFast) or process GPA (Debug). Avoid unbounded `page_allocator` in hot request paths.
 - **Logging**: Use `-Dlog-level=warn` in production to suppress debug output.

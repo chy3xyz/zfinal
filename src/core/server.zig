@@ -34,7 +34,9 @@ pub const ServerConfig = struct {
     /// write timeouts at the reverse proxy.
     write_timeout_ms: u64 = 30_000,
     /// When true (default), force one-request-per-connection to avoid
-    /// Zig `http.Server` keep-alive / discardBody bugs (ziglang/zig#25017).
+    /// Zig `http.Server` keep-alive / discardBody bugs (ziglang/zig#25017;
+    /// still asserts on 0.17.0-dev.1422). Production: keep true and put client
+    /// keep-alive on nginx/Caddy — `doc/reverse_proxy.md`.
     /// Set false only after full body-drain coverage + upstream fix + soak tests.
     force_connection_close: bool = true,
 };

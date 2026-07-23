@@ -65,19 +65,21 @@ Skipped automatically when env is unset.
 | OffsetCommit wire (API key 8) | Done — pass generation/member from `join()` |
 | JoinGroup / SyncGroup / Heartbeat | Done |
 | OffsetFetch / LeaveGroup | Done — `fetchCommittedOffset` / `leave` |
-| Classic **range** rebalance | Done — leader divides `0..partition_count-1` by member_id; `poll` uses assigned partitions |
+| Classic **range** rebalance | Done — leader divides partitions by member_id; `poll` uses assigned partitions |
+| **Metadata** partition discovery | Done — `partition_count=0` (default) queries Metadata v1 per topic; `>0` overrides |
 
 ### L3 consume guidance
 
 - **Publish** to RobustMQ/Kafka: `QueueRobustMQClient` / `KafkaProducer`.
-- **Multi-instance Kafka consume** (same group): set `partition_count` to the topic’s real partition count, then `subscribe` → `join()` → `poll` / `heartbeat` → `leave()`.
+- **Multi-instance Kafka consume** (same group): `subscribe` → `join()` → `poll` / `heartbeat` → `leave()`. Partition counts are discovered via Metadata unless you set `partition_count`.
 - **NATS** remains a good alternative when you want queue-groups without managing partitions.
 
 ```zig
 var consumer = zfinal.KafkaConsumer.initWithIo(allocator, zfinal.io_instance.io, .{
     .bootstrap_servers = "127.0.0.1:9092",
     .group_id = "orders-workers",
-    .partition_count = 4, // must match topic
+    // .partition_count = 0, // default: Metadata discover
+    // .partition_count = 4, // optional override
 });
 defer consumer.deinit();
 try consumer.subscribe("orders.created", onMsg);

@@ -159,6 +159,7 @@ ADR：[003-experimental-plugins.md](../.life/decisions/003-experimental-plugins.
 - Logger：结构化字段；级别 **编译期** `-Dlog-level`。
 - Metrics + `healthHandlerFor`；优雅关闭走 `shutdown`。
 - 部署：TLS 终止在反代；钉死与 CI 同款 Zig；ReleaseSafe smoke。
+- **Keep-alive**：生产保持 `force_connection_close=true`；客户端复用交给 nginx/Caddy（见 [reverse_proxy.md](reverse_proxy.md)）。勿为压测在生产关掉该开关。
 - 验证基线：
 
 ```bash

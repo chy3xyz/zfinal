@@ -12,6 +12,7 @@ test {
     _ = @import("aichat/zf_tool.zig");
     _ = @import("auth/jwt.zig");
     _ = @import("version.zig");
+    _ = @import("core/keepalive_safety.zig");
 }
 
 // Export core modules

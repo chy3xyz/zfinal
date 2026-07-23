@@ -1,0 +1,32 @@
+# Reference Caddy in front of examples/production (ZFinal on :8080).
+# Pattern: client keep-alive / HTTP/2 at Caddy; upstream short-lived.
+# See doc/reverse_proxy.md.
+
+api.example.com {
+	encode gzip
+
+	reverse_proxy 127.0.0.1:8080 {
+		# Prefer fresh upstream connections; ZFinal returns Connection: close
+		transport http {
+			keepalive idle 0
+			response_header_timeout 35s
+			dial_timeout 5s
+		}
+
+		header_up Host {host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Real-IP {remote_host}
+	}
+}
+
+# Local / CI without TLS
+:8081 {
+	reverse_proxy 127.0.0.1:8080 {
+		transport http {
+			keepalive idle 0
+			response_header_timeout 35s
+		}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Real-IP {remote_host}
+	}
+}

@@ -6,6 +6,16 @@ This directory contains runnable ZFinal example applications. Below is the rever
 
 ## Index by Example
 
+### `production/` + `production/deploy/`
+Internet-facing BFF reference — `zig build run-production`.  
+Keep `force_connection_close=true`; sample **nginx** / **Caddy** configs under `production/deploy/` (see [`doc/reverse_proxy.md`](../doc/reverse_proxy.md)).
+
+| File | AI Edit? | Purpose |
+|------|----------|---------|
+| `main.zig` | ✅ YES | Routes, interceptors, metrics wiring |
+| `deploy/nginx.conf` | ✅ YES | Reverse proxy: client KA, upstream close |
+| `deploy/Caddyfile` | ✅ YES | Same pattern for Caddy |
+
 ### `standalone-admin/` (v0.10.8+)
 Single-binary admin deployment — `zig build run-standalone-admin`.
 

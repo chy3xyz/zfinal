@@ -57,6 +57,7 @@ Runnable demo in [`examples/ai-blog-5min/`](../examples/ai-blog-5min/ZF_GEN.md).
 | Add a module to the framework | [`.claude/skills/zfinal-framework.md`](../.claude/skills/zfinal-framework.md) |
 | Follow architecture best practices | [architecture_best_practices.md](architecture_best_practices.md) |
 | Scale to millions of users (ops topology) | [scale_to_millions.md](scale_to_millions.md) |
+| Reverse proxy + force close (keep-alive) | [reverse_proxy.md](reverse_proxy.md) |
 | Progressive code architecture L0→L3 | [progressive_architecture.md](progressive_architecture.md) |
 | Understand Zig 0.17, memory safety, etc. | [`.claude/skills/zfinal-evolution.md`](../.claude/skills/zfinal-evolution.md) |
 | See a 5-minute walkthrough | [ai-quickstart.md](ai-quickstart.md) |
@@ -68,6 +69,7 @@ Runnable demo in [`examples/ai-blog-5min/`](../examples/ai-blog-5min/ZF_GEN.md).
 |--------------|------|
 | Architecture best practices (layers, plugins, AI boundaries) | [architecture_best_practices.md](architecture_best_practices.md) |
 | Scale-out for millions of users | [scale_to_millions.md](scale_to_millions.md) |
+| nginx/Caddy + force Connection: close | [reverse_proxy.md](reverse_proxy.md) |
 | Progressive app architecture (L0→L3) | [progressive_architecture.md](progressive_architecture.md) |
 | 数据层：`DB` **或** `zent`（可作主力） | [zent.md](zent.md) |
 | RobustMQ / Kafka messaging | [robustmq.md](robustmq.md) |

@@ -395,25 +395,10 @@ pub const Context = struct {
     /// Drain unconsumed request body — must be called before any respond().
     /// Handlers that don't call getBodyText leave the POST body unread,
     /// which causes std.http.Server.discardBody assertion failure in Zig 0.17.
-    ///
-    /// 修正: 当请求 method 可能有 body 但客户端未声明 Content-Length/Transfer-Encoding
-    /// 时 (常见于 curl -X POST 无 -d), std.http.Server 既无法 drain 也无法 respond.
-    /// 此时将 content_length 设为 0, 让 discardBody 立即完成, 从而正常返回响应.
+    /// See `keepalive_safety.zig` + zig#25017.
     fn drainUnconsumedBody(self: *Context) void {
-        if (!self.req.head.method.requestHasBody()) return;
-        if (self.req.server.reader.state != .received_head) return;
-
-        const has_content_length = self.req.head.content_length != null;
-        const is_chunked = self.req.head.transfer_encoding != .none;
-        if (!has_content_length and !is_chunked) {
-            self.req.head.content_length = 0;
-        }
-
-        var drain_buf: [4096]u8 = undefined;
-        var drain_reader = self.req.readerExpectNone(&drain_buf);
-        _ = drain_reader.discardRemaining() catch |err| {
-            std.debug.print("context: connection drain failed ({s}) — connection may be reset by client\n", .{@errorName(err)});
-        };
+        const ka = @import("keepalive_safety.zig");
+        ka.drainPreparedBody(self.req);
     }
 
     fn freeSetCookieDupes(self: *Context, headers: std.ArrayList(std.http.Header)) void {

@@ -73,9 +73,9 @@ pub const KafkaConsumerConfig = struct {
     max_poll_records: usize = 500,
     session_timeout_ms: u64 = 45000,
     offline: bool = false,
-    /// Partitions per subscribed topic for the classic **range** assignor.
-    /// Used until Metadata API discovers real counts; set to match broker topic layout.
-    partition_count: i32 = 1,
+    /// Partitions per topic for classic **range** assignor.
+    /// `0` = discover via Metadata API (per topic); `>0` = force this count for every topic.
+    partition_count: i32 = 0,
 };
 
 /// Low-level Kafka wire client used by producer/consumer against RobustMQ.
@@ -342,6 +342,23 @@ pub const RobustMQTransport = struct {
         const resp = try self.readFrame();
         defer self.allocator.free(resp);
         return try KafkaWireFormat.parseOffsetFetchResponse(resp, corr);
+    }
+
+    /// Metadata (API key 3, v1) — partition count for one topic.
+    pub fn topicPartitionCount(self: *Self, topic: []const u8) !i32 {
+        try self.ensureConnected();
+        const corr = self.nextCorrelation();
+        const body = try KafkaWireFormat.buildMetadataRequest(
+            self.allocator,
+            &.{topic},
+            corr,
+            self.client_id,
+        );
+        defer self.allocator.free(body);
+        try self.writeFrame(body);
+        const resp = try self.readFrame();
+        defer self.allocator.free(resp);
+        return try KafkaWireFormat.parseTopicPartitionCount(resp, corr, topic);
     }
 
     fn nextCorrelation(self: *Self) i32 {
@@ -714,13 +731,13 @@ pub const KafkaConsumer = struct {
     }
 
     /// JoinGroup + SyncGroup with classic **range** assignor.
-    /// Leader divides `0..partition_count-1` across members (lexicographic member_id)
-    /// per subscribed topic. Set `partition_count` to match broker topic layout.
+    /// Leader divides partitions across members (lexicographic member_id) per topic.
+    /// `partition_count == 0` → Metadata API per topic; otherwise that count for all topics.
     pub fn join(self: *Self) !void {
         if (self.config.offline) return;
         if (self.config.group_id.len == 0) return error.GroupIdRequired;
         if (self.subscriptions.count() == 0) return error.NoSubscriptions;
-        if (self.config.partition_count < 1) return error.InvalidPartitionCount;
+        if (self.config.partition_count < 0) return error.InvalidPartitionCount;
         try self.ensureTransport();
 
         var topics = std.ArrayList([]const u8).empty;
@@ -816,10 +833,28 @@ pub const KafkaConsumer = struct {
             }
         }.less);
 
-        const ranges = try KafkaWireFormat.rangeAssign(self.allocator, self.config.partition_count, member_ids.len);
+        // Per-topic range slices: topic_ranges[ti][mi] = partitions for member mi
+        var topic_ranges = try self.allocator.alloc([][]i32, topics.len);
+        var topics_filled: usize = 0;
+        errdefer {
+            var ti: usize = 0;
+            while (ti < topics_filled) : (ti += 1) {
+                for (topic_ranges[ti]) |r| self.allocator.free(r);
+                self.allocator.free(topic_ranges[ti]);
+            }
+            self.allocator.free(topic_ranges);
+        }
+        for (topics, 0..) |t, ti| {
+            const pc = try self.resolvePartitionCount(t);
+            topic_ranges[ti] = try KafkaWireFormat.rangeAssign(self.allocator, pc, member_ids.len);
+            topics_filled = ti + 1;
+        }
         defer {
-            for (ranges) |r| self.allocator.free(r);
-            self.allocator.free(ranges);
+            for (topic_ranges) |ranges| {
+                for (ranges) |r| self.allocator.free(r);
+                self.allocator.free(ranges);
+            }
+            self.allocator.free(topic_ranges);
         }
 
         var assigns = std.ArrayList(KafkaWireFormat.GroupAssignment).empty;
@@ -833,7 +868,7 @@ pub const KafkaConsumer = struct {
             var tps = try self.allocator.alloc(KafkaWireFormat.TopicPartitions, topics.len);
             defer self.allocator.free(tps);
             for (topics, 0..) |t, ti| {
-                tps[ti] = .{ .topic = t, .partitions = ranges[mi] };
+                tps[ti] = .{ .topic = t, .partitions = topic_ranges[ti][mi] };
             }
             const bytes = try KafkaWireFormat.buildMemberAssignmentTopics(self.allocator, tps);
             try assigns.append(self.allocator, .{ .member_id = mid, .assignment = bytes });
@@ -854,6 +889,11 @@ pub const KafkaConsumer = struct {
             return try self.allocator.dupe(u8, received);
         }
         return my_bytes orelse try self.allocator.alloc(u8, 0);
+    }
+
+    fn resolvePartitionCount(self: *Self, topic: []const u8) !i32 {
+        if (self.config.partition_count > 0) return self.config.partition_count;
+        return try self.transport.?.topicPartitionCount(topic);
     }
 
     fn applyAssignmentBytes(self: *Self, bytes: []const u8) !void {
@@ -984,6 +1024,7 @@ pub const KafkaEventBridge = struct {
 pub const KafkaWireFormat = struct {
     const api_produce: i16 = 0;
     const api_fetch: i16 = 1;
+    const api_metadata: i16 = 3;
     const api_offset_commit: i16 = 8;
     const api_offset_fetch: i16 = 9;
     const api_join_group: i16 = 11;
@@ -1032,6 +1073,111 @@ pub const KafkaWireFormat = struct {
         try appendRequestHeader(&buf, allocator, api_versions, 1, correlation_id, client_id);
         // ApiVersionsRequest v1 body empty for basic handshake
         return buf.toOwnedSlice(allocator);
+    }
+
+    /// MetadataRequest v1 — ask for specific topics (non-null array).
+    pub fn buildMetadataRequest(
+        allocator: std.mem.Allocator,
+        topics: []const []const u8,
+        correlation_id: i32,
+        client_id: []const u8,
+    ) ![]u8 {
+        var buf = std.ArrayList(u8).empty;
+        errdefer buf.deinit(allocator);
+        try appendRequestHeader(&buf, allocator, api_metadata, 1, correlation_id, client_id);
+        try appendI32(&buf, allocator, @intCast(topics.len));
+        for (topics) |t| try appendString(&buf, allocator, t);
+        return buf.toOwnedSlice(allocator);
+    }
+
+    /// Parse MetadataResponse v1; return partition count for `topic`.
+    pub fn parseTopicPartitionCount(resp: []const u8, expected_corr: i32, topic: []const u8) !i32 {
+        if (resp.len < 8) return error.InvalidResponse;
+        const corr = readI32(resp[0..4]);
+        if (corr != expected_corr) return error.CorrelationMismatch;
+        var off: usize = 4;
+        if (off + 4 > resp.len) return error.InvalidResponse;
+        const broker_count = readI32(resp[off..][0..4]);
+        off += 4;
+        if (broker_count < 0) return error.InvalidResponse;
+        var bi: i32 = 0;
+        while (bi < broker_count) : (bi += 1) {
+            if (off + 4 > resp.len) return error.InvalidResponse;
+            off += 4; // node_id
+            try skipString(resp, &off); // host
+            if (off + 4 > resp.len) return error.InvalidResponse;
+            off += 4; // port
+            try skipNullableString(resp, &off); // rack (v1)
+        }
+        if (off + 4 > resp.len) return error.InvalidResponse;
+        off += 4; // controller_id
+        if (off + 4 > resp.len) return error.InvalidResponse;
+        const topic_count = readI32(resp[off..][0..4]);
+        off += 4;
+        if (topic_count < 0) return error.InvalidResponse;
+        var ti: i32 = 0;
+        while (ti < topic_count) : (ti += 1) {
+            if (off + 2 > resp.len) return error.InvalidResponse;
+            const err_code = readI16(resp[off..][0..2]);
+            off += 2;
+            const name = try peekString(resp, &off);
+            if (off + 1 > resp.len) return error.InvalidResponse;
+            off += 1; // is_internal
+            if (off + 4 > resp.len) return error.InvalidResponse;
+            const part_count = readI32(resp[off..][0..4]);
+            off += 4;
+            if (part_count < 0) return error.InvalidResponse;
+            var pi: i32 = 0;
+            while (pi < part_count) : (pi += 1) {
+                if (off + 2 + 4 + 4 > resp.len) return error.InvalidResponse;
+                off += 2 + 4 + 4;
+                try skipArrayI32(resp, &off);
+                try skipArrayI32(resp, &off);
+            }
+            if (err_code != 0) {
+                if (std.mem.eql(u8, name, topic)) return error.BrokerError;
+                continue;
+            }
+            if (std.mem.eql(u8, name, topic)) {
+                if (part_count < 1) return error.InvalidPartitionCount;
+                return part_count;
+            }
+        }
+        return error.TopicNotFound;
+    }
+
+    fn skipString(buf: []const u8, off: *usize) !void {
+        if (off.* + 2 > buf.len) return error.InvalidResponse;
+        const len = readI16(buf[off.*..][0..2]);
+        off.* += 2;
+        if (len < 0) return;
+        if (off.* + @as(usize, @intCast(len)) > buf.len) return error.InvalidResponse;
+        off.* += @intCast(len);
+    }
+
+    fn skipNullableString(buf: []const u8, off: *usize) !void {
+        try skipString(buf, off);
+    }
+
+    fn peekString(buf: []const u8, off: *usize) ![]const u8 {
+        if (off.* + 2 > buf.len) return error.InvalidResponse;
+        const len = readI16(buf[off.*..][0..2]);
+        off.* += 2;
+        if (len < 0) return "";
+        if (off.* + @as(usize, @intCast(len)) > buf.len) return error.InvalidResponse;
+        const s = buf[off.* .. off.* + @as(usize, @intCast(len))];
+        off.* += @intCast(len);
+        return s;
+    }
+
+    fn skipArrayI32(buf: []const u8, off: *usize) !void {
+        if (off.* + 4 > buf.len) return error.InvalidResponse;
+        const count = readI32(buf[off.*..][0..4]);
+        off.* += 4;
+        if (count < 0) return;
+        const nbytes = @as(usize, @intCast(count)) * 4;
+        if (off.* + nbytes > buf.len) return error.InvalidResponse;
+        off.* += nbytes;
     }
 
     pub fn buildProduceRequest(
@@ -1996,6 +2142,62 @@ test "KafkaWireFormat parseJoinGroupResponse v1" {
     try std.testing.expectEqual(@as(i32, 7), result.generation_id);
     try std.testing.expect(result.isLeader());
     try std.testing.expectEqual(@as(usize, 1), result.members.len);
+}
+
+test "KafkaWireFormat metadata request and parseTopicPartitionCount" {
+    const allocator = std.testing.allocator;
+    const req = try KafkaWireFormat.buildMetadataRequest(allocator, &.{"orders"}, 7, "zfinal");
+    defer allocator.free(req);
+    try std.testing.expectEqual(@as(u8, 0), req[0]);
+    try std.testing.expectEqual(@as(u8, 3), req[1]); // api_key Metadata
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    var tmp: [4]u8 = undefined;
+    var t2: [2]u8 = undefined;
+
+    writeI32(&tmp, 7); // corr
+    try buf.appendSlice(allocator, &tmp);
+    writeI32(&tmp, 1); // brokers
+    try buf.appendSlice(allocator, &tmp);
+    writeI32(&tmp, 1); // node_id
+    try buf.appendSlice(allocator, &tmp);
+    writeI16(&t2, 9);
+    try buf.appendSlice(allocator, &t2);
+    try buf.appendSlice(allocator, "127.0.0.1");
+    writeI32(&tmp, 9092);
+    try buf.appendSlice(allocator, &tmp);
+    writeI16(&t2, -1); // null rack
+    try buf.appendSlice(allocator, &t2);
+    writeI32(&tmp, 1); // controller
+    try buf.appendSlice(allocator, &tmp);
+    writeI32(&tmp, 1); // topics
+    try buf.appendSlice(allocator, &tmp);
+    writeI16(&t2, 0); // error
+    try buf.appendSlice(allocator, &t2);
+    writeI16(&t2, 6);
+    try buf.appendSlice(allocator, &t2);
+    try buf.appendSlice(allocator, "orders");
+    try buf.append(allocator, 0); // is_internal
+    writeI32(&tmp, 3); // partitions
+    try buf.appendSlice(allocator, &tmp);
+    var p: i32 = 0;
+    while (p < 3) : (p += 1) {
+        writeI16(&t2, 0);
+        try buf.appendSlice(allocator, &t2);
+        writeI32(&tmp, p);
+        try buf.appendSlice(allocator, &tmp);
+        writeI32(&tmp, 1); // leader
+        try buf.appendSlice(allocator, &tmp);
+        writeI32(&tmp, 0); // replicas
+        try buf.appendSlice(allocator, &tmp);
+        writeI32(&tmp, 0); // isr
+        try buf.appendSlice(allocator, &tmp);
+    }
+
+    const count = try KafkaWireFormat.parseTopicPartitionCount(buf.items, 7, "orders");
+    try std.testing.expectEqual(@as(i32, 3), count);
+    try std.testing.expectError(error.TopicNotFound, KafkaWireFormat.parseTopicPartitionCount(buf.items, 7, "missing"));
 }
 
 test "KafkaConsumer join offline is no-op" {

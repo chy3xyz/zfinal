@@ -49,7 +49,16 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
-## 2026-07-23 — Kafka classic range rebalance + score lift
+## 2026-07-23 — reverse proxy KA + Metadata + keepalive regression
+
+**Session**: Top-3 backlog (proxy practice, Kafka Metadata, #25017 tests)
+**Changes**:
+1. `doc/reverse_proxy.md` + `examples/production/deploy/{nginx.conf,Caddyfile}`
+2. RobustMQ Metadata v1 + `partition_count=0` auto; per-topic range assign
+3. `keepalive_safety.zig` drain helper + live #25017 regression; Context uses it
+**Tests**: `zig build test`
+
+---
 
 **Session**: Multi-instance Kafka consume + JWT RS256 / OffsetFetch
 **Changes**:
