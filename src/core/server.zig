@@ -18,11 +18,12 @@ pub const ServerConfig = struct {
     /// Max time to wait for in-flight connections after SIGTERM/SIGINT (ms).
     /// Prevents hang forever when a client never closes. Default 30s.
     drain_timeout_ms: u64 = 30_000,
-    /// Per-connection idle timeout (ms) between request activity.
-    /// Watchdog closes the socket if no `receiveHead`/dispatch progress.
+    /// Per-connection idle timeout (ms) **between** requests (waiting on
+    /// `receiveHead`). The idle watchdog does **not** run during `dispatch`
+    /// — handler duration is bounded by `Context` deadline / DB pool
+    /// `acquire_timeout` instead. Closing the socket mid-handler caused
+    /// mass `WriteFailed` under concurrency (idle == acquire == 30s).
     /// 0 disables. Default 30s. Still pair with reverse-proxy timeouts.
-    /// Note: Zig 0.17 Threaded has no Stream Writer timeout; this covers
-    /// blocked handlers/writes by closing the socket (fallback).
     request_timeout_ms: u64 = 30_000,
     /// Per `net_read` deadline (ms) via `Io.operateTimeout` for receiveHead/body.
     /// 0 disables (rely on idle watchdog only). Default matches request_timeout_ms.
@@ -181,6 +182,9 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
     }
 
     var last_activity_ms = std.atomic.Value(u64).init(monoMs(io));
+    // True while `dispatch` runs — idle watchdog must not close the socket
+    // mid-handler (that produced WriteFailed storms under load).
+    var in_dispatch = std.atomic.Value(bool).init(false);
     var finished = std.atomic.Value(bool).init(false);
     defer finished.store(true, .release);
 
@@ -190,6 +194,7 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
             io,
             conn,
             &last_activity_ms,
+            &in_dispatch,
             &finished,
             &conn_closed,
             server.config.request_timeout_ms,
@@ -213,8 +218,11 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
         var request = http_srv.receiveHead() catch break;
         last_activity_ms.store(monoMs(io), .monotonic);
         writer.resetWriteDeadline();
-        dispatch(&request, server) catch break;
+        in_dispatch.store(true, .release);
+        const dispatch_err = dispatch(&request, server);
+        in_dispatch.store(false, .release);
         last_activity_ms.store(monoMs(io), .monotonic);
+        dispatch_err catch break;
         if (request.head.version != .@"HTTP/1.1") break;
         if (!request.head.keep_alive) break;
     }
@@ -347,6 +355,7 @@ fn idleWatchdog(
     io: std.Io,
     conn: std.Io.net.Stream,
     last_activity_ms: *std.atomic.Value(u64),
+    in_dispatch: *std.atomic.Value(bool),
     finished: *std.atomic.Value(bool),
     conn_closed: *std.atomic.Value(bool),
     timeout_ms: u64,
@@ -354,6 +363,8 @@ fn idleWatchdog(
     while (!finished.load(.acquire)) {
         io.sleep(std.Io.Duration.fromMilliseconds(100), .awake) catch break;
         if (finished.load(.acquire)) break;
+        // Handler in progress: do not treat slow DB/business work as idle.
+        if (in_dispatch.load(.acquire)) continue;
         const now = monoMs(io);
         const last = last_activity_ms.load(.monotonic);
         if (now > last and (now - last) >= timeout_ms) {
@@ -398,6 +409,13 @@ fn dispatch(request: *http.Server.Request, server: *Server) !void {
     }
 
     server.router.execute(path, method, &ctx) catch |err| {
+        // Client gone / socket already closed (idle close, RST, write deadline).
+        // Do not attempt a 500 body — that just logs another WriteFailed.
+        if (err == error.WriteFailed) {
+            getLog().warnFmt("WriteFailed (client closed or write deadline): {s} {s}", .{ @tagName(request.head.method), target });
+            if (server.metrics) |m| m.recordError("WriteFailed", path);
+            return error.WriteFailed;
+        }
         if (ctx.isExpired()) {
             getLog().warnFmt("Request timed out in handler: {s} {s}", .{ @tagName(request.head.method), target });
             ctx.res_status = .request_timeout;

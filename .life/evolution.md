@@ -4,6 +4,18 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+## 2026-07-23 — release v0.20.7
+
+**Session**: Fix concurrent idle-timeout WriteFailed + pool ping starvation
+**Changes**:
+1. Idle watchdog only between requests (`in_dispatch`)
+2. Soft-handle WriteFailed in dispatch
+3. Pool ping outside mutex; keepAlive snapshot without clearing available
+4. SSoT `0.20.7`
+**Tests**: `zig build test` (240 passed; 11 skipped)
+
+---
+
 ## 2026-07-23 — release v0.20.6
 
 **Session**: Fix interceptor crash after param-cache double-free fix

@@ -10,6 +10,10 @@ const logger = @import("../core/logger.zig");
 /// of pthread_mutex_t / pthread_cond_t. pthread_mutex_init /
 /// pthread_cond_init run at allocation time; the caller gets the pointer
 /// directly — no value-copy that could drop internal flags.
+///
+/// **Important:** `ping()` is never called while holding `mutex`. A blocking
+/// MySQL/PG ping under the pool lock starves every other acquire and looks
+/// like a thread-pool deadlock under concurrent login storms.
 pub const ConnectionPool = struct {
     connections: std.ArrayList(*DB),
     available: std.ArrayList(*DB),
@@ -108,44 +112,32 @@ pub const ConnectionPool = struct {
         }
     }
 
-    pub fn acquire(self: *ConnectionPool) !*DB {
+    fn nowMs() i64 {
+        var now_ts: std.c.timespec = undefined;
+        _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &now_ts);
+        return @as(i64, @intCast(now_ts.sec)) * 1000 + @divTrunc(@as(i64, @intCast(now_ts.nsec)), 1_000_000);
+    }
+
+    /// Pop one available connection or create one, without pinging under lock.
+    fn takeCandidate(self: *ConnectionPool, deadline_ms: i64) !*DB {
         mutex_init.lockMut(&self.mutex);
         defer mutex_init.unlockMut(&self.mutex);
 
-        var now_ts: std.c.timespec = undefined;
-        _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &now_ts);
-        const deadline_ms = @as(i64, @intCast(now_ts.sec)) * 1000 + @divTrunc(@as(i64, @intCast(now_ts.nsec)), 1_000_000) + @as(i64, @intCast(self.acquire_timeout_ms));
-
         while (true) {
-            while (self.available.items.len > 0) {
-                const conn = self.available.pop().?;
-                if (conn.ping()) {
-                    conn.checkOut();
-                    return conn;
-                }
-                conn.deinit();
-                self.allocator.destroy(conn);
-                for (self.connections.items, 0..) |item, i| {
-                    if (item == conn) {
-                        _ = self.connections.swapRemove(i);
-                        break;
-                    }
-                }
-                self.current_connections -= 1;
+            if (self.available.items.len > 0) {
+                return self.available.pop().?;
             }
 
             if (self.current_connections < self.max_connections) {
-                // Should never reach here: all connections pre-created in init().
-                // Fallback for edge cases (e.g. all connections died and were removed).
+                // Should rarely reach here: all connections pre-created in init().
+                // Fallback when dead conns were removed.
                 const conn = try DB.init(self.allocator, self.config);
                 try self.connections.append(self.allocator, conn);
                 self.current_connections += 1;
-                conn.checkOut();
                 return conn;
             }
 
-            _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &now_ts);
-            const now_ms = @as(i64, @intCast(now_ts.sec)) * 1000 + @divTrunc(@as(i64, @intCast(now_ts.nsec)), 1_000_000);
+            const now_ms = nowMs();
             if (now_ms >= deadline_ms) {
                 return error.PoolTimeout;
             }
@@ -161,6 +153,38 @@ pub const ConnectionPool = struct {
         }
     }
 
+    fn destroyLocked(self: *ConnectionPool, conn: *DB) void {
+        conn.deinit();
+        self.allocator.destroy(conn);
+        for (self.connections.items, 0..) |item, i| {
+            if (item == conn) {
+                _ = self.connections.swapRemove(i);
+                break;
+            }
+        }
+        if (self.current_connections > 0) self.current_connections -= 1;
+    }
+
+    pub fn acquire(self: *ConnectionPool) !*DB {
+        const deadline_ms = nowMs() + @as(i64, @intCast(self.acquire_timeout_ms));
+
+        while (true) {
+            const candidate = try self.takeCandidate(deadline_ms);
+
+            // Ping OUTSIDE the pool mutex — a blocking driver ping must not
+            // serialize every other worker thread.
+            if (candidate.ping()) {
+                candidate.checkOut();
+                return candidate;
+            }
+
+            mutex_init.lockMut(&self.mutex);
+            self.destroyLocked(candidate);
+            mutex_init.broadcastCond(&self.cond);
+            mutex_init.unlockMut(&self.mutex);
+        }
+    }
+
     pub fn release(self: *ConnectionPool, conn: *DB) !void {
         mutex_init.lockMut(&self.mutex);
         defer {
@@ -173,32 +197,38 @@ pub const ConnectionPool = struct {
     }
 
     pub fn keepAlive(self: *ConnectionPool) void {
-        mutex_init.lockMut(&self.mutex);
-        defer mutex_init.unlockMut(&self.mutex);
+        // Snapshot pointers under lock; ping outside; remove dead under lock.
+        // Do NOT clear `available` for the duration of ping — that would block
+        // every acquire until the reaper finishes.
+        var snapshot = std.ArrayList(*DB).empty;
+        defer snapshot.deinit(self.allocator);
+        {
+            mutex_init.lockMut(&self.mutex);
+            defer mutex_init.unlockMut(&self.mutex);
+            snapshot.appendSlice(self.allocator, self.available.items) catch return;
+        }
 
         var had_dead = false;
-        var i: usize = 0;
-        while (i < self.available.items.len) {
-            const conn = self.available.items[i];
-            if (conn.ping()) {
-                i += 1;
-                continue;
-            }
+        for (snapshot.items) |conn| {
+            if (conn.ping()) continue;
             had_dead = true;
-            conn.deinit();
-            self.allocator.destroy(conn);
-            for (self.connections.items, 0..) |item, j| {
+            mutex_init.lockMut(&self.mutex);
+            // Only destroy if still sitting in available (not checked out).
+            var still_available = false;
+            for (self.available.items, 0..) |item, i| {
                 if (item == conn) {
-                    _ = self.connections.swapRemove(j);
+                    _ = self.available.swapRemove(i);
+                    still_available = true;
                     break;
                 }
             }
-            _ = self.available.swapRemove(i);
-            self.current_connections -= 1;
+            if (still_available) self.destroyLocked(conn);
+            mutex_init.unlockMut(&self.mutex);
         }
-        // Wake ALL waiters if connections were freed — new ones can be created
         if (had_dead) {
+            mutex_init.lockMut(&self.mutex);
             mutex_init.broadcastCond(&self.cond);
+            mutex_init.unlockMut(&self.mutex);
         }
     }
 

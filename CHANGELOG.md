@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+## [0.20.7] - 2026-07-23
+
+### Fixed
+- **Idle watchdog mid-handler**: `request_timeout_ms` no longer closes sockets during `dispatch` (`in_dispatch` gate). Prevents mass `WriteFailed` / HTTP 000 when handlers wait on DB (~30s) under concurrency.
+- **WriteFailed soft path**: client-gone / write-deadline errors skip the 500 render attempt and end the connection cleanly.
+- **ConnectionPool ping under lock**: `acquire` / `keepAlive` ping outside the pool mutex so blocking driver round-trips cannot starve other worker threads.
+
 ## [0.20.6] - 2026-07-23
 
 ### Fixed
