@@ -18,15 +18,14 @@ pub const ServerConfig = struct {
     /// Max time to wait for in-flight connections after SIGTERM/SIGINT (ms).
     /// Prevents hang forever when a client never closes. Default 30s.
     drain_timeout_ms: u64 = 30_000,
-    /// Per-connection idle timeout (ms) **between** requests (waiting on
-    /// `receiveHead`). The idle watchdog does **not** run during `dispatch`
-    /// — handler duration is bounded by `Context` deadline / DB pool
-    /// `acquire_timeout` instead. Closing the socket mid-handler caused
-    /// mass `WriteFailed` under concurrency (idle == acquire == 30s).
-    /// 0 disables. Default 30s. Still pair with reverse-proxy timeouts.
+    /// Per-request handler deadline (ms) on `Context` (`isExpired`).
+    /// Idle time waiting on `receiveHead` is bounded by `read_timeout_ms`
+    /// instead — do **not** spawn a second Io fiber per connection for that
+    /// (it consumed `async_limit` slots and looked like "thread pool leak"
+    /// after ~3–4 keep-alive connections). 0 disables. Default 30s.
     request_timeout_ms: u64 = 30_000,
     /// Per `net_read` deadline (ms) via `Io.operateTimeout` for receiveHead/body.
-    /// 0 disables (rely on idle watchdog only). Default matches request_timeout_ms.
+    /// This is the real between-request idle limit. 0 disables. Default 30s.
     read_timeout_ms: u64 = 30_000,
     /// Per-response write deadline (ms), wall-clock from the first `drain`
     /// of each request. Zig 0.17 removed `Operation.net_write`, so this is
@@ -171,39 +170,16 @@ fn acceptLoopImpl(io: std.Io, server: *Server, addr: std.Io.net.IpAddress, group
 }
 
 /// Handler fiber — manages keep-alive request loop for one connection.
+///
+/// One Io task per connection (no per-conn watchdog fiber). With
+/// `async_limit == thread_count`, a second fiber per conn halved capacity
+/// and left slots stuck in `receiveHead` after keep-alive responses —
+/// sequential curls died after ~3–4 OK replies (HTTP 000 / idle wait).
 fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cancelable!void {
     defer _ = server.active_conns.fetchSub(1, .monotonic);
     _ = server.active_conns.fetchAdd(1, .monotonic);
     if (server.metrics) |m| m.recordConnection();
-
-    var conn_closed = std.atomic.Value(bool).init(false);
-    defer {
-        if (!conn_closed.swap(true, .monotonic)) conn.close(io);
-    }
-
-    var last_activity_ms = std.atomic.Value(u64).init(monoMs(io));
-    // True while `dispatch` runs — idle watchdog must not close the socket
-    // mid-handler (that produced WriteFailed storms under load).
-    var in_dispatch = std.atomic.Value(bool).init(false);
-    var finished = std.atomic.Value(bool).init(false);
-    defer finished.store(true, .release);
-
-    var idle_group = std.Io.Group.init;
-    if (server.config.request_timeout_ms > 0) {
-        idle_group.async(io, idleWatchdog, .{
-            io,
-            conn,
-            &last_activity_ms,
-            &in_dispatch,
-            &finished,
-            &conn_closed,
-            server.config.request_timeout_ms,
-        });
-    }
-    defer {
-        finished.store(true, .release);
-        _ = idle_group.await(io) catch {};
-    }
+    defer conn.close(io);
 
     var read_buf: [4096]u8 = undefined;
     var write_buf: [4096]u8 = undefined;
@@ -213,16 +189,10 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
     var req_count: usize = 0;
 
     while (req_count < server.config.max_requests_per_conn) : (req_count += 1) {
-        if (conn_closed.load(.monotonic)) break;
-        last_activity_ms.store(monoMs(io), .monotonic);
         var request = http_srv.receiveHead() catch break;
-        last_activity_ms.store(monoMs(io), .monotonic);
         writer.resetWriteDeadline();
-        in_dispatch.store(true, .release);
-        const dispatch_err = dispatch(&request, server);
-        in_dispatch.store(false, .release);
-        last_activity_ms.store(monoMs(io), .monotonic);
-        dispatch_err catch break;
+        dispatch(&request, server) catch break;
+        if (server.config.force_connection_close) break;
         if (request.head.version != .@"HTTP/1.1") break;
         if (!request.head.keep_alive) break;
     }
@@ -351,32 +321,6 @@ const TimedWriter = struct {
     }
 };
 
-fn idleWatchdog(
-    io: std.Io,
-    conn: std.Io.net.Stream,
-    last_activity_ms: *std.atomic.Value(u64),
-    in_dispatch: *std.atomic.Value(bool),
-    finished: *std.atomic.Value(bool),
-    conn_closed: *std.atomic.Value(bool),
-    timeout_ms: u64,
-) std.Io.Cancelable!void {
-    while (!finished.load(.acquire)) {
-        io.sleep(std.Io.Duration.fromMilliseconds(100), .awake) catch break;
-        if (finished.load(.acquire)) break;
-        // Handler in progress: do not treat slow DB/business work as idle.
-        if (in_dispatch.load(.acquire)) continue;
-        const now = monoMs(io);
-        const last = last_activity_ms.load(.monotonic);
-        if (now > last and (now - last) >= timeout_ms) {
-            getLog().warnFmt("Request idle timeout ({d}ms); closing connection", .{timeout_ms});
-            if (!conn_closed.swap(true, .monotonic)) {
-                conn.close(io);
-            }
-            break;
-        }
-    }
-}
-
 fn monoMs(io: std.Io) u64 {
     const ts = std.Io.Timestamp.now(io, .awake);
     return @intCast(@max(ts.toMilliseconds(), 0));
@@ -388,6 +332,14 @@ fn dispatch(request: *http.Server.Request, server: *Server) !void {
     const path = if (std.mem.indexOfScalar(u8, safe_target, '?')) |q| safe_target[0..q] else safe_target;
     const method = HttpMethod.fromString(@tagName(request.head.method)) orelse .GET;
     const start_ms: i64 = std.Io.Timestamp.now(io_instance.io, .awake).toMilliseconds();
+
+    // MUST run before respond(): `Context.render*` copies `req.head.keep_alive`
+    // into the response. Setting this only after execute left Connection:
+    // keep-alive on the wire, so handleConn waited on receiveHead#2 and held
+    // an async slot until read timeout — slot exhaustion after a few curls.
+    if (server.config.force_connection_close) {
+        request.head.keep_alive = false;
+    }
 
     var ctx = Context.init(request, server.allocator);
     ctx.max_body_size = server.config.max_body_size;
@@ -439,12 +391,6 @@ fn dispatch(request: *http.Server.Request, server: *Server) !void {
         const dur: u64 = @intCast(@max(end_ms - start_ms, 0));
         m.recordLatencyMs(dur);
         m.recordRouteLatencyMs(path, dur);
-    }
-
-    // Zig http.Server keep-alive is unsafe until ziglang/zig#25017 (+ body drain).
-    // Default forces close; opt-in via ServerConfig.force_connection_close=false.
-    if (server.config.force_connection_close) {
-        request.head.keep_alive = false;
     }
 }
 

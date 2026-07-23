@@ -1,6 +1,6 @@
 # ZFinal 代码架构最佳实践
 
-> **版本**：对齐 v0.20.7+ / Zig `0.17.0-dev.1422`  
+> **版本**：对齐 v0.20.8+ / Zig `0.17.0-dev.1422`  
 > **受众**：框架贡献者、应用开发者、AI agent  
 > **相关**：[`AGENTS.md`](../AGENTS.md) · [`PRODUCTION_AUDIT.md`](../PRODUCTION_AUDIT.md) · [`.life/decisions/`](../.life/decisions/)
 

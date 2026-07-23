@@ -1,5 +1,10 @@
 ## [Unreleased]
 
+## [0.20.8] - 2026-07-23
+
+### Fixed
+- **Keep-alive / async_limit slot exhaustion**: apply `force_connection_close` **before** `respond` so `Connection: close` is on the wire; drop per-connection idle-watchdog Io fiber (it doubled slot use with `handleConn` and left fibers stuck in `receiveHead` — sequential curls died after ~3–4 OK). Idle read bounded by `read_timeout_ms` only.
+
 ## [0.20.7] - 2026-07-23
 
 ### Fixed

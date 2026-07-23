@@ -27,6 +27,11 @@ ZFinal（force_connection_close=true，默认）
 **不要**为了「单机压测好看」在生产关掉 `force_connection_close`。  
 客户端侧的连接复用已由反代吸收；应用侧少一次握手换的是**进程不崩**。
 
+### 实现注意（v0.20.8+）
+
+- `force_connection_close` 必须在 **`respond` 之前** 清掉 `req.head.keep_alive`，否则响应头仍是 keep-alive，`handleConn` 会卡在下一次 `receiveHead`，占住 `async_limit` 槽。
+- 每个连接只跑 **一个** Io fiber；不要再为 idle 另 `group.async` 一个 watchdog（会把有效并发减半，顺序压测约 3–4 个请求后全 HTTP 000）。空闲读超时用 `read_timeout_ms`。
+
 ---
 
 ## 2. ZFinal 侧配置

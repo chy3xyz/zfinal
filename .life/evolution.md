@@ -4,6 +4,18 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+## 2026-07-23 — release v0.20.8
+
+**Session**: Fix keep-alive async_limit exhaustion (3–4 OK then HTTP 000)
+**Changes**:
+1. `force_connection_close` before respond; break after one request when forced
+2. Remove per-conn idle watchdog fiber; rely on TimedReader read timeout
+3. doc/reverse_proxy.md implementation notes
+4. SSoT `0.20.8`
+**Tests**: `zig build test` (240 passed; 11 skipped)
+
+---
+
 ## 2026-07-23 — release v0.20.7
 
 **Session**: Fix concurrent idle-timeout WriteFailed + pool ping starvation

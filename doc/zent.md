@@ -1,7 +1,7 @@
 # ZFinal × zent：`DB` 的并列方案（可作主力）— **AI-first**
 
 **zent**: [chy3xyz/zent](https://github.com/chy3xyz/zent) — Zig 版 [ent](https://entgo.io/)（schema-as-code ORM）  
-**版本口径**: zent **v0.12.0+** · ZFinal **v0.20.7+** · Zig **≥ 0.17**  
+**版本口径**: zent **v0.12.0+** · ZFinal **v0.20.8+** · Zig **≥ 0.17**  
 **参考实现**: [`examples/zent-shop/`](../examples/zent-shop/)  
 **决策**: [ADR-007](../.life/decisions/007-zent-peer-data-layer.md)  
 **AI skill**: [`.claude/skills/zfinal-zent-ai.md`](../.claude/skills/zfinal-zent-ai.md)
