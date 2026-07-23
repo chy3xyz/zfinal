@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+## [0.20.5] - 2026-07-23
+
+### Fixed
+- **Router `paramCachePut` double-free**: hashmap key and FIFO order list share one allocation; eviction no longer frees twice (Abort once cache fills). Append-failure path drops the map entry before freeing.
+- **MySQL text protocol column types**: `col_types` / `mysqlTextToCell` use `c_uint` end-to-end (Zig 0.17 / `enum_field_types`), avoiding signed `@intCast` round-trips.
+
 ## [0.20.4] - 2026-07-23
 
 

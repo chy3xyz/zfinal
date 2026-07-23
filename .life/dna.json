@@ -2,12 +2,12 @@
   "project": "zfinal",
   "title": "ZFinal Web Framework",
   "description": "Production-hardened Zig web framework inspired by JFinal. Fiber-based async server, ActiveRecord ORM, plugin system, 17 utility kits.",
-  "version": "0.20.4",
+  "version": "0.20.5",
   "birth": "2024-12-03",
   "zig_version": "0.17.0-dev.1422+e863bf3be",
   "fingerprint": {
     "algorithm": "sha256",
-    "source_hash": "v0.20.4",
+    "source_hash": "v0.20.5",
     "computed_at": "2026-07-22"
   },
   "metrics": {
@@ -22,17 +22,39 @@
   },
   "dependencies": {
     "zig": "0.17.0-dev.1422+e863bf3be",
-    "system_libs": ["libc", "sqlite3"],
-    "optional_libs": ["libpq", "libmysqlclient"]
+    "system_libs": [
+      "libc",
+      "sqlite3"
+    ],
+    "optional_libs": [
+      "libpq",
+      "libmysqlclient"
+    ]
   },
   "evolution": {
     "total_commits": 38,
     "total_releases": 4,
     "major_milestones": [
-      {"version": "v0.1.0", "date": "2024-12-03", "theme": "Core framework: routing, ORM, CLI"},
-      {"version": "v0.2.0", "date": "2025-12-30", "theme": "AsyncServer, template engine, cache, cron, i18n"},
-      {"version": "v0.3.0", "date": "2026-05-12", "theme": "Production hardening: security, observability, correctness"},
-      {"version": "v0.4.0", "date": "2026-05-12", "theme": "Framework unification, WebSocket, Redis, Docker, codegen"}
+      {
+        "version": "v0.1.0",
+        "date": "2024-12-03",
+        "theme": "Core framework: routing, ORM, CLI"
+      },
+      {
+        "version": "v0.2.0",
+        "date": "2025-12-30",
+        "theme": "AsyncServer, template engine, cache, cron, i18n"
+      },
+      {
+        "version": "v0.3.0",
+        "date": "2026-05-12",
+        "theme": "Production hardening: security, observability, correctness"
+      },
+      {
+        "version": "v0.4.0",
+        "date": "2026-05-12",
+        "theme": "Framework unification, WebSocket, Redis, Docker, codegen"
+      }
     ],
     "architecture_shifts": [
       "v0.3.0: Merged Server + AsyncServer into single fiber-based async server",
@@ -53,11 +75,40 @@
     ]
   },
   "capabilities": {
-    "server": {"concurrency": "fiber", "keep_alive": true, "max_connections": 10000},
-    "database": ["sqlite", "postgresql", "mysql"],
-    "security": ["csrf", "cspng", "rate_limiting", "path_sandbox", "timing_safe"],
-    "observability": ["structured_logging", "health_endpoint", "metrics", "compile_time_levels"],
-    "templating": ["variables", "loops", "conditions", "includes", "extends"],
-    "codegen": ["schema_parser", "crud_generator", "migration_package"]
+    "server": {
+      "concurrency": "fiber",
+      "keep_alive": true,
+      "max_connections": 10000
+    },
+    "database": [
+      "sqlite",
+      "postgresql",
+      "mysql"
+    ],
+    "security": [
+      "csrf",
+      "cspng",
+      "rate_limiting",
+      "path_sandbox",
+      "timing_safe"
+    ],
+    "observability": [
+      "structured_logging",
+      "health_endpoint",
+      "metrics",
+      "compile_time_levels"
+    ],
+    "templating": [
+      "variables",
+      "loops",
+      "conditions",
+      "includes",
+      "extends"
+    ],
+    "codegen": [
+      "schema_parser",
+      "crud_generator",
+      "migration_package"
+    ]
   }
 }

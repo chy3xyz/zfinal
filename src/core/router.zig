@@ -142,16 +142,22 @@ pub const Router = struct {
         // oldest (FIFO). This is intentionally simple — a true LRU with
         // doubly-linked list would be ~3x more code for marginal gain
         // on workloads with hot route tails.
+        //
+        // Ownership: hashmap key and order-list entry share ONE allocation
+        // (same pointer). Evict by removing the map entry then free once —
+        // never free(kv.key) and free(oldest); that double-frees and aborts
+        // under Zig's GPA / ASAN once the cache fills (param_cache_max).
         while (self.param_cache_order.items.len >= self.param_cache_max) {
             const oldest = self.param_cache_order.orderedRemove(0);
-            if (self.param_route_cache.fetchRemove(oldest)) |kv| {
-                self.allocator.free(kv.key);
-            }
+            _ = self.param_route_cache.fetchRemove(oldest);
             self.allocator.free(oldest);
         }
         const key_dup = try self.allocator.dupe(u8, key);
         errdefer self.allocator.free(key_dup);
         try self.param_route_cache.put(key_dup, value);
+        // If append fails, drop the map entry so errdefer can free key_dup
+        // without leaving a dangling hashmap pointer.
+        errdefer _ = self.param_route_cache.fetchRemove(key_dup);
         try self.param_cache_order.append(self.allocator, key_dup);
     }
 
@@ -478,4 +484,28 @@ test "route registration order priority" {
     const route = router.match("/api/data", .GET).?;
     // Both registered — priority is first-match
     try std.testing.expect(route.handler == h1);
+}
+
+test "param route cache FIFO eviction no double-free" {
+    const allocator = std.testing.allocator;
+    var router = Router.init(allocator);
+    defer router.deinit();
+    // Tiny cap so eviction runs quickly under GPA.
+    router.param_cache_max = 4;
+
+    const h = struct {
+        fn f(_: *Context) !void {}
+    }.f;
+    try router.addWithMethod("/users/:id", .GET, h);
+
+    var buf: [64]u8 = undefined;
+    var i: usize = 0;
+    while (i < 64) : (i += 1) {
+        const path = try std.fmt.bufPrint(&buf, "/users/{d}", .{i});
+        try std.testing.expect(router.match(path, .GET) != null);
+    }
+    try std.testing.expect(router.param_cache_order.items.len <= router.param_cache_max);
+    // Hot path after eviction still resolves (may miss cache → rescan → reinsert).
+    try std.testing.expect(router.match("/users/0", .GET) != null);
+    try std.testing.expect(router.match("/users/63", .GET) != null);
 }

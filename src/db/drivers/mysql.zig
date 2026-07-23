@@ -725,9 +725,10 @@ pub const MySQLDB = struct {
         // Text protocol always delivers strings, but we still want the
         // natural Cell variant for ints/floats to avoid parseInt at consumer
         // reads. For text protocol we parseInt/parseFloat here once.
-        var col_types = try allocator.alloc(c_int, n_cols);
+        // MYSQL_FIELD.type / enum_field_types is unsigned (c_uint on Zig 0.17).
+        var col_types = try allocator.alloc(c_uint, n_cols);
         defer allocator.free(col_types);
-        for (0..n_cols) |i| col_types[i] = @intCast(fields[i].type);
+        for (0..n_cols) |i| col_types[i] = fields[i].type;
 
         var result_set = ResultSet.init(allocator, columns);
         errdefer result_set.deinit();
@@ -908,7 +909,7 @@ pub const MySQLDB = struct {
     /// column's declared SQL type and emit a typed Cell. Numeric columns
     /// get parsed once here (parseInt / parseFloat) so consumer reads via
     /// `Row.getInt()` / `Row.getFloat()` hit the cached typed value.
-    fn mysqlTextToCell(allocator: std.mem.Allocator, text: []const u8, ft: c_int) !Cell {
+    fn mysqlTextToCell(allocator: std.mem.Allocator, text: []const u8, ft: c_uint) !Cell {
         return switch (ft) {
             c.MYSQL_TYPE_TINY,
             c.MYSQL_TYPE_SHORT,

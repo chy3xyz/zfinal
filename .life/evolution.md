@@ -4,6 +4,18 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+## 2026-07-23 — release v0.20.5
+
+**Session**: Fix router param-cache double-free + MySQL c_uint typing
+**Changes**:
+1. `paramCachePut` free once on FIFO eviction; errdefer removes map entry if append fails
+2. Regression test fills cache past `param_cache_max`
+3. MySQL `col_types` / `mysqlTextToCell` use `c_uint`
+4. SSoT `0.20.5`
+**Tests**: `zig build test` (239 passed; 11 skipped)
+
+---
+
 ## 2026-07-23 — score lift: JWT RS256 verify + OffsetFetch/LeaveGroup
 
 **Session**: Continue score improvements
