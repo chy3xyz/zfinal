@@ -1,5 +1,8 @@
 ## [Unreleased]
 
+## [0.20.4] - 2026-07-23
+
+
 ### Changed
 - **`zf` CLI modularization (phase 1–3)**: extracted `tools/zf/zf_shared.zig` (IO/FS/`safeWrite`/`appendJsonString`/`writeAiConfigs`), `tools/zf/zf_db.zig` (`ZfDb`), `cmd_migrate.zig` (migrate/seed), `cmd_openapi.zig`, `cmd_check.zig`, `cmd_crud.zig` (crud/admin + bootstrap), `cmd_fixture.zig`, `cmd_bench.zig`. `main.zig` is the dispatcher (~1.4k lines).
 
@@ -8,7 +11,7 @@
 - **`examples/ports-l2`**: runnable L2 DI demo (store/cache/bus ports + memory adapters + OrdersService). `zig build run-ports-l2`.
 - **`zf check --prod --root <dir>`**: portable production-contract scan (default root `examples/production`; custom roots warn on missing BFF wiring).
 - **ai-edit-zone preserving regen**: `safeWrite` merges matching zone bodies via `tools/zf/zone_merge.zig` before falling back to `.gen.new`.
-- **JWT RS256 verify**: `jwtVerifyRs256` / `jwt.verifyRs256` (PEM SPKI / RSA PUBLIC KEY or PKCS#1 DER) for OIDC/gateway tokens; sign remains HS256.
+- **JWT RS256 verify + sign**: `jwtVerifyRs256` / `jwtSignRs256` (PEM/DER public + PKCS#1/PKCS#8 private keys).
 - **RobustMQ OffsetFetch / LeaveGroup**: wire + `KafkaConsumer.fetchCommittedOffset` / `leave`.
 - **RobustMQ JoinGroup / SyncGroup / Heartbeat**: wire builders + `KafkaConsumer.join` / `heartbeat`; `OffsetCommit` now carries generation/member from join.
 - **Kafka classic range rebalance**: leader divides partitions across members; `poll` / offsets are per assigned partition.
@@ -16,7 +19,6 @@
 - **Kafka sticky assignor**: `KafkaConsumerConfig.assignor = .sticky` (classic sticky; cold start ≈ range).
 - **Keep-alive safety suite**: `keepalive_safety.zig` — drain/#25017 live regression + `force_connection_close` default assert.
 - **MQTT native TLS**: `MqttConfig.use_tls` via `std.crypto.tls.Client` (`tls_insecure` / `tls_server_name`).
-- **JWT RS256 sign**: `jwtSignRs256` / `jwt.signRs256` (PKCS#1 / PKCS#8 private key PEM/DER).
 - **Metrics route classes**: health/metrics/api/admin/static/other + `routeTemplate` helper.
 - **`zf openapi` deepen**: bearerAuth, JSON requestBody, 400/401/404 responses.
 - **`examples/ports-l3`**: tenant + outbox + bus L3 DI demo (`zig build run-ports-l3`).
@@ -29,10 +31,10 @@
 
 ### Docs
 - Clarified regeneration: matching `ai-edit-zone` names are **merged** into the existing file; otherwise `<path>.gen.new` (or `--force`).
-- Refreshed `PRODUCTION_AUDIT.md` / `SECURITY.md` / agent docs to **0.20.3**.
-- **`doc/reverse_proxy.md`**: production pattern — nginx/Caddy client keep-alive + ZFinal `force_connection_close=true`; sample configs in `examples/production/deploy/`.
-- `doc/robustmq.md`: JoinGroup + classic range rebalance; set `partition_count`.
-- `doc/codegen.md` / `doc/progressive_architecture.md`: ports codegen.
+- Refreshed `PRODUCTION_AUDIT.md` / `SECURITY.md` / agent docs to **0.20.4**.
+- **`doc/reverse_proxy.md`**: nginx/Caddy client keep-alive + ZFinal `force_connection_close=true`; flip checklist §9.
+- `doc/robustmq.md`: JoinGroup + Metadata + range/sticky.
+- `doc/codegen.md` / `doc/progressive_architecture.md`: ports codegen + ports-l3.
 
 ## [0.20.3] - 2026-07-22
 

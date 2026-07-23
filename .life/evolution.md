@@ -49,7 +49,13 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
-## 2026-07-23 — P1/P2/P3 backlog: sticky, MQTT TLS, RS256 sign, L3, openapi
+## 2026-07-23 — release v0.20.4
+
+**Session**: Version bump + tag
+**Changes**: SSoT `0.20.4`, CHANGELOG cut from Unreleased, manifests/docs/README/templates
+**Tests**: version zon sync via build
+
+---
 
 **Session**: Execute remaining improvement backlog
 **Changes**:
