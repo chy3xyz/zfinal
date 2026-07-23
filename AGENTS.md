@@ -109,7 +109,7 @@ Zig 0.17 specifics: `@cImport` removed → use `b.addTranslateC` in build.zig.
 
 - Prefer writing architecture / best-practice conclusions into `doc/` (not chat-only).
 - Prefer graduating experimental plugins and queue clients into stable public API rather than leaving them under `experimental`.
-- When asked to submit or ship, expect a git commit plus a version tag (and a GitHub push when specified).
+- When asked to submit / commit / ship / 打 tag, create the git commit **and** annotated version tag, then **automatically** `git push origin <branch>` and `git push origin <tag>` (do not wait for a separate push ask).
 
 ## Learned Workspace Facts
 
