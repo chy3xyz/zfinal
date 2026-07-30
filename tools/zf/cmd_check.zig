@@ -141,6 +141,10 @@ fn checkProdContract(allocator: std.mem.Allocator, root: []const u8, pass: *u32,
             force_ka_off += 1;
             std.debug.print("⚠️  WARN: {s} disables force_connection_close (keep-alive experimental)\n", .{rel});
         }
+        if (std.mem.indexOf(u8, content, "createCacheInterceptor") != null) {
+            std.debug.print("⚠️  WARN: {s} uses createCacheInterceptor — TCP after-store is no-op without oneshot.capture; prefer CacheKit in handler or proxy cache\n", .{rel});
+            warn.* += 1;
+        }
     }
 
     var prod_fail: u32 = 0;
@@ -436,6 +440,28 @@ fn checkHandRolledErrorEnvelope(allocator: std.mem.Allocator, pass: *u32, warn: 
                 std.debug.print("⚠️  WARN: {s} passes HSTS bool by value — use SecurityHeadersConfig + &cfg\n", .{full});
                 warn.* += 1;
                 cfg_warn += 1;
+            }
+            // Temporary struct literal: createX(&.{ ... }) — cfg dies at end of statement (UAF).
+            const temp_cfg_needles = [_][]const u8{
+                "createJwtAuthInterceptor(&.{",
+                "createJwtAuthInterceptorWithOptions(&.{",
+                "createCorsAllowlistInterceptor(&.{",
+                "createCorsInterceptor(&.{",
+                "createTokenInterceptor(&.{",
+                "createSecurityHeadersInterceptor(&.{",
+                "createBodyLimitInterceptor(&.{",
+                "createTimeoutInterceptor(&.{",
+                "createCompressionInterceptor(&.{",
+                "createCacheInterceptor(&.{",
+                "createCacheInterceptorWithOptions(&.{",
+            };
+            for (temp_cfg_needles) |needle| {
+                if (std.mem.indexOf(u8, content, needle) != null) {
+                    std.debug.print("⚠️  WARN: {s} passes temporary &.{{…}} interceptor cfg — hold cfg in App/main so it outlives the interceptor\n", .{full});
+                    warn.* += 1;
+                    cfg_warn += 1;
+                    break;
+                }
             }
         }
     }

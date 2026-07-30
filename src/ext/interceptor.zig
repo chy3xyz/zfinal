@@ -91,20 +91,23 @@ pub fn createAccessLogInterceptor() zfinal.Interceptor {
     };
 }
 
-/// GET response-cache interceptor (CacheKit).
+/// GET **hit-only** response cache (CacheKit) — not a full HTTP cache layer.
 ///
 /// **Before**: on GET cache hit → `renderText` + `return false` (short-circuit).
-/// **After store**: only when `ctx.capture` is set (oneshot / in-process tests).
-/// Live TCP responses do not buffer the body for re-store — use `CacheKit` in the
-/// handler, or run behind a reverse-proxy cache.
+/// **After store**: **only** when `ctx.capture` is set (oneshot / in-process tests).
+/// Live TCP responses do **not** buffer the body for re-store — use `CacheKit` in the
+/// handler, or run behind a reverse-proxy cache. Prefer `auto_store = false` on TCP apps
+/// unless you only rely on pre-warmed keys / handler writes.
 pub const CacheInterceptorConfig = struct {
     cache: *zfinal.CacheKit,
     /// Key prefix; full key = prefix + `GET:` + path (no query).
     key_prefix: []const u8 = "zf:http:",
     ttl_sec: i64 = 60,
+    /// When true, attempt after-store (still no-op on live TCP without `ctx.capture`).
     auto_store: bool = true,
 };
 
+/// GET hit short-circuit interceptor. See `CacheInterceptorConfig` for TCP store limits.
 pub fn createCacheInterceptor(cfg: *const CacheInterceptorConfig) zfinal.Interceptor {
     return createCacheInterceptorWithOptions(cfg);
 }

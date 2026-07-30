@@ -16,14 +16,21 @@ global interceptors → route interceptors → handler → after (reverse)
 - Interceptor factories take **caller-owned** `*const Cfg` (no `heapCfg` / no static `var`):
   `JwtAuthConfig`, `TokenInterceptorConfig`, `CorsAllowlistConfig`, `SecurityHeadersConfig`,
   `stock.BodyLimitConfig`, …
+  **Never** `createX(&.{ … })` — the temporary dies and `userdata` becomes UAF. Hold cfg on
+  `App` / `main` stack (or heap) for the process lifetime. `zf check` WARNs on temporary `&.{`.
 - Prefer `before_ud` + `userdata` for **all** interceptors (zero-config factories pass `_`);
-  plain `before`/`after` are a compatibility fallback. Dispatch uses `runBefore`/`runAfter` everywhere.
+  plain `before`/`after` are a compatibility fallback. Dispatch uses `runBefore`/`runAfter`
+  on match **and** 404/405/fallback paths.
 - Migrate old generated handlers: `zf check --heal` injects `failHttp` / `extract.requireParamInt`
   (or regenerate with `zf crud:sql`).
 
 ```zig
+// OK — cfg outlives the interceptor
 var jwt_cfg: zfinal.JwtAuthConfig = .{ .secret = secret, .opts = .{ .leeway_sec = 30 } };
 try app.addGlobalInterceptor(zfinal.createJwtAuthInterceptorWithOptions(&jwt_cfg));
+
+// BAD — temporary literal (UAF)
+// try app.addGlobalInterceptor(zfinal.createJwtAuthInterceptor(&.{ .secret = secret }));
 ```
 
 ## State (app-wide)
@@ -64,9 +71,17 @@ try app.addGlobalInterceptor(zfinal.stock.createBodyLimitInterceptor(&bl));
 
 Server default: `ServerConfig.compress_responses` (default true).
 
-### Cache interceptor
+### Cache interceptor (GET hit-only)
 
-`createCacheInterceptor(*CacheInterceptorConfig)`: GET hit short-circuits. **After-store only works with `oneshot.capture`** (no TCP body buffer). Production HTTP caching: handler + `CacheKit`, or reverse-proxy cache.
+`createCacheInterceptor(*CacheInterceptorConfig)` short-circuits on GET **hit**.
+
+| Mode | Before (hit) | After (store) |
+|------|--------------|---------------|
+| `oneshot.capture` | yes | yes (if `auto_store`) |
+| Live TCP | yes (if key pre-filled) | **no** — body not buffered |
+
+Production: write with `CacheKit` in the handler, or put a reverse-proxy cache in front.
+`zf check --prod` WARNs when this interceptor is registered.
 
 ## Fallback / merge
 

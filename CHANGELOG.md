@@ -10,6 +10,7 @@
 ### Changed
 - **OpenAPI plural / `$ref`**: `categories`→`Category`, `boxes`→`Box`; raw-segment fallback; `*Input` omits `id`/`created_at`/`updated_at`/`create_time`/`update_time`/`deleted`.
 - **Interceptor `before_ud` convergence**: all stock/demo factories use `_ud`; `runBefore`/`runAfter` public and used by router 404 path; plain `before` kept as fallback.
+- **Reliability polish**: `zf check` WARNs temporary `&.{` interceptor cfg; Cache TCP store limits documented + `--prod` WARN; 404/405/fallback run global `runAfter`.
 - **Docs / scaffold HttpError alignment**: `SECURITY.md` / `PRODUCTION_AUDIT` caller-owned CORS/HSTS; `zf new` user handler returns `HttpError`; quickstart/codegen/migration samples updated.
 - Cache interceptor: GET hit short-circuit; after-store only with `ctx.capture` (documented).
 - `examples/production` / `auth` / `smart-routing` use stack-owned interceptor configs.

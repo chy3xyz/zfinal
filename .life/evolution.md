@@ -4,6 +4,18 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+## 2026-07-31 — Cfg lifetime / cache WARN / 404 after
+
+**Session**: Reliability polish (1+2+3)
+**Changes**:
+1. `zf check` WARNs temporary `createX(&.{…})` cfg; JwtAuthConfig lifetime comment
+2. Cache interceptor docs + `--prod` WARN (TCP store no-op)
+3. Router 404/405/fallback runs global `runAfter`; oneshot test
+**Tests**: zig build test
+**Next**: keep-alive #25017
+
+---
+
 ## 2026-07-31 — OpenAPI plural/$ref + before_ud converge
 
 **Session**: Nice-to-have polish

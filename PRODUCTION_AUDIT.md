@@ -61,11 +61,11 @@
 
 | Gap | Fix |
 |-----|-----|
-| Interceptor static `var` secrets | `userdata` + caller-owned `*const Cfg` (no `heapCfg`) |
+| Interceptor static `var` secrets | `userdata` + caller-owned `*const Cfg` (no `heapCfg`); `zf check` WARNs temporary `&.{` cfg |
 | `oneshot.capture` no headers | `captureWith` + `Context.mock_headers` / `mock_body` |
 | Extension 16 slots | capacity 32 + clearer full log |
 | Trace attr strings | `extension.TraceMeta` |
-| Cache interceptor stub | GET CacheKit hit short-circuit (+ capture store) |
+| Cache interceptor stub | GET hit-only (+ capture store); TCP after-store documented + `--prod` WARN |
 | Hand-rolled error envelopes | `zf check` WARN scan |
 
 ## Gaps closed (recent)

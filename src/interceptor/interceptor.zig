@@ -157,7 +157,9 @@ pub const AuthInterceptor = Interceptor{
     }.f,
 };
 
-/// Caller-owned JWT auth config (must outlive the Interceptor).
+/// Caller-owned JWT auth config.
+/// **Lifetime**: `cfg` must outlive every request that uses the interceptor (App / main stack / heap).
+/// Do not pass `&(.{ .secret = … })` — that is use-after-free.
 pub const JwtAuthConfig = struct {
     secret: []const u8,
     opts: jwt.VerifyOptions = .{},

@@ -125,6 +125,32 @@ test "captureWith exposes mock Authorization header" {
     try testing.expect(std.mem.indexOf(u8, res.body, "Bearer tok") != null);
 }
 
+test "404 path runs global after interceptors" {
+    const testing = std.testing;
+    const Probe = struct {
+        var after_ran: bool = false;
+        fn before(_: *Context, _: ?*anyopaque) !bool {
+            return true;
+        }
+        fn after(_: *Context, _: ?*anyopaque) !void {
+            after_ran = true;
+        }
+    };
+    Probe.after_ran = false;
+    var router = Router.init(testing.allocator);
+    defer router.deinit();
+    try router.global_interceptors.add(.{
+        .name = "probe",
+        .before_ud = Probe.before,
+        .after_ud = Probe.after,
+    });
+    try router.seal();
+    var res = try capture(testing.allocator, &router, .GET, "/nope", .{});
+    defer res.deinit();
+    try testing.expectEqual(@as(u16, 404), res.status);
+    try testing.expect(Probe.after_ran);
+}
+
 /// Allow oneshot to re-run after a previous shutdown.
 pub fn resetShutdown() void {
     shutdown.shutting_down.store(false, .monotonic);

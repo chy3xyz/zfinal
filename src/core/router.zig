@@ -3,6 +3,7 @@ const Context = @import("context.zig").Context;
 const http_error = @import("http_error.zig");
 const InterceptorChain = @import("../interceptor/interceptor.zig").InterceptorChain;
 const runBefore = @import("../interceptor/interceptor.zig").runBefore;
+const runAfter = @import("../interceptor/interceptor.zig").runAfter;
 const io_instance = @import("../io_instance.zig");
 
 fn paramCacheIo() std.Io {
@@ -470,6 +471,8 @@ pub const Router = struct {
     /// 执行路由处理
     pub fn execute(self: *Router, path: []const u8, method: HttpMethod, ctx: *Context) !void {
         const idx = self.matchIndex(path, method) orelse {
+            // Global before only (same as match path); after runs after 404/405/fallback
+            // so Trace / access_log still see the final status.
             for (self.global_interceptors.interceptors.items) |*interceptor| {
                 if (!(try runBefore(interceptor, ctx))) return;
             }
@@ -481,15 +484,17 @@ pub const Router = struct {
                 const allow_hdr = formatAllowHeader(allow, &hdr_buf);
                 try ctx.setHeader("Allow", allow_hdr);
                 try http_error.renderStatus(ctx, .method_not_allowed, "method_not_allowed", "Method Not Allowed");
-                return;
-            }
-
-            if (self.fallback) |fb| {
+            } else if (self.fallback) |fb| {
                 try fb(ctx);
-                return;
+            } else {
+                try http_error.renderStatus(ctx, .not_found, "not_found", "Not Found");
             }
 
-            try http_error.renderStatus(ctx, .not_found, "not_found", "Not Found");
+            var i: usize = self.global_interceptors.interceptors.items.len;
+            while (i > 0) {
+                i -= 1;
+                try runAfter(&self.global_interceptors.interceptors.items[i], ctx);
+            }
             return;
         };
 
