@@ -396,6 +396,17 @@ pub fn renderYaml(allocator: std.mem.Allocator, spec: Spec) ![]u8 {
     try appendIndented(allocator, &out, 5, "type: string\n");
     try appendIndented(allocator, &out, 4, "detail:\n");
     try appendIndented(allocator, &out, 5, "type: string\n");
+    try appendIndented(allocator, &out, 2, "JsonObject:\n");
+    try appendIndented(allocator, &out, 3, "type: object\n");
+    try appendIndented(allocator, &out, 3, "additionalProperties: true\n");
+    try appendIndented(allocator, &out, 3, "description: Generic JSON object (refine per-route when DTO known)\n");
+    try appendIndented(allocator, &out, 2, "JsonOk:\n");
+    try appendIndented(allocator, &out, 3, "type: object\n");
+    try appendIndented(allocator, &out, 3, "properties:\n");
+    try appendIndented(allocator, &out, 4, "ok:\n");
+    try appendIndented(allocator, &out, 5, "type: boolean\n");
+    try appendIndented(allocator, &out, 4, "data:\n");
+    try appendIndented(allocator, &out, 5, "$ref: '#/components/schemas/JsonObject'\n");
     try out.appendSlice(allocator, "paths:\n");
 
     // Group routes by path. spec.routes is already sorted, so first-occurrence
@@ -441,7 +452,7 @@ pub fn renderYaml(allocator: std.mem.Allocator, spec: Spec) ![]u8 {
                 try appendIndented(allocator, &out, 4, "content:\n");
                 try appendIndented(allocator, &out, 5, "application/json:\n");
                 try appendIndented(allocator, &out, 6, "schema:\n");
-                try appendIndented(allocator, &out, 7, "type: object\n");
+                try appendIndented(allocator, &out, 7, "$ref: '#/components/schemas/JsonObject'\n");
                 try appendIndented(allocator, &out, 3, "security:\n");
                 try appendIndented(allocator, &out, 4, "- bearerAuth: []\n");
             }
@@ -449,6 +460,10 @@ pub fn renderYaml(allocator: std.mem.Allocator, spec: Spec) ![]u8 {
             try appendIndented(allocator, &out, 3, "responses:\n");
             try appendIndented(allocator, &out, 4, "'200':\n");
             try appendIndented(allocator, &out, 5, "description: OK\n");
+            try appendIndented(allocator, &out, 5, "content:\n");
+            try appendIndented(allocator, &out, 6, "application/json:\n");
+            try appendIndented(allocator, &out, 7, "schema:\n");
+            try appendIndented(allocator, &out, 8, "$ref: '#/components/schemas/JsonOk'\n");
             try appendIndented(allocator, &out, 4, "'400':\n");
             try appendIndented(allocator, &out, 5, "description: Bad Request\n");
             try appendIndented(allocator, &out, 5, "content:\n");

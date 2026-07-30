@@ -756,7 +756,7 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\///   page, size — pagination
         \\///   q          — search term (LIKE-searches all string columns)
         \\pub fn list(ctx: *zfinal.Context) !void {{
-        \\    rateLimiter.handle(ctx) catch |e| return err(ctx, .too_many_requests, @errorName(e), 42901);
+        \\    try rateLimiter.handle(ctx);
         \\    const db = try pool.acquire();
         \\    defer pool.release(db) catch {{}};
         \\    const page = try ctx.getParaToIntDefault("page", 1);
@@ -773,7 +773,7 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\
         \\/// Show {s} by ID.
         \\pub fn show(ctx: *zfinal.Context) !void {{
-        \\    const id = parseId(ctx) catch |e| return err(ctx, .bad_request, "Invalid ID", 40001);
+        \\    const id = try parseId(ctx);
         \\    const db = try pool.acquire();
         \\    defer pool.release(db) catch {{}};
         \\    const item = try service.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
@@ -798,7 +798,7 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\/// Update {s} record (CSRF-protected).
         \\pub fn update(ctx: *zfinal.Context) !void {{
         \\    try csrfGuard(ctx);
-        \\    const id = parseId(ctx) catch |e| return err(ctx, .bad_request, "Invalid ID", 40001);
+        \\    const id = try parseId(ctx);
         \\    const db = try pool.acquire();
         \\    defer pool.release(db) catch {{}};
         \\    const data: service.Data = .{{
@@ -810,7 +810,7 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\/// Delete {s} record (CSRF-protected).
         \\pub fn delete(ctx: *zfinal.Context) !void {{
         \\    try csrfGuard(ctx);
-        \\    const id = parseId(ctx) catch |e| return err(ctx, .bad_request, "Invalid ID", 40001);
+        \\    const id = try parseId(ctx);
         \\    const db = try pool.acquire();
         \\    defer pool.release(db) catch {{}};
         \\    var item = try service.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
@@ -821,7 +821,7 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\/// Partial update {s} record (CSRF-protected, PATCH).
         \\pub fn patch(ctx: *zfinal.Context) !void {{
         \\    try csrfGuard(ctx);
-        \\    const id = parseId(ctx) catch |e| return err(ctx, .bad_request, "Invalid ID", 40001);
+        \\    const id = try parseId(ctx);
         \\    const db = try pool.acquire();
         \\    defer pool.release(db) catch {{}};
         \\    var item = try service.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
@@ -829,10 +829,9 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\    try ctx.renderJson(.{{ .ok = true }});
         \\}}
         \\
-        \\/// Parse and validate ID path parameter.
+        \\/// Parse path `:id` via extract (HttpError.BadRequest on failure).
         \\fn parseId(ctx: *zfinal.Context) !i64 {{
-        \\    const id_str = ctx.getPathParam("id") orelse return error.InvalidId;
-        \\    return std.fmt.parseInt(i64, id_str, 10) catch return error.InvalidId;
+        \\    return zfinal.extract.requireParamInt(ctx, i64, "id");
         \\}}
         \\
         \\// ── ai-edit-zone: handler hooks ─────────────────────────────────

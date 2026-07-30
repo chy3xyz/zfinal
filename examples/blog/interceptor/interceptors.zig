@@ -14,12 +14,10 @@ pub const LoggingInterceptor = zfinal.Interceptor{
     .before = loggingBefore,
 };
 
-/// 认证拦截器
+/// 认证拦截器 — 失败走 HttpError，由 dispatch 渲染
 fn authBefore(ctx: *zfinal.Context) !bool {
-    const token = ctx.getHeader("Authorization");
-    if (token == null) {
-        ctx.res_status = .unauthorized;
-        try ctx.renderJson(.{ .@"error" = "Unauthorized" });
+    if (ctx.getHeader("Authorization") == null) {
+        zfinal.http_error.setDetail(ctx, "Authorization");
         return error.Unauthorized;
     }
     return true;

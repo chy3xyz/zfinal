@@ -726,6 +726,9 @@ test "openapi: renderYaml produces minimal OpenAPI 3.0.3" {
     try std.testing.expect(std.mem.indexOf(u8, yaml, "'400':") != null);
     try std.testing.expect(std.mem.indexOf(u8, yaml, "components:") != null);
     try std.testing.expect(std.mem.indexOf(u8, yaml, "bearerAuth:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "HttpError:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "JsonObject:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "JsonOk:") != null);
     try std.testing.expect(std.mem.indexOf(u8, yaml, "requestBody:") != null);
     try std.testing.expect(std.mem.indexOf(u8, yaml, "security:") != null);
     try std.testing.expect(std.mem.indexOf(u8, yaml, "'401':") != null);

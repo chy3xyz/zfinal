@@ -1,5 +1,6 @@
 const std = @import("std");
 const Interceptor = @import("../interceptor/interceptor.zig").Interceptor;
+const heapCfg = @import("../interceptor/interceptor.zig").heapCfg;
 const Context = @import("../core/context.zig").Context;
 const TokenManager = @import("token.zig").TokenManager;
 const audit = @import("../core/audit.zig");
@@ -12,40 +13,35 @@ pub const TokenInterceptorConfig = struct {
     error_message: []const u8 = "Invalid or expired token",
 };
 
-/// 创建 Token 拦截器
+/// 创建 Token 拦截器（per-instance config via userdata — no static var）
 pub fn createTokenInterceptor(config: TokenInterceptorConfig) Interceptor {
-    const InterceptorImpl = struct {
-        var cfg: TokenInterceptorConfig = undefined;
-
-        fn before(ctx: *Context) !bool {
-            const path = if (std.mem.indexOfScalar(u8, ctx.req.head.target, '?')) |q|
-                ctx.req.head.target[0..q]
-            else
-                ctx.req.head.target;
-
-            // 获取 Token
-            const token_value = try ctx.getPara(cfg.token_name) orelse {
-                audit.log(.csrf_reject, path, "missing");
-                http_error.setDetail(ctx, cfg.token_name);
-                return error.BadRequest;
-            };
-
-            // 验证 Token
-            const valid = try cfg.token_manager.validate(token_value);
-            if (!valid) {
-                audit.log(.csrf_reject, path, "invalid");
-                http_error.setDetail(ctx, cfg.error_message);
-                return error.BadRequest;
-            }
-            return true;
-        }
-    };
-
-    InterceptorImpl.cfg = config;
-
+    const cfg = heapCfg(TokenInterceptorConfig, config);
     return Interceptor{
         .name = "token",
-        .before = InterceptorImpl.before,
+        .userdata = cfg,
+        .before_ud = struct {
+            fn before(ctx: *Context, ud: ?*anyopaque) !bool {
+                const c: *TokenInterceptorConfig = @ptrCast(@alignCast(ud.?));
+                const path = if (std.mem.indexOfScalar(u8, ctx.req.head.target, '?')) |q|
+                    ctx.req.head.target[0..q]
+                else
+                    ctx.req.head.target;
+
+                const token_value = try ctx.getPara(c.token_name) orelse {
+                    audit.log(.csrf_reject, path, "missing");
+                    http_error.setDetail(ctx, c.token_name);
+                    return error.BadRequest;
+                };
+
+                const valid = try c.token_manager.validate(token_value);
+                if (!valid) {
+                    audit.log(.csrf_reject, path, "invalid");
+                    http_error.setDetail(ctx, c.error_message);
+                    return error.BadRequest;
+                }
+                return true;
+            }
+        }.before,
     };
 }
 

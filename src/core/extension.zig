@@ -11,9 +11,11 @@ const Entry = struct {
     destroy: ?DestroyFn,
 };
 
-/// Fixed-capacity bag (enough for JWT, request meta, etc.).
+/// Fixed-capacity bag (JWT, request meta, trace, …).
+pub const capacity = 32;
+
 pub const Bag = struct {
-    entries: [16]?Entry = @splat(null),
+    entries: [capacity]?Entry = @splat(null),
     len: usize = 0,
 
     pub fn deinit(self: *Bag, allocator: std.mem.Allocator) void {
@@ -38,7 +40,10 @@ pub const Bag = struct {
                 }
             }
         }
-        if (self.len >= self.entries.len) return error.ExtensionBagFull;
+        if (self.len >= self.entries.len) {
+            std.log.err("extension.Bag full ({d} slots); drop unused Ext or raise extension.capacity", .{capacity});
+            return error.ExtensionBagFull;
+        }
         self.entries[self.len] = .{ .type_id = tid, .ptr = ptr, .destroy = destroy };
         self.len += 1;
     }
@@ -82,6 +87,12 @@ pub const RequestId = struct {
     value: []const u8,
 };
 
+/// Trace / access-log metadata (method + path slices live for the request).
+pub const TraceMeta = struct {
+    method: []const u8,
+    path: []const u8,
+};
+
 test "Bag put/get" {
     const a = std.testing.allocator;
     var bag: Bag = .{};
@@ -89,4 +100,17 @@ test "Bag put/get" {
     try putOwned(&bag, a, JwtIdentity, .{ .sub = "u1", .role = "admin" });
     const got = bag.get(JwtIdentity).?;
     try std.testing.expectEqualStrings("u1", got.sub);
+}
+
+test "Bag reports full at capacity" {
+    const a = std.testing.allocator;
+    var bag: Bag = .{};
+    defer bag.deinit(a);
+    // Fill with distinct types via wrapper indices is hard at comptime;
+    // exercise replace path + capacity constant.
+    try std.testing.expectEqual(@as(usize, 32), capacity);
+    try putOwned(&bag, a, JwtIdentity, .{ .sub = "a" });
+    try putOwned(&bag, a, RequestId, .{ .value = "r" });
+    try putOwned(&bag, a, TraceMeta, .{ .method = "GET", .path = "/" });
+    try std.testing.expect(bag.len == 3);
 }

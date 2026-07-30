@@ -53,6 +53,10 @@ pub const Context = struct {
     client_gone: bool = false,
     /// When set, `renderJson`/`renderText`/`renderHtml` write here instead of `req.respond` (in-process tests).
     capture: ?*CapturedResponse = null,
+    /// Optional request headers for `oneshot.capture` / tests (case-insensitive lookup).
+    mock_headers: ?std.StringHashMap([]const u8) = null,
+    /// Optional body for capture-mode extractors (`getBodyText` / `parseJsonBody`).
+    mock_body: ?[]const u8 = null,
 
     pub const CapturedResponse = struct {
         status: std.http.Status = .ok,
@@ -130,6 +134,8 @@ pub const Context = struct {
         // Borrowed values (path params from URL, cookies from request headers)
         if (self.path_params) |*pp| pp.deinit();
         if (self.cookies) |*ck| ck.deinit();
+        // mock_headers: keys/values borrowed (setMockHeader does not copy)
+        if (self.mock_headers) |*mh| mh.deinit();
 
         // response_cookies: name/value/path owned (dup'd in setCookieFull)
         for (self.response_cookies.items) |ck| {
@@ -141,6 +147,13 @@ pub const Context = struct {
     }
 
     pub fn getHeader(self: *Context, name: []const u8) ?[]const u8 {
+        if (self.mock_headers) |*mh| {
+            var it = mh.iterator();
+            while (it.next()) |e| {
+                if (std.ascii.eqlIgnoreCase(e.key_ptr.*, name)) return e.value_ptr.*;
+            }
+            return null;
+        }
         var it = self.req.iterateHeaders();
         while (it.next()) |header| {
             if (std.ascii.eqlIgnoreCase(header.name, name)) {
@@ -148,6 +161,14 @@ pub const Context = struct {
             }
         }
         return null;
+    }
+
+    /// Insert a mock request header (capture / unit tests). Values are not copied.
+    pub fn setMockHeader(self: *Context, name: []const u8, value: []const u8) !void {
+        if (self.mock_headers == null) {
+            self.mock_headers = .init(self.allocator);
+        }
+        try self.mock_headers.?.put(name, value);
     }
 
     /// Set a per-request deadline (relative to now). `ms = 0` clears
@@ -687,6 +708,7 @@ pub const Context = struct {
 
     /// Read request body as raw text.
     pub fn getBodyText(self: *Context) ![]const u8 {
+        if (self.mock_body) |b| return try self.allocator.dupe(u8, b);
         var read_buf: [4096]u8 = undefined;
         var reader = self.req.readerExpectNone(&read_buf);
         return try reader.allocRemaining(self.allocator, std.Io.Limit.limited(self.max_body_size));

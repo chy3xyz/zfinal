@@ -13,6 +13,7 @@ global interceptors → route interceptors → handler → after (reverse)
 - Do not mix: never `renderJson` then `return error.*` (double-write guarded by `response_started`).
 - Rate limit / demo Auth / `ParamExt` also return `HttpError` (no hand-rolled body).
 - After any successful `respond` (`render*`, `renderFile`, `renderCsv`, `redirect`, SSE start), `markResponded()` sets `response_started` so a second render is a no-op.
+- Interceptor factories that need config use `userdata` + `before_ud` (no shared static `var`).
 
 ## State (app-wide)
 
@@ -71,17 +72,23 @@ ctx.sseWrite(&bw, chunk) catch |err| {
 
 | API | Transport | Use when |
 |-----|-----------|----------|
-| `oneshot.capture(allocator, router, method, path, state)` | **None** (capture buffer) | Handler only `render*` + path params / State |
-| `oneshot.against` / `fetch` | TCP | Needs headers/body / real `req` |
+| `oneshot.capture(...)` | **None** (capture buffer) | Handler only `render*` + path params / State |
+| `oneshot.captureWith(..., headers, body)` | **None** + mock headers/body | JWT/CSRF/extract needing `Authorization` / JSON body |
+| `oneshot.against` / `fetch` | TCP | Full `std.http.Server.Request` (multipart, etc.) |
 
 ```zig
 var res = try zfinal.oneshot.capture(a, &router, .GET, "/ping", .{});
 defer res.deinit();
+
+var auth = try zfinal.oneshot.captureWith(a, &router, .GET, "/me", .{}, &.{
+    .{ .name = "Authorization", .value = "Bearer …" },
+}, null);
+defer auth.deinit();
 ```
 
-## OpenAPI
+**Keep-alive:** production still defaults `force_connection_close=true` until zig#25017 is fixed — see `doc/reverse_proxy.md` §9.
 
-`zf openapi` emits `components.schemas.HttpError` and `$ref`s on 400/401/404/422/429.
+`zf openapi` emits `components.schemas.HttpError`, `JsonObject`, `JsonOk` and `$ref`s on requestBody / 200 / 400/401/404/422/429.
 
 ## DI boundary
 

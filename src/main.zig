@@ -102,6 +102,7 @@ pub const createCorsInterceptor = @import("interceptor/interceptor.zig").createC
 pub const createCorsAllowlistInterceptor = @import("interceptor/interceptor.zig").createCorsAllowlistInterceptor;
 pub const createJwtAuthInterceptor = @import("interceptor/interceptor.zig").createJwtAuthInterceptor;
 pub const createJwtAuthInterceptorWithOptions = @import("interceptor/interceptor.zig").createJwtAuthInterceptorWithOptions;
+pub const heapCfg = @import("interceptor/interceptor.zig").heapCfg;
 
 // Auth
 pub const Jwt = @import("auth/jwt.zig");
@@ -222,6 +223,8 @@ pub const createPerformanceInterceptor = @import("ext/interceptor.zig").createPe
 pub const createExceptionInterceptor = @import("ext/interceptor.zig").createExceptionInterceptor;
 pub const createAccessLogInterceptor = @import("ext/interceptor.zig").createAccessLogInterceptor;
 pub const createCacheInterceptor = @import("ext/interceptor.zig").createCacheInterceptor;
+pub const createCacheInterceptorWithOptions = @import("ext/interceptor.zig").createCacheInterceptorWithOptions;
+pub const CacheInterceptorConfig = @import("ext/interceptor.zig").CacheInterceptorConfig;
 pub const createRateLimitInterceptor = @import("ext/interceptor.zig").createRateLimitInterceptor;
 pub const createSecurityHeadersInterceptor = @import("ext/security_interceptor.zig").createSecurityHeadersInterceptor;
 pub const createRequestIdInterceptor = @import("ext/security_interceptor.zig").createRequestIdInterceptor;

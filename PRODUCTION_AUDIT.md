@@ -1,6 +1,6 @@
 # ZFinal Framework — Production Readiness Audit
 
-**Date:** 2026-07-23 (CHANGELOG / package **0.20.8**)  
+**Date:** 2026-07-31 (CHANGELOG / package **0.20.8**)  
 **Zig:** `0.17.0-dev.1422+e863bf3be` (pinned in CI; `minimum_zig_version` in `build.zig.zon`)  
 **Status:** **Production-ready under the deployment contract below.**  
 **Headline score (contractual):** **9.8 / 10**  
@@ -11,6 +11,10 @@
 > and `zf check --prod` (0 fail on the reference example).
 > Absolute ceiling stays under 10 until Zig 0.17 stable and keep-alive is default-safe
 > (ziglang/zig#25017 — still asserts on pinned 0.17-dev; mitigated via force-close + drain + proxy).
+>
+> **2026-07-31 refresh:** HttpError / Extension / `oneshot.captureWith` / interceptor
+> `userdata` (no static secrets) landed; keep-alive residual unchanged — flip checklist still
+> [`doc/reverse_proxy.md`](doc/reverse_proxy.md) §9.
 
 ## Scorecard (evidence-based, 2026-07-23)
 
@@ -51,6 +55,18 @@
 |-----|----------|--------|
 | Zig **0.17-dev** drift | P1 | Pin + CI |
 | Keep-alive unsafe by default | P1 | force-close + proxy KA + drain + CI regression; flip checklist in [`doc/reverse_proxy.md`](doc/reverse_proxy.md) §9; wait #25017 |
+| OpenAPI per-entity DTO fields | P2 | Named `JsonObject`/`JsonOk` refs; field-level DTO still manual |
+
+## Gaps closed (2026-07-31)
+
+| Gap | Fix |
+|-----|-----|
+| Interceptor static `var` secrets | `userdata` + `before_ud` + `heapCfg` |
+| `oneshot.capture` no headers | `captureWith` + `Context.mock_headers` / `mock_body` |
+| Extension 16 slots | capacity 32 + clearer full log |
+| Trace attr strings | `extension.TraceMeta` |
+| Cache interceptor stub | GET CacheKit hit short-circuit (+ capture store) |
+| Hand-rolled error envelopes | `zf check` WARN scan |
 
 ## Gaps closed (recent)
 

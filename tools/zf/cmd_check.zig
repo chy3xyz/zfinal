@@ -69,6 +69,9 @@ pub fn handleCheck(allocator: std.mem.Allocator, heal: bool, ai_zones: bool, pro
     // 5. Smart routing: brace {id} in generated routes, hand-edited @generated routes
     checkSmartRouting(allocator, &pass, &warn, &fail);
 
+    // 6. Prefer HttpError over hand-rolled renderJson(.{ .err = ... })
+    checkHandRolledErrorEnvelope(allocator, &pass, &warn);
+
     if (prod) {
         try checkProdContract(allocator, prod_root, &pass, &warn, &fail);
     }
@@ -359,6 +362,42 @@ fn checkSmartRouting(allocator: std.mem.Allocator, pass: *u32, warn: *u32, fail:
         pass.* += 1;
     } else {
         _ = warn;
+    }
+}
+
+/// WARN when handlers hand-roll `renderJson(.{ .err = ... })` instead of `return error.*` / HttpError.
+fn checkHandRolledErrorEnvelope(allocator: std.mem.Allocator, pass: *u32, warn: *u32) void {
+    var warnings: u32 = 0;
+    const roots = [_][]const u8{ "src", "examples" };
+    for (roots) |root| {
+        var dir = std.Io.Dir.cwd().openDir(zf_shared.io, root, .{ .iterate = true }) catch continue;
+        defer dir.close(zf_shared.io);
+        var walker = dir.walk(allocator) catch continue;
+        defer walker.deinit();
+        while (walker.next(zf_shared.io) catch null) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.basename, ".zig")) continue;
+            if (std.mem.eql(u8, entry.basename, "http_error.zig")) continue;
+            if (std.mem.eql(u8, entry.basename, "codegen.zig")) continue;
+            if (std.mem.eql(u8, entry.basename, "zent_codegen.zig")) continue;
+            if (std.mem.eql(u8, entry.basename, "cmd_check.zig")) continue;
+            const full = std.fmt.allocPrint(allocator, "{s}/{s}", .{ root, entry.path }) catch continue;
+            defer allocator.free(full);
+            if (std.mem.indexOf(u8, full, "handler.gen.zig") != null) continue;
+            const content = readFileAlloc(allocator, full) catch continue;
+            defer allocator.free(content);
+            if (std.mem.indexOf(u8, content, "renderJson(.{") != null and
+                std.mem.indexOf(u8, content, ".err =") != null)
+            {
+                std.debug.print("⚠️  WARN: {s} hand-rolls renderJson(.{{ .err = … }}) — prefer return error.*/HttpError\n", .{full});
+                warn.* += 1;
+                warnings += 1;
+            }
+        }
+    }
+    if (warnings == 0) {
+        std.debug.print("✅ PASS: no hand-rolled HttpError envelopes\n", .{});
+        pass.* += 1;
     }
 }
 

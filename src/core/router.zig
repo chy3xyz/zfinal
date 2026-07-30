@@ -469,10 +469,14 @@ pub const Router = struct {
     /// 执行路由处理
     pub fn execute(self: *Router, path: []const u8, method: HttpMethod, ctx: *Context) !void {
         const idx = self.matchIndex(path, method) orelse {
-            for (self.global_interceptors.interceptors.items) |interceptor| {
-                if (interceptor.before) |before| {
-                    if (!(try before(ctx))) return;
-                }
+            for (self.global_interceptors.interceptors.items) |*interceptor| {
+                const cont = if (interceptor.before_ud) |f|
+                    try f(ctx, interceptor.userdata)
+                else if (interceptor.before) |f|
+                    try f(ctx)
+                else
+                    true;
+                if (!cont) return;
             }
 
             var allow_buf: [8]HttpMethod = undefined;

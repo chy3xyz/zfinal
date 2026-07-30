@@ -4,6 +4,19 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+## 2026-07-31 — Ten-item ergonomics follow-up
+
+**Session**: Interceptor userdata, captureWith, OpenAPI DTOs, check/codegen/blog/cache
+**Changes**:
+1. Interceptor `userdata`/`before_ud` + `heapCfg` — JWT/CSRF/CORS/Rate/stock/HSTS no static vars
+2. `oneshot.captureWith` + mock headers/body; Extension capacity 32 + TraceMeta
+3. OpenAPI JsonObject/JsonOk; codegen `parseId` → extract; `zf check` hand-rolled err WARN
+4. CacheKit GET interceptor; blog Auth → HttpError; audit/docs keep-alive §9 refresh
+**Tests**: zig build test + test-zf
+**Next**: field-level OpenAPI DTO; keep-alive flip when #25017 lands
+
+---
+
 ## 2026-07-31 — P0 HttpError unify + markResponded
 
 **Session**: RateLimit/Auth/ParamExt → HttpError; production Ext; respond coverage

@@ -26,14 +26,29 @@ pub const Result = struct {
 };
 
 /// In-process Router.execute with `Context.capture` (no TCP).
-/// Handlers must use `renderJson`/`renderText`/`renderHtml` and must **not** touch `ctx.req`
-/// (headers/body). Prefer for extract/State/HttpError/fallback unit tests.
+/// Handlers must use `renderJson`/`renderText`/`renderHtml`.
+/// Optional `headers`/`body` populate `mock_headers`/`mock_body` so extractors
+/// and JWT/CSRF interceptors can be tested without TCP.
 pub fn capture(
     allocator: std.mem.Allocator,
     router: *Router,
     method: HttpMethod,
     path: []const u8,
     app_state: state.Handle,
+) !Result {
+    return captureWith(allocator, router, method, path, app_state, &.{}, null);
+}
+
+pub const HeaderPair = struct { name: []const u8, value: []const u8 };
+
+pub fn captureWith(
+    allocator: std.mem.Allocator,
+    router: *Router,
+    method: HttpMethod,
+    path: []const u8,
+    app_state: state.Handle,
+    headers: []const HeaderPair,
+    body: ?[]const u8,
 ) !Result {
     var cap: Context.CapturedResponse = .{ .allocator = allocator };
     errdefer cap.deinit();
@@ -47,8 +62,16 @@ pub fn capture(
         .app_state = app_state,
         .capture = &cap,
         .compress_enabled = false,
+        .mock_body = body,
     };
     defer ctx.deinit();
+
+    if (headers.len > 0) {
+        ctx.mock_headers = .init(allocator);
+        for (headers) |h| {
+            try ctx.mock_headers.?.put(h.name, h.value);
+        }
+    }
 
     try router.execute(path, method, &ctx);
 
@@ -73,6 +96,33 @@ test "capture executes handler without TCP" {
     defer res.deinit();
     try testing.expectEqual(@as(u16, 200), res.status);
     try testing.expect(std.mem.indexOf(u8, res.body, "true") != null);
+}
+
+test "captureWith exposes mock Authorization header" {
+    const testing = std.testing;
+    var router = Router.init(testing.allocator);
+    defer router.deinit();
+    try router.addWithMethod("/who", .GET, struct {
+        fn h(ctx: *Context) !void {
+            const auth = ctx.getHeader("Authorization") orelse {
+                try ctx.renderJson(.{ .ok = false });
+                return;
+            };
+            try ctx.renderJson(.{ .auth = auth });
+        }
+    }.h);
+    try router.seal();
+    var res = try captureWith(
+        testing.allocator,
+        &router,
+        .GET,
+        "/who",
+        .{},
+        &.{.{ .name = "Authorization", .value = "Bearer tok" }},
+        null,
+    );
+    defer res.deinit();
+    try testing.expect(std.mem.indexOf(u8, res.body, "Bearer tok") != null);
 }
 
 /// Allow oneshot to re-run after a previous shutdown.
