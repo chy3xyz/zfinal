@@ -11,10 +11,6 @@ fn failHttp(ctx: *zfinal.Context, http_err: anyerror, comptime detail: []const u
     zfinal.http_error.setDetail(ctx, detail);
     return http_err;
 }
-fn err(ctx: *zfinal.Context, status: std.http.Status, comptime msg: []const u8, code: i32) !void {
-    ctx.res_status = status;
-    try ctx.renderJson(.{ .err = msg, .code = code });
-}
 
 /// CSRF guard: validates csrf_token using TokenManager.
 fn csrfGuard(ctx: *zfinal.Context) !void {

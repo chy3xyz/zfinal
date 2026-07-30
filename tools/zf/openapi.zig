@@ -575,7 +575,30 @@ pub fn collectZentDtosFromSource(allocator: std.mem.Allocator, source: []const u
     }
 }
 
-/// Last non-`{param}` path segment, PascalCased singular (users → User).
+/// English-ish plural → singular for path segments (aligned with `zf crud` singularize).
+/// `categories`→`category`, `boxes`→`box`, `users`→`user`, `news`→`news`.
+fn singularizeOwned(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
+    if (name.len > 3 and std.mem.endsWith(u8, name, "ies")) {
+        return try std.fmt.allocPrint(allocator, "{s}y", .{name[0 .. name.len - 3]});
+    }
+    if (name.len > 4 and (std.mem.endsWith(u8, name, "xes") or
+        std.mem.endsWith(u8, name, "zes") or
+        std.mem.endsWith(u8, name, "ches") or
+        std.mem.endsWith(u8, name, "shes") or
+        std.mem.endsWith(u8, name, "sses")))
+    {
+        return try allocator.dupe(u8, name[0 .. name.len - 2]); // boxes→box, addresses→address
+    }
+    if (name.len > 3 and std.mem.endsWith(u8, name, "ses")) {
+        return try allocator.dupe(u8, name[0 .. name.len - 2]); // statuses → status
+    }
+    if (name.len > 1 and name[name.len - 1] == 's' and name[name.len - 2] != 's') {
+        return try allocator.dupe(u8, name[0 .. name.len - 1]);
+    }
+    return try allocator.dupe(u8, name);
+}
+
+/// Last non-`{param}` path segment, PascalCased singular (users → User, categories → Category).
 fn dtoNameForPath(allocator: std.mem.Allocator, path: []const u8) !?[]const u8 {
     var last: ?[]const u8 = null;
     var it = std.mem.splitScalar(u8, path, '/');
@@ -588,9 +611,8 @@ fn dtoNameForPath(allocator: std.mem.Allocator, path: []const u8) !?[]const u8 {
     if (std.mem.eql(u8, seg, "api") or std.mem.eql(u8, seg, "health") or std.mem.eql(u8, seg, "metrics"))
         return null;
 
-    var base = seg;
-    if (base.len > 1 and base[base.len - 1] == 's' and !std.mem.endsWith(u8, base, "ss"))
-        base = base[0 .. base.len - 1];
+    const base = try singularizeOwned(allocator, seg);
+    defer allocator.free(base);
 
     var buf = try allocator.alloc(u8, base.len);
     @memcpy(buf, base);
@@ -598,11 +620,9 @@ fn dtoNameForPath(allocator: std.mem.Allocator, path: []const u8) !?[]const u8 {
     var i: usize = 1;
     while (i < buf.len) : (i += 1) {
         if (buf[i] == '_' or buf[i] == '-') {
-            // drop separator and upper next
             if (i + 1 < buf.len) buf[i + 1] = std.ascii.toUpper(buf[i + 1]);
         }
     }
-    // Remove _ and -
     var out = std.ArrayList(u8).empty;
     defer out.deinit(allocator);
     for (buf) |c| {
@@ -621,6 +641,47 @@ fn findDto(spec: Spec, name: []const u8) ?*const DtoSchema {
     return null;
 }
 
+/// Resolve DTO for a path: singularized guess, then unsuffixed PascalCase of raw segment.
+fn findDtoForPath(allocator: std.mem.Allocator, spec: Spec, path: []const u8) !?*const DtoSchema {
+    if (try dtoNameForPath(allocator, path)) |guess| {
+        defer allocator.free(guess);
+        if (findDto(spec, guess)) |d| return d;
+    }
+    // Fallback: PascalCase last segment without singularize (e.g. schema named `Users`)
+    var last: ?[]const u8 = null;
+    var it = std.mem.splitScalar(u8, path, '/');
+    while (it.next()) |seg| {
+        if (seg.len == 0 or seg[0] == '{') continue;
+        last = seg;
+    }
+    const seg = last orelse return null;
+    if (std.mem.eql(u8, seg, "api") or std.mem.eql(u8, seg, "health") or std.mem.eql(u8, seg, "metrics"))
+        return null;
+    var buf = try allocator.alloc(u8, seg.len);
+    defer allocator.free(buf);
+    @memcpy(buf, seg);
+    buf[0] = std.ascii.toUpper(buf[0]);
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+    for (buf) |c| {
+        if (c == '_' or c == '-') continue;
+        try out.append(allocator, c);
+    }
+    if (out.items.len == 0) return null;
+    const raw_name = try out.toOwnedSlice(allocator);
+    defer allocator.free(raw_name);
+    return findDto(spec, raw_name);
+}
+
+fn isInputOmittedField(name: []const u8) bool {
+    return std.mem.eql(u8, name, "id") or
+        std.mem.eql(u8, name, "created_at") or
+        std.mem.eql(u8, name, "updated_at") or
+        std.mem.eql(u8, name, "create_time") or
+        std.mem.eql(u8, name, "update_time") or
+        std.mem.eql(u8, name, "deleted");
+}
+
 fn appendDtoSchema(allocator: std.mem.Allocator, out: *std.ArrayList(u8), dto: DtoSchema, suffix: []const u8) !void {
     try appendIndented(allocator, out, 2, "");
     try out.appendSlice(allocator, dto.name);
@@ -629,7 +690,7 @@ fn appendDtoSchema(allocator: std.mem.Allocator, out: *std.ArrayList(u8), dto: D
     try appendIndented(allocator, out, 3, "type: object\n");
     try appendIndented(allocator, out, 3, "properties:\n");
     for (dto.fields) |f| {
-        if (suffix.len > 0 and std.mem.eql(u8, f.name, "id")) continue; // Input omits id
+        if (suffix.len > 0 and isInputOmittedField(f.name)) continue;
         try appendIndented(allocator, out, 4, "");
         try out.appendSlice(allocator, f.name);
         try out.appendSlice(allocator, ":\n");
@@ -735,9 +796,7 @@ pub fn renderYaml(allocator: std.mem.Allocator, spec: Spec) ![]u8 {
                 }
             }
 
-            const dto_guess_name = try dtoNameForPath(allocator, path);
-            defer if (dto_guess_name) |n| allocator.free(n);
-            const dto = if (dto_guess_name) |n| findDto(spec, n) else null;
+            const dto = try findDtoForPath(allocator, spec, path);
 
             if (r.method == .POST or r.method == .PUT or r.method == .PATCH) {
                 try appendIndented(allocator, &out, 3, "requestBody:\n");

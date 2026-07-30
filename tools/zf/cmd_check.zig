@@ -655,6 +655,7 @@ fn healDupeZ(allocator: std.mem.Allocator) !u32 {
 
 /// Migrate generated handlers from legacy `err(ctx, status, msg, code)` /
 /// hand-rolled parseId to `failHttp` + `extract.requireParamInt`.
+/// Also strips dead `fn err` once all call sites use `failHttp`.
 /// Scans `src/` and `examples/`. Safe to re-run (no-op when already migrated).
 fn healHttpErrorHandler(allocator: std.mem.Allocator) !u32 {
     var patched: u32 = 0;
@@ -670,6 +671,23 @@ fn healHttpErrorHandler(allocator: std.mem.Allocator) !u32 {
         \\fn failHttp(ctx: *zfinal.Context, http_err: anyerror, comptime detail: []const u8) anyerror {
         \\    zfinal.http_error.setDetail(ctx, detail);
         \\    return http_err;
+        \\}
+        \\
+    ;
+
+    const dead_err_legacy =
+        \\/// Legacy envelope with app-specific numeric `code` (prefer failHttp / HttpError).
+        \\fn err(ctx: *zfinal.Context, status: std.http.Status, comptime msg: []const u8, code: i32) !void {
+        \\    ctx.res_status = status;
+        \\    try ctx.renderJson(.{ .err = msg, .code = code });
+        \\}
+        \\
+    ;
+
+    const dead_err_plain =
+        \\fn err(ctx: *zfinal.Context, status: std.http.Status, comptime msg: []const u8, code: i32) !void {
+        \\    ctx.res_status = status;
+        \\    try ctx.renderJson(.{ .err = msg, .code = code });
         \\}
         \\
     ;
@@ -709,12 +727,17 @@ fn healHttpErrorHandler(allocator: std.mem.Allocator) !u32 {
         defer allocator.free(raw);
         _ = try std.Io.File.readPositionalAll(f, zf_shared.io, raw, 0);
 
-        const needs =
+        const has_fail = std.mem.indexOf(u8, raw, "fn failHttp(") != null;
+        const has_dead_err = std.mem.indexOf(u8, raw, "fn err(ctx: *zfinal.Context, status: std.http.Status") != null;
+        const still_calls_err = std.mem.indexOf(u8, raw, "return err(ctx,") != null or
+            std.mem.indexOf(u8, raw, " err(ctx,") != null;
+        const needs_migrate =
             std.mem.indexOf(u8, raw, "return err(ctx, .forbidden, \"Missing CSRF token\"") != null or
             std.mem.indexOf(u8, raw, "return err(ctx, .not_found, \"Not found\"") != null or
             std.mem.indexOf(u8, raw, "rateLimiter.handle(ctx) catch {}") != null or
             std.mem.indexOf(u8, raw, old_parse_id) != null;
-        if (!needs) continue;
+        const needs_strip_err = has_fail and has_dead_err and !still_calls_err;
+        if (!needs_migrate and !needs_strip_err) continue;
 
         var content = try allocator.dupe(u8, raw);
         defer allocator.free(content);
@@ -742,6 +765,17 @@ fn healHttpErrorHandler(allocator: std.mem.Allocator) !u32 {
             const replaced = try std.mem.replaceOwned(u8, allocator, content, old_parse_id, new_parse_id);
             allocator.free(content);
             content = replaced;
+        }
+
+        // Drop unused legacy `fn err` after call sites moved to failHttp.
+        const calls_err = std.mem.indexOf(u8, content, "return err(ctx,") != null or
+            std.mem.indexOf(u8, content, " err(ctx,") != null;
+        if (!calls_err) {
+            inline for (.{ dead_err_legacy, dead_err_plain }) |dead| {
+                const replaced = try std.mem.replaceOwned(u8, allocator, content, dead, "");
+                allocator.free(content);
+                content = replaced;
+            }
         }
 
         if (!std.mem.eql(u8, content, raw)) {

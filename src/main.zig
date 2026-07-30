@@ -95,6 +95,8 @@ pub const zent_enabled = @import("data/zent_layer.zig").enabled;
 // Export interceptor modules
 pub const Interceptor = @import("interceptor/interceptor.zig").Interceptor;
 pub const InterceptorChain = @import("interceptor/interceptor.zig").InterceptorChain;
+pub const runBefore = @import("interceptor/interceptor.zig").runBefore;
+pub const runAfter = @import("interceptor/interceptor.zig").runAfter;
 pub const LoggingInterceptor = @import("interceptor/interceptor.zig").LoggingInterceptor;
 pub const AuthInterceptor = @import("interceptor/interceptor.zig").AuthInterceptor;
 pub const CORSInterceptor = @import("interceptor/interceptor.zig").CORSInterceptor;

@@ -4,6 +4,30 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+## 2026-07-31 — OpenAPI plural/$ref + before_ud converge
+
+**Session**: Nice-to-have polish
+**Changes**:
+1. OpenAPI `singularizeOwned` (-ies/-xes/-ches/-sses/…) + `findDtoForPath` fallback; Input omits timestamps/deleted
+2. All stock/demo interceptors on `before_ud`/`after_ud`; `runBefore`/`runAfter` pub + router uses them
+**Tests**: zig build test-zf + test
+**Next**: keep-alive #25017
+
+---
+
+## 2026-07-31 — Docs/scaffold HttpError cleanup (should-fix)
+
+**Session**: Align SECURITY/AUDIT/templates; strip dead `fn err`
+**Changes**:
+1. SECURITY / PRODUCTION_AUDIT caller-owned CORS + HSTS cfg
+2. `zf new` user handler → extract / `return error.*`
+3. codegen drops `fn err`; heal strips unused legacy helper; ruoyi cleaned
+4. quickstart / codegen / java migration samples → HttpError
+**Tests**: zig build test-zf + test
+**Next**: keep-alive #25017; OpenAPI plural/$ref polish (nice)
+
+---
+
 ## 2026-07-31 — zf check --heal HttpError + CHANGELOG
 
 **Session**: Continue — heal ruoyi handlers, fix failHttp shadowing

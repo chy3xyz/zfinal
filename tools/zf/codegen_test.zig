@@ -800,3 +800,31 @@ test "openapi: zent Schema fields become DTOs" {
     try std.testing.expect(std.mem.indexOf(u8, yaml, "seller_id:") != null);
     try std.testing.expect(std.mem.indexOf(u8, yaml, "$ref: '#/components/schemas/ProductInput'") != null);
 }
+
+test "openapi: irregular plurals map to singular DTO $ref" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub const Category = struct {
+        \\    id: i64,
+        \\    name: []const u8,
+        \\    created_at: i64,
+        \\};
+        \\try app.get("/categories/:id", show);
+        \\try app.post("/categories", create);
+    ;
+    var spec = try openapi.parse(allocator, src);
+    defer spec.deinit();
+    try std.testing.expectEqualStrings("Category", spec.dtos.items[0].name);
+    try std.testing.expect(spec.dtos.items[0].fields.len >= 2);
+    const yaml = try openapi.renderYaml(allocator, spec);
+    defer allocator.free(yaml);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "$ref: '#/components/schemas/CategoryInput'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "$ref: '#/components/schemas/Category'") != null);
+    const input_start = std.mem.indexOf(u8, yaml, "\n  CategoryInput:\n").?;
+    const input_rest = yaml[input_start..];
+    const input_end = std.mem.indexOf(u8, input_rest, "\npaths:") orelse input_rest.len;
+    const input_block = input_rest[0..input_end];
+    try std.testing.expect(std.mem.indexOf(u8, input_block, "\n    name:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, input_block, "\n    id:") == null);
+    try std.testing.expect(std.mem.indexOf(u8, input_block, "\n    created_at:") == null);
+}

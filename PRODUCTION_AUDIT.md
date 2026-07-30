@@ -36,7 +36,7 @@
 3. Prefer `createRateLimitInterceptor` with `trusted_proxies` only behind known peers.
 4. Prefer `createCorsAllowlistInterceptor` — never ship `CORSInterceptor` (`*`) on credentialed APIs.
 5. Use **`createJwtAuthInterceptorWithOptions`** / `jwtVerifyWithOptions` — [`doc/session.md`](doc/session.md).
-6. Add **`createSecurityHeadersInterceptor(true)`** behind TLS termination; set `ENABLE_HSTS=1` when appropriate.
+6. Add **`createSecurityHeadersInterceptor`** with caller-owned `SecurityHeadersConfig{ .include_hsts = true }` behind TLS; set `ENABLE_HSTS=1` when appropriate.
 7. Add **`createRequestIdInterceptor()`** globally for trace correlation.
 8. Prefer SQLite or PG/MySQL (CI `drivers-live` exercises both).
 9. Do not use `zfinal.experimental.*` without an ADR.

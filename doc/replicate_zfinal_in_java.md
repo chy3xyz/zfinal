@@ -153,12 +153,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 → middleware/auth.zig:
 ```zig
 fn jwtBefore(ctx: *zfinal.Context) !bool {
-    const token = ctx.getHeader("Authorization") orelse {
-        ctx.res_status = .unauthorized;
-        try ctx.renderJson(.{ .err = "Missing token" });
-        return false; // stops the chain
-    };
+    const token = ctx.getHeader("Authorization") orelse return error.Unauthorized;
     // validate token, set ctx.attr("userId", ...)
+    _ = token;
     return true; // continue to handler
 }
 

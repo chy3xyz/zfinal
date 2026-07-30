@@ -77,7 +77,7 @@ ZFinal 0.8+ includes defense-in-depth security across multiple layers:
 - **SQL**: Use `Model` ORM or `execParams`/`queryParams`. Never concatenate user input into SQL strings.
 - **CSRF**: Apply `createTokenInterceptor` to all state-changing routes.
 - **Rate limiting**: Enable `RateLimitHandler` on public endpoints.
-- **CORS**: Do not use default `CORSInterceptor` (`*`) for credentialed APIs; use `createCorsInterceptor("https://app.example.com")`.
+- **CORS**: Do not use default `CORSInterceptor` (`*`) for credentialed APIs; use caller-owned `CorsAllowlistConfig` + `createCorsAllowlistInterceptor` (or `createCorsInterceptor` with the same config pointer).
 - **Auth**: `AuthInterceptor` only checks cookie presence — implement real JWT/session verification.
 - **TLS**: Terminate at reverse proxy; set proxy idle/read timeouts.
 - **Keep-alive**: Keep `force_connection_close=true`; client keep-alive at nginx/Caddy ([`doc/reverse_proxy.md`](doc/reverse_proxy.md)). Do not disable force-close in production to chase RPS.

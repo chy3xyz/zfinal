@@ -31,8 +31,8 @@ pub fn createSecurityHeadersInterceptor(cfg: *const SecurityHeadersConfig) zfina
 pub fn createRequestIdInterceptor() zfinal.Interceptor {
     return zfinal.Interceptor{
         .name = "request_id",
-        .before = struct {
-            fn before(ctx: *zfinal.Context) !bool {
+        .before_ud = struct {
+            fn before(ctx: *zfinal.Context, _: ?*anyopaque) !bool {
                 const id = if (ctx.getHeader("X-Request-Id")) |i|
                     try ctx.allocator.dupe(u8, i)
                 else

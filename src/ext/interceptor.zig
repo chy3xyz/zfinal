@@ -6,13 +6,13 @@ const IpExt = @import("ext_util.zig").IpExt;
 /// 性能监控拦截器
 pub fn createPerformanceInterceptor() zfinal.Interceptor {
     const Impl = struct {
-        fn before(ctx: *zfinal.Context) !bool {
+        fn before(ctx: *zfinal.Context, _: ?*anyopaque) !bool {
             const start_time = TimeKit.nowMillis();
             try ctx.setAttr("_start_time", try std.fmt.allocPrint(ctx.allocator, "{d}", .{start_time}));
             return true;
         }
 
-        fn after(ctx: *zfinal.Context) !void {
+        fn after(ctx: *zfinal.Context, _: ?*anyopaque) !void {
             if (ctx.getAttr("_start_time")) |start_str| {
                 defer ctx.allocator.free(start_str);
 
@@ -30,21 +30,19 @@ pub fn createPerformanceInterceptor() zfinal.Interceptor {
 
     return zfinal.Interceptor{
         .name = "performance",
-        .before = Impl.before,
-        .after = Impl.after,
+        .before_ud = Impl.before,
+        .after_ud = Impl.after,
     };
 }
 
 /// 异常处理拦截器
 pub fn createExceptionInterceptor() zfinal.Interceptor {
     const Impl = struct {
-        fn before(_: *zfinal.Context) !bool {
-            // 不需要 before 处理
+        fn before(_: *zfinal.Context, _: ?*anyopaque) !bool {
             return true;
         }
 
-        fn after(ctx: *zfinal.Context) !void {
-            // 异常已在 handler 中处理，这里可以记录日志
+        fn after(ctx: *zfinal.Context, _: ?*anyopaque) !void {
             if (ctx.res_status == .internal_server_error) {
                 std.debug.print("[Exception] Internal server error on {s}\n", .{ctx.req.head.target});
             }
@@ -53,21 +51,21 @@ pub fn createExceptionInterceptor() zfinal.Interceptor {
 
     return zfinal.Interceptor{
         .name = "exception",
-        .before = Impl.before,
-        .after = Impl.after,
+        .before_ud = Impl.before,
+        .after_ud = Impl.after,
     };
 }
 
 /// 请求日志拦截器（扩展版）
 pub fn createAccessLogInterceptor() zfinal.Interceptor {
     const Impl = struct {
-        fn before(ctx: *zfinal.Context) !bool {
+        fn before(ctx: *zfinal.Context, _: ?*anyopaque) !bool {
             const timestamp = TimeKit.now();
             try ctx.setAttr("_request_time", try std.fmt.allocPrint(ctx.allocator, "{d}", .{timestamp}));
             return true;
         }
 
-        fn after(ctx: *zfinal.Context) !void {
+        fn after(ctx: *zfinal.Context, _: ?*anyopaque) !void {
             const method = @tagName(ctx.req.head.method);
             const path = ctx.req.head.target;
             const status = @intFromEnum(ctx.res_status);
@@ -88,8 +86,8 @@ pub fn createAccessLogInterceptor() zfinal.Interceptor {
 
     return zfinal.Interceptor{
         .name = "access_log",
-        .before = Impl.before,
-        .after = Impl.after,
+        .before_ud = Impl.before,
+        .after_ud = Impl.after,
     };
 }
 

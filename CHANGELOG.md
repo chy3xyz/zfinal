@@ -3,14 +3,17 @@
 ### Added
 - **Caller-owned interceptor config**: factories take `*const Cfg` + `userdata` / `before_ud` (`JwtAuthConfig`, `CorsAllowlistConfig`, `TokenInterceptorConfig`, `SecurityHeadersConfig`, stock body-limit / timeout / compression). Removed public `heapCfg`.
 - **OpenAPI field-level DTOs**: `zf openapi` parses `pub const Name = struct` and zent `Schema("Name", field.*)` into `Name` / `NameInput` schemas with route `$ref`.
-- **Codegen `failHttp`**: generated handlers prefer HttpError (`failHttp` + `extract.requireParamInt`); legacy `err(..., code)` kept for numeric envelopes.
-- **`zf check --heal` HttpError migration**: patches old `handler*.zig` CSRF / not_found / validation / `parseId` patterns under `src/` and `examples/`.
+- **Codegen `failHttp`**: generated handlers use HttpError (`failHttp` + `extract.requireParamInt`); no dead `fn err`.
+- **`zf check --heal` HttpError migration**: patches CSRF / not_found / validation / `parseId`, and strips unused legacy `fn err`.
 - **`zf check` WARN**: `heapCfg(`, legacy JWT/HSTS by-value factories.
 
 ### Changed
+- **OpenAPI plural / `$ref`**: `categories`→`Category`, `boxes`→`Box`; raw-segment fallback; `*Input` omits `id`/`created_at`/`updated_at`/`create_time`/`update_time`/`deleted`.
+- **Interceptor `before_ud` convergence**: all stock/demo factories use `_ud`; `runBefore`/`runAfter` public and used by router 404 path; plain `before` kept as fallback.
+- **Docs / scaffold HttpError alignment**: `SECURITY.md` / `PRODUCTION_AUDIT` caller-owned CORS/HSTS; `zf new` user handler returns `HttpError`; quickstart/codegen/migration samples updated.
 - Cache interceptor: GET hit short-circuit; after-store only with `ctx.capture` (documented).
 - `examples/production` / `auth` / `smart-routing` use stack-owned interceptor configs.
-- `examples/ruoyi-gen` handlers healed to `failHttp` (param named `http_err` to avoid shadowing legacy `fn err`).
+- `examples/ruoyi-gen` handlers healed to `failHttp` only (dead `fn err` removed).
 
 ### Docs
 - `doc/http_ergonomics.md`, `doc/session.md`, `PRODUCTION_AUDIT.md`, `.life/evolution.md` updated for caller-owned cfg + heal.

@@ -57,8 +57,8 @@ pub fn createCompressionInterceptor(cfg: *const CompressionConfig) Interceptor {
 pub fn createTraceInterceptor() Interceptor {
     return .{
         .name = "trace",
-        .before = struct {
-            fn before(ctx: *Context) !bool {
+        .before_ud = struct {
+            fn before(ctx: *Context, _: ?*anyopaque) !bool {
                 const target = ctx.req.head.target;
                 const path = if (std.mem.indexOfScalar(u8, target, '?')) |q| target[0..q] else target;
                 try ctx.setExt(extension.TraceMeta, .{
@@ -68,8 +68,8 @@ pub fn createTraceInterceptor() Interceptor {
                 return true;
             }
         }.before,
-        .after = struct {
-            fn after(ctx: *Context) !void {
+        .after_ud = struct {
+            fn after(ctx: *Context, _: ?*anyopaque) !void {
                 const meta = ctx.ext(extension.TraceMeta);
                 const method = if (meta) |m| m.method else "?";
                 const path = if (meta) |m| m.path else "?";
@@ -89,8 +89,8 @@ pub fn createTraceInterceptor() Interceptor {
 pub fn createRequestIdExtInterceptor() Interceptor {
     return .{
         .name = "request_id_ext",
-        .before = struct {
-            fn before(ctx: *Context) !bool {
+        .before_ud = struct {
+            fn before(ctx: *Context, _: ?*anyopaque) !bool {
                 const rid = ctx.getAttr("request_id") orelse return true;
                 try extension.putOwned(&ctx.extensions, ctx.allocator, extension.RequestId, .{ .value = rid });
                 return true;

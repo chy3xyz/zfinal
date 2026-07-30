@@ -253,23 +253,15 @@ pub const handler_user_zig =
     \\}
     \\
     \\pub fn show(ctx: *zfinal.Context) !void {
-    \\    const id_str = ctx.getPathParam("id") orelse {
-    \\        ctx.res_status = .bad_request;
-    \\        return ctx.renderJson(.{ .err = "Missing ID" });
-    \\    };
-    \\    const id = std.fmt.parseInt(i64, id_str, 10) catch {
-    \\        ctx.res_status = .bad_request;
-    \\        return ctx.renderJson(.{ .err = "Invalid ID" });
-    \\    };
+    \\    const id = try zfinal.extract.requireParamInt(ctx, i64, "id");
     \\    _ = id; // TODO: lookup
-    \\    ctx.res_status = .not_found;
-    \\    try ctx.renderJson(.{ .err = "Not found" });
+    \\    return error.NotFound;
     \\}
     \\
     \\pub fn create(ctx: *zfinal.Context) !void {
     \\    const name = (try ctx.getPara("name")) orelse {
-    \\        ctx.res_status = .bad_request;
-    \\        return ctx.renderJson(.{ .err = "name required" });
+    \\        zfinal.http_error.setDetail(ctx, "name");
+    \\        return error.BadRequest;
     \\    };
     \\    _ = name; // TODO: persist
     \\    ctx.res_status = .created;
@@ -277,13 +269,13 @@ pub const handler_user_zig =
     \\}
     \\
     \\pub fn update(ctx: *zfinal.Context) !void {
-    \\    ctx.res_status = .not_found;
-    \\    try ctx.renderJson(.{ .err = "Not found" });
+    \\    _ = try zfinal.extract.requireParamInt(ctx, i64, "id");
+    \\    return error.NotFound;
     \\}
     \\
     \\pub fn delete(ctx: *zfinal.Context) !void {
-    \\    ctx.res_status = .not_found;
-    \\    try ctx.renderJson(.{ .err = "Not found" });
+    \\    _ = try zfinal.extract.requireParamInt(ctx, i64, "id");
+    \\    return error.NotFound;
     \\}
 ;
 

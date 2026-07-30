@@ -184,21 +184,12 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 ```
 
 ```zig
-// ZFinal interceptor
+// ZFinal interceptor — prefer return HttpError (dispatch maps to JSON)
 fn jwtBefore(ctx: *zfinal.Context) !bool {
     const token = ctx.getHeader("Authorization");
-    if (token == null or !std.mem.startsWith(u8, token.?, "Bearer ")) {
-        ctx.res_status = .unauthorized;
-        try ctx.renderJson(.{ .err = "Unauthorized" });
-        return false;
-    }
+    if (token == null or !std.mem.startsWith(u8, token.?, "Bearer ")) return error.Unauthorized;
     const jwt = token.?[7..];
-    if (!validateJwt(jwt)) {
-        ctx.res_status = .unauthorized;
-        try ctx.renderJson(.{ .err = "Invalid token" });
-        return false;
-    }
-    // Store user ID in context attributes
+    if (!validateJwt(jwt)) return error.Unauthorized;
     try ctx.setAttr("user_id", extractUserId(jwt));
     return true;
 }

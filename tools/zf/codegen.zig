@@ -745,12 +745,6 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\    return http_err;
         \\}}
         \\
-        \\/// Legacy envelope with app-specific numeric `code` (prefer failHttp / HttpError).
-        \\fn err(ctx: *zfinal.Context, status: std.http.Status, comptime msg: []const u8, code: i32) !void {{
-        \\    ctx.res_status = status;
-        \\    try ctx.renderJson(.{{ .err = msg, .code = code }});
-        \\}}
-        \\
         \\/// CSRF guard: validates csrf_token using TokenManager.
         \\fn csrfGuard(ctx: *zfinal.Context) !void {{
         \\    const token = try ctx.getPara("csrf_token") orelse return failHttp(ctx, error.Forbidden, "csrf_token");

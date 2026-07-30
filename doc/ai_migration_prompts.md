@@ -683,17 +683,12 @@ pub fn get(ctx: *zfinal.Context) !void {
     if (try ProductModel.findById(db, id, ctx.allocator)) |product| {
         try ctx.renderJson(.{ .data = product });
     } else {
-        ctx.res_status = .not_found;
-        try ctx.renderJson(.{ .error = "Product not found" });
+        return error.NotFound;
     }
 }
 
 pub fn create(ctx: *zfinal.Context) !void {
-    if (!std.mem.eql(u8, ctx.attr("role") orelse "", "admin")) {
-        ctx.res_status = .forbidden;
-        try ctx.renderJson(.{ .error = "Forbidden" });
-        return;
-    }
+    if (!std.mem.eql(u8, ctx.attr("role") orelse "", "admin")) return error.Forbidden;
 
     const db = try pool.acquire();
     defer pool.release(db) catch {};

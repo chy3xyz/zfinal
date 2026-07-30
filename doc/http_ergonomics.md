@@ -16,7 +16,8 @@ global interceptors → route interceptors → handler → after (reverse)
 - Interceptor factories take **caller-owned** `*const Cfg` (no `heapCfg` / no static `var`):
   `JwtAuthConfig`, `TokenInterceptorConfig`, `CorsAllowlistConfig`, `SecurityHeadersConfig`,
   `stock.BodyLimitConfig`, …
-- Prefer `before_ud` + `userdata` for new interceptors; plain `before` remains for zero-config layers.
+- Prefer `before_ud` + `userdata` for **all** interceptors (zero-config factories pass `_`);
+  plain `before`/`after` are a compatibility fallback. Dispatch uses `runBefore`/`runAfter` everywhere.
 - Migrate old generated handlers: `zf check --heal` injects `failHttp` / `extract.requireParamInt`
   (or regenerate with `zf crud:sql`).
 

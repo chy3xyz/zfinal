@@ -105,15 +105,15 @@ myproject/
 ```zig
 pub fn create(ctx: *zfinal.Context) !void {
     try csrfGuard(ctx);        // CSRF check
-    const db = try pool_ref.acquire();
-    defer pool_ref.release(db) catch {};
+    const db = try pool.acquire();
+    defer pool.release(db) catch {};
     // Parse fields from request...
     const data = Model.Data{ ... };
     const instance = service.create(db, data) catch |e| {
-        if (e == error.ValidationError) return err(ctx, .unprocessable, "Invalid data", 42201);
-        return err(ctx, .internal, "Server error", 50001);
+        if (e == error.ValidationError) return failHttp(ctx, error.UnprocessableEntity, "validation");
+        return e;
     };
-    try ctx.renderJson(.{ .data = instance });
+    try ctx.renderJson(.{ .ok = true, .id = instance.id });
 }
 ```
 

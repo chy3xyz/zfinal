@@ -6,13 +6,15 @@ const http_error = @import("../core/http_error.zig");
 
 pub const Handler = *const fn (*Context) anyerror!void;
 
-fn runBefore(interceptor: *const Interceptor, ctx: *Context) !bool {
+/// Prefer `before_ud` when set; else plain `before`; else continue.
+pub fn runBefore(interceptor: *const Interceptor, ctx: *Context) !bool {
     if (interceptor.before_ud) |f| return try f(ctx, interceptor.userdata);
     if (interceptor.before) |f| return try f(ctx);
     return true;
 }
 
-fn runAfter(interceptor: *const Interceptor, ctx: *Context) !void {
+/// Prefer `after_ud` when set; else plain `after`.
+pub fn runAfter(interceptor: *const Interceptor, ctx: *Context) !void {
     if (interceptor.after_ud) |f| {
         try f(ctx, interceptor.userdata);
         return;
@@ -21,10 +23,13 @@ fn runAfter(interceptor: *const Interceptor, ctx: *Context) !void {
 }
 
 /// Interceptor for AOP-style request handling.
-/// Prefer `before_ud`/`userdata` for per-instance config (no static `var`).
+/// Prefer `before_ud`/`after_ud` + `userdata` for all factories (zero-config layers pass `_`).
+/// Plain `before`/`after` remain as a compatibility fallback for hand-written literals.
 pub const Interceptor = struct {
     name: []const u8,
+    /// Legacy zero-arg hook — prefer `before_ud`.
     before: ?*const fn (*Context) anyerror!bool = null,
+    /// Legacy zero-arg hook — prefer `after_ud`.
     after: ?*const fn (*Context) anyerror!void = null,
     /// Opaque per-instance config; used when `before_ud` / `after_ud` are set.
     userdata: ?*anyopaque = null,
@@ -120,8 +125,16 @@ pub fn loggingAfter(ctx: *Context) !void {
 
 pub const LoggingInterceptor = Interceptor{
     .name = "logging",
-    .before = loggingBefore,
-    .after = loggingAfter,
+    .before_ud = struct {
+        fn f(ctx: *Context, _: ?*anyopaque) !bool {
+            return loggingBefore(ctx);
+        }
+    }.f,
+    .after_ud = struct {
+        fn f(ctx: *Context, _: ?*anyopaque) !void {
+            return loggingAfter(ctx);
+        }
+    }.f,
 };
 
 /// Demo-only auth: checks cookie `auth_token` **presence**, not validity.
@@ -137,7 +150,11 @@ pub fn authBefore(ctx: *Context) !bool {
 
 pub const AuthInterceptor = Interceptor{
     .name = "auth",
-    .before = authBefore,
+    .before_ud = struct {
+        fn f(ctx: *Context, _: ?*anyopaque) !bool {
+            return authBefore(ctx);
+        }
+    }.f,
 };
 
 /// Caller-owned JWT auth config (must outlive the Interceptor).
@@ -219,8 +236,16 @@ pub fn corsAfter(ctx: *Context) !void {
 
 pub const CORSInterceptor = Interceptor{
     .name = "cors",
-    .before = corsBefore,
-    .after = corsAfter,
+    .before_ud = struct {
+        fn f(ctx: *Context, _: ?*anyopaque) !bool {
+            return corsBefore(ctx);
+        }
+    }.f,
+    .after_ud = struct {
+        fn f(ctx: *Context, _: ?*anyopaque) !void {
+            return corsAfter(ctx);
+        }
+    }.f,
 };
 
 /// Caller-owned CORS allow-list (must outlive the Interceptor).

@@ -165,11 +165,9 @@ In `src/modules/users/handler.zig`, inside the `handler hooks` zone, add per-rou
 ```zig
 // ── ai-edit-zone: handler hooks ──────────────
 fn requireAuth(ctx: *zfinal.Context) !void {
-    const token = (try ctx.getHeader("Authorization")) orelse {
-        ctx.res_status = .unauthorized;
-        return ctx.renderJson(.{ .err = "Missing token" });
-    };
+    const token = (try ctx.getHeader("Authorization")) orelse return error.Unauthorized;
     // ...validate token...
+    _ = token;
 }
 // ──────────────────────────────────────────────
 ```

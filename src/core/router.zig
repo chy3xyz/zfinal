@@ -2,6 +2,7 @@ const std = @import("std");
 const Context = @import("context.zig").Context;
 const http_error = @import("http_error.zig");
 const InterceptorChain = @import("../interceptor/interceptor.zig").InterceptorChain;
+const runBefore = @import("../interceptor/interceptor.zig").runBefore;
 const io_instance = @import("../io_instance.zig");
 
 fn paramCacheIo() std.Io {
@@ -470,13 +471,7 @@ pub const Router = struct {
     pub fn execute(self: *Router, path: []const u8, method: HttpMethod, ctx: *Context) !void {
         const idx = self.matchIndex(path, method) orelse {
             for (self.global_interceptors.interceptors.items) |*interceptor| {
-                const cont = if (interceptor.before_ud) |f|
-                    try f(ctx, interceptor.userdata)
-                else if (interceptor.before) |f|
-                    try f(ctx)
-                else
-                    true;
-                if (!cont) return;
+                if (!(try runBefore(interceptor, ctx))) return;
             }
 
             var allow_buf: [8]HttpMethod = undefined;
