@@ -56,6 +56,12 @@ jobs:
         zf version
         zf help
 
+    - name: Smart routing check
+      run: |
+        export PATH="$PATH:$(pwd)/zig-out/bin"
+        zf routes --check --root examples/smart-routing/src/modules
+        zf routes --check --root examples/production/src/modules
+
   drivers-compile:
     name: Compile with PG + MySQL + zent
     runs-on: ubuntu-latest

@@ -228,7 +228,7 @@ pub fn handleCrudZent(
         std.debug.print("\n──── zf crud:zent plan (AI) ────\n", .{});
         std.debug.print("data_layer: zent (primary)\n", .{});
         std.debug.print("module path: {s}/{s}/\n", .{ out_root, schema.module });
-        std.debug.print("generated: model.zig, persistence.zig, service.zig, handler.zig, routes.zig\n", .{});
+        std.debug.print("generated: model.zig, persistence.zig, service.zig, handler.zig, actions.zig, routes.zig\n", .{});
         std.debug.print("ai-edit-zones:\n", .{});
         std.debug.print("  • model.zig        → model hooks (edges / privacy)\n", .{});
         std.debug.print("  • persistence.zig  → custom queries\n", .{});
@@ -247,7 +247,7 @@ pub fn handleCrudZent(
 
     if (dry_run) {
         std.debug.print("\n[dry-run] would write under {s}/{s}/:\n", .{ out_root, schema.module });
-        std.debug.print("  model.zig persistence.zig service.zig handler.zig routes.zig\n", .{});
+        std.debug.print("  model.zig persistence.zig service.zig handler.zig actions.zig routes.zig\n", .{});
         const boot = try zent_codegen.generateBootstrapSnippet(allocator, &schema);
         defer allocator.free(boot);
         std.debug.print("\n{s}\n", .{boot});
@@ -268,6 +268,8 @@ pub fn handleCrudZent(
     defer allocator.free(handler);
     const routes = try zent_codegen.generateRoutes(allocator, &schema);
     defer allocator.free(routes);
+    const actions = try zent_codegen.generateActions(allocator, &schema);
+    defer allocator.free(actions);
 
     const model_path = try std.fmt.allocPrint(allocator, "{s}/model.zig", .{mod_dir});
     defer allocator.free(model_path);
@@ -279,11 +281,14 @@ pub fn handleCrudZent(
     defer allocator.free(handler_path);
     const routes_path = try std.fmt.allocPrint(allocator, "{s}/routes.zig", .{mod_dir});
     defer allocator.free(routes_path);
+    const actions_path = try std.fmt.allocPrint(allocator, "{s}/actions.zig", .{mod_dir});
+    defer allocator.free(actions_path);
 
     try safeWrite(allocator, model_path, model, force);
     try safeWrite(allocator, persist_path, persist, force);
     try safeWrite(allocator, service_path, service, force);
     try safeWrite(allocator, handler_path, handler, force);
+    try safeWrite(allocator, actions_path, actions, force);
     try safeWrite(allocator, routes_path, routes, force);
 
     const boot = try zent_codegen.generateBootstrapSnippet(allocator, &schema);
@@ -491,6 +496,9 @@ fn emitJsonManifest(allocator: std.mem.Allocator, sql_path: []const u8, tables: 
         try buf.appendSlice(allocator, "        \"handler\": \"");
         try appendJsonString(allocator, &buf, table.name);
         try buf.appendSlice(allocator, "/handler.zig\",\n");
+        try buf.appendSlice(allocator, "        \"actions\": \"");
+        try appendJsonString(allocator, &buf, table.name);
+        try buf.appendSlice(allocator, "/actions.zig\",\n");
         try buf.appendSlice(allocator, "        \"routes\": \"");
         try appendJsonString(allocator, &buf, table.name);
         try buf.appendSlice(allocator, "/routes.zig\"\n");
@@ -499,7 +507,8 @@ fn emitJsonManifest(allocator: std.mem.Allocator, sql_path: []const u8, tables: 
         // AI edit zones
         try buf.appendSlice(allocator, "      \"ai_edit_zones\": [\n");
         try buf.appendSlice(allocator, "        { \"file\": \"service.zig\", \"markers\": [\"// ai-edit-zone: business rules\", \"// ai-edit-zone: validation\"], \"purpose\": \"custom business logic beyond generated CRUD\" },\n");
-        try buf.appendSlice(allocator, "        { \"file\": \"handler.zig\", \"markers\": [\"// ai-edit-zone: auth check\", \"// ai-edit-zone: response shaping\"], \"purpose\": \"per-route auth, response transformation\" }\n");
+        try buf.appendSlice(allocator, "        { \"file\": \"handler.zig\", \"markers\": [\"// ai-edit-zone: auth check\", \"// ai-edit-zone: response shaping\"], \"purpose\": \"per-route auth, response transformation\" },\n");
+        try buf.appendSlice(allocator, "        { \"file\": \"actions.zig\", \"markers\": [\"// ai-edit-zone: extra actions\"], \"purpose\": \"add custom routes; run zf routes\" }\n");
         try buf.appendSlice(allocator, "      ],\n");
 
         // Fields
@@ -689,7 +698,14 @@ fn writeGeneratedFiles(allocator: std.mem.Allocator, table: *codegen.Table, modu
     defer allocator.free(hdlr_path);
     try safeWrite(allocator, hdlr_path, hdlr, force_overwrite);
 
-    // Routes
+    // ── actions.zig (smart_routing true source) ──
+    const actions = try codegen.generateActions(allocator, table);
+    defer allocator.free(actions);
+    const actions_path = try std.fmt.allocPrint(allocator, "{s}/actions.zig", .{module_dir});
+    defer allocator.free(actions_path);
+    try safeWrite(allocator, actions_path, actions, force_overwrite);
+
+    // Routes (also regenerable via `zf routes` from actions.zig)
     const routes = try codegen.generateRoutes(allocator, table);
     defer allocator.free(routes);
     const routes_path = try std.fmt.allocPrint(allocator, "{s}/routes.zig", .{module_dir});

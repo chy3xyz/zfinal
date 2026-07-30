@@ -41,6 +41,29 @@ pub const Context = struct {
     cookies: ?std.StringHashMap([]const u8) = null,
     response_cookies: std.ArrayList(Cookie),
     response_headers: std.StringHashMap([]const u8),
+    /// App State from `ZFinal.setState` (type-erased; use `state(T)`).
+    app_state: @import("state.zig").Handle = .{},
+    /// Request-scoped typed Extensions (use `ext` / `setExt`).
+    extensions: @import("extension.zig").Bag = .{},
+    /// Optional detail for `HttpError` JSON envelope (not owned).
+    err_detail: ?[]const u8 = null,
+    /// True after a successful `respond` / streaming start (prevents double-render).
+    response_started: bool = false,
+    /// Client disconnected / write failed during streaming — stop writing.
+    client_gone: bool = false,
+    /// When set, `renderJson`/`renderText`/`renderHtml` write here instead of `req.respond` (in-process tests).
+    capture: ?*CapturedResponse = null,
+
+    pub const CapturedResponse = struct {
+        status: std.http.Status = .ok,
+        body: std.ArrayList(u8) = .empty,
+        allocator: std.mem.Allocator,
+
+        pub fn deinit(self: *CapturedResponse) void {
+            self.body.deinit(self.allocator);
+            self.* = undefined;
+        }
+    };
 
     pub const Cookie = struct {
         name: []const u8,
@@ -78,6 +101,8 @@ pub const Context = struct {
     }
 
     pub fn deinit(self: *Context) void {
+        self.extensions.deinit(self.allocator);
+
         // Owned key+value: free strings before deinit map
         var hdr_it = self.response_headers.iterator();
         while (hdr_it.next()) |e| {
@@ -240,6 +265,27 @@ pub const Context = struct {
         return null;
     }
 
+    /// Alias for `getPathParam` (smart_routing).
+    pub fn param(self: *Context, name: []const u8) ?[]const u8 {
+        return self.getPathParam(name);
+    }
+
+    /// Wildcard path param with `..` rejection (and empty). Returns null if missing;
+    /// returns `error.InvalidWildcardPath` if unsafe.
+    pub fn wildcardPath(self: *Context, name: []const u8) !?[]const u8 {
+        const value = self.getPathParam(name) orelse return null;
+        if (value.len == 0) return error.InvalidWildcardPath;
+        if (std.mem.eql(u8, value, "..") or std.mem.startsWith(u8, value, "../") or
+            std.mem.endsWith(u8, value, "/..") or std.mem.indexOf(u8, value, "/../") != null)
+        {
+            return error.InvalidWildcardPath;
+        }
+        if (value[0] == '/' or (value.len >= 2 and value[1] == ':')) {
+            return error.InvalidWildcardPath; // absolute / drive
+        }
+        return value;
+    }
+
     /// Get path parameter as integer
     pub fn getPathParamToInt(self: *Context, name: []const u8) !?i32 {
         const value = self.getPathParam(name) orelse return null;
@@ -267,6 +313,41 @@ pub const Context = struct {
 
     pub fn getAttrDefault(self: *Context, key: []const u8, default_value: []const u8) []const u8 {
         return self.attributes.get(key) orelse default_value;
+    }
+
+    /// Typed app State (`ZFinal.setState`). Returns `error.StateNotSet` / `StateTypeMismatch`.
+    pub fn state(self: *Context, comptime T: type) !*T {
+        return self.app_state.get(T);
+    }
+
+    pub fn stateOrNull(self: *Context, comptime T: type) ?*T {
+        return self.app_state.getOrNull(T);
+    }
+
+    /// Request-scoped typed Extension (Axum `Extension<T>`).
+    pub fn ext(self: *Context, comptime T: type) ?*T {
+        return self.extensions.get(T);
+    }
+
+    pub fn setExt(self: *Context, comptime T: type, value: T) !void {
+        try @import("extension.zig").putOwned(&self.extensions, self.allocator, T, value);
+    }
+
+    pub fn markResponded(self: *Context) void {
+        self.response_started = true;
+    }
+
+    /// Write SSE data; on `WriteFailed` sets `client_gone` and returns that error.
+    pub fn sseWrite(self: *Context, bw: *std.http.BodyWriter, data: []const u8) !void {
+        if (self.client_gone) return error.WriteFailed;
+        writeSseData(bw, data) catch |err| {
+            if (err == error.WriteFailed) self.client_gone = true;
+            return err;
+        };
+    }
+
+    pub fn isClientGone(self: *const Context) bool {
+        return self.client_gone;
     }
 
     // === Cookies ===
@@ -410,6 +491,13 @@ pub const Context = struct {
     }
 
     pub fn renderText(self: *Context, text: []const u8) !void {
+        if (self.response_started) return;
+        if (self.capture) |cap| {
+            cap.status = self.res_status;
+            try cap.body.appendSlice(self.allocator, text);
+            self.markResponded();
+            return;
+        }
         // Try gzip if client accepts and body is large enough to be worth compressing.
         const compressed = try self.compressBody(text);
         // If compressed, the slice is a fresh heap allocation we must free.
@@ -441,11 +529,20 @@ pub const Context = struct {
             .extra_headers = headers.items,
             .keep_alive = self.req.head.keep_alive,
         });
+        self.markResponded();
     }
 
     pub fn renderJson(self: *Context, data: anytype) !void {
+        if (self.response_started) return;
         const json = try std.json.Stringify.valueAlloc(self.allocator, data, .{});
         defer self.allocator.free(json);
+
+        if (self.capture) |cap| {
+            cap.status = self.res_status;
+            try cap.body.appendSlice(self.allocator, json);
+            self.markResponded();
+            return;
+        }
 
         const compressed = try self.compressBody(json);
         defer if (compressed.is_compressed) self.allocator.free(compressed.data);
@@ -477,9 +574,17 @@ pub const Context = struct {
             .extra_headers = headers.items,
             .keep_alive = self.req.head.keep_alive,
         });
+        self.markResponded();
     }
 
     pub fn renderHtml(self: *Context, html: []const u8) !void {
+        if (self.response_started) return;
+        if (self.capture) |cap| {
+            cap.status = self.res_status;
+            try cap.body.appendSlice(self.allocator, html);
+            self.markResponded();
+            return;
+        }
         const compressed = try self.compressBody(html);
         defer if (compressed.is_compressed) self.allocator.free(compressed.data);
 
@@ -510,6 +615,7 @@ pub const Context = struct {
             .extra_headers = headers.items,
             .keep_alive = self.req.head.keep_alive,
         });
+        self.markResponded();
     }
 
     // === SSE Streaming ===
@@ -533,7 +639,7 @@ pub const Context = struct {
         try self.appendSetCookieHeaders(&headers);
 
         var body_buf: [8192]u8 = undefined;
-        return try self.req.respondStreaming(&body_buf, .{
+        const bw = try self.req.respondStreaming(&body_buf, .{
             .content_length = null,
             .respond_options = .{
                 .status = self.res_status,
@@ -541,15 +647,40 @@ pub const Context = struct {
                 .transfer_encoding = .chunked,
             },
         });
+        self.markResponded();
+        return bw;
     }
 
     pub fn renderSSEError(self: *Context, msg: []const u8) !void {
         var bw = try self.renderSSE();
         defer bw.end() catch {};
-        const sse_data = try std.fmt.allocPrint(self.allocator, "data: {{\"err\": \"{s}\"}}\n\n", .{msg});
-        defer self.allocator.free(sse_data);
-        try bw.writer.writeAll(sse_data);
+        var buf: [512]u8 = undefined;
+        // Keep payload simple JSON; callers can write richer frames via writeSse*.
+        const payload = std.fmt.bufPrint(&buf, "{{\"err\":\"{s}\"}}", .{msg}) catch "{\"err\":\"error\"}";
+        try Context.writeSseData(&bw, payload);
         try bw.flush();
+    }
+
+    /// Write one SSE `data:` frame (adds trailing `\n\n`).
+    pub fn writeSseData(bw: *std.http.BodyWriter, data: []const u8) !void {
+        try bw.writer.writeAll("data: ");
+        try bw.writer.writeAll(data);
+        try bw.writer.writeAll("\n\n");
+    }
+
+    /// Write SSE frame with optional `event:` name.
+    pub fn writeSseEvent(bw: *std.http.BodyWriter, event: []const u8, data: []const u8) !void {
+        try bw.writer.writeAll("event: ");
+        try bw.writer.writeAll(event);
+        try bw.writer.writeAll("\n");
+        try writeSseData(bw, data);
+    }
+
+    /// SSE comment line (`: …`) — useful as keepalive.
+    pub fn writeSseComment(bw: *std.http.BodyWriter, comment: []const u8) !void {
+        try bw.writer.writeAll(": ");
+        try bw.writer.writeAll(comment);
+        try bw.writer.writeAll("\n\n");
     }
 
     // === JSON Body ===
@@ -637,6 +768,7 @@ pub const Context = struct {
     }
 
     pub fn renderFile(self: *Context, path: []const u8, download_name: ?[]const u8) !void {
+        if (self.response_started) return;
         if (!isSafeDownloadPath(path)) return error.PathTraversal;
         const io_instance = @import("../io_instance.zig");
         const file = try std.Io.Dir.cwd().openFile(io_instance.io, path, .{});
@@ -682,11 +814,13 @@ pub const Context = struct {
             .status = self.res_status,
             .extra_headers = headers.items,
         });
+        self.markResponded();
     }
 
     /// 渲染 CSV 响应，自动设置 Content-Type: text/csv 和下载文件名
     /// 使用 zfinal.CsvKit 生成的 []u8 内容直接返回
     pub fn renderCsv(self: *Context, data: []const u8, download_name: []const u8) !void {
+        if (self.response_started) return;
         var headers = std.ArrayList(std.http.Header).empty;
         defer headers.deinit(self.allocator);
 
@@ -706,16 +840,19 @@ pub const Context = struct {
             .status = self.res_status,
             .extra_headers = headers.items,
         });
+        self.markResponded();
     }
 
     /// Send a 302 redirect response to the given URL.
     pub fn redirect(self: *Context, url: []const u8) !void {
+        if (self.response_started) return;
         try self.req.respond("", .{
             .status = .found,
             .extra_headers = &.{
                 .{ .name = "Location", .value = url },
             },
         });
+        self.markResponded();
     }
 };
 
@@ -778,4 +915,30 @@ test "context: setCookie defaults HttpOnly+SameSite" {
     try std.testing.expect(!c.secure);
     try std.testing.expectEqualStrings("sid", c.name);
     try std.testing.expectEqualStrings("abc", c.value);
+}
+
+test "context: second render is no-op when response_started" {
+    const a = std.testing.allocator;
+    var cap: Context.CapturedResponse = .{ .allocator = a };
+    defer cap.deinit();
+    var ctx: Context = .{
+        .req = undefined,
+        .allocator = a,
+        .attributes = .init(a),
+        .response_cookies = .empty,
+        .response_headers = .init(a),
+        .capture = &cap,
+        .compress_enabled = false,
+    };
+    defer {
+        ctx.attributes.deinit();
+        ctx.response_headers.deinit();
+        ctx.response_cookies.deinit(a);
+    }
+
+    try ctx.renderText("first");
+    try ctx.renderText("second");
+    try ctx.renderJson(.{ .ignored = true });
+    try std.testing.expect(ctx.response_started);
+    try std.testing.expectEqualStrings("first", cap.body.items);
 }

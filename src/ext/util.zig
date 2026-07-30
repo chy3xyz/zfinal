@@ -11,12 +11,10 @@ pub const RenderExt = struct {
         });
     }
 
-    /// 渲染错误响应
+    /// 渲染错误响应（统一 HttpError 信封）
     pub fn err(ctx: *zfinal.Context, message: []const u8) !void {
-        try ctx.renderJson(.{
-            .success = false,
-            .err = message,
-        });
+        zfinal.http_error.setDetail(ctx, message);
+        try zfinal.http_error.render(ctx, error.BadRequest);
     }
 
     /// 渲染分页响应
@@ -38,13 +36,12 @@ pub const RenderExt = struct {
 
 /// 参数验证扩展
 pub const ParamExt = struct {
-    /// 获取必需参数
+    /// 获取必需参数（失败 → HttpError.BadRequest，由 dispatch 渲染）
     pub fn require(ctx: *zfinal.Context, name: []const u8) ![]const u8 {
         const value = try ctx.getPara(name);
         return value orelse {
-            ctx.res_status = .bad_request;
-            try ctx.renderJson(.{ .err = "Missing required parameter" });
-            return error.MissingParameter;
+            zfinal.http_error.setDetail(ctx, name);
+            return error.BadRequest;
         };
     }
 
@@ -52,9 +49,8 @@ pub const ParamExt = struct {
     pub fn requireInt(ctx: *zfinal.Context, name: []const u8) !i64 {
         const value = try require(ctx, name);
         return std.fmt.parseInt(i64, value, 10) catch {
-            ctx.res_status = .bad_request;
-            try ctx.renderJson(.{ .err = "Invalid integer parameter" });
-            return error.InvalidParameter;
+            zfinal.http_error.setDetail(ctx, name);
+            return error.BadRequest;
         };
     }
 

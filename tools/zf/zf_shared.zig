@@ -37,7 +37,7 @@ pub fn capitalizeOwned(allocator: std.mem.Allocator, str: []const u8) ![]const u
     return result;
 }
 
-pub fn hasFlag(args: [][]const u8, flag: []const u8) bool {
+pub fn hasFlag(args: []const []const u8, flag: []const u8) bool {
     for (args) |arg| {
         if (std.mem.eql(u8, arg, flag)) return true;
     }

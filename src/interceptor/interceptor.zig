@@ -2,6 +2,7 @@ const std = @import("std");
 const Context = @import("../core/context.zig").Context;
 const jwt = @import("../auth/jwt.zig");
 const audit = @import("../core/audit.zig");
+const http_error = @import("../core/http_error.zig");
 
 pub const Handler = *const fn (*Context) anyerror!void;
 
@@ -134,9 +135,8 @@ pub const LoggingInterceptor = Interceptor{
 pub fn authBefore(ctx: *Context) !bool {
     const token = try ctx.getCookie("auth_token");
     if (token == null) {
-        ctx.res_status = .unauthorized;
-        try ctx.renderJson(.{ .err = "Unauthorized" });
-        return false;
+        http_error.setDetail(ctx, "auth_token");
+        return error.Unauthorized;
     }
     return true;
 }
@@ -159,15 +159,13 @@ pub fn createJwtAuthInterceptorWithOptions(secret: []const u8, opts: jwt.VerifyO
 
         fn before(ctx: *Context) !bool {
             const hdr = ctx.getHeader("Authorization") orelse {
-                ctx.res_status = .unauthorized;
-                try ctx.renderJson(.{ .err = "Missing Authorization" });
-                return false;
+                http_error.setDetail(ctx, "Authorization");
+                return error.Unauthorized;
             };
             const prefix = "Bearer ";
             if (hdr.len <= prefix.len or !std.ascii.eqlIgnoreCase(hdr[0..prefix.len], prefix)) {
-                ctx.res_status = .unauthorized;
-                try ctx.renderJson(.{ .err = "Expected Bearer token" });
-                return false;
+                http_error.setDetail(ctx, "Authorization");
+                return error.Unauthorized;
             }
             const token = hdr[prefix.len..];
             var ts: std.c.timespec = undefined;
@@ -180,15 +178,18 @@ pub fn createJwtAuthInterceptorWithOptions(secret: []const u8, opts: jwt.VerifyO
                 else
                     ctx.req.head.target;
                 audit.log(.auth_fail, path, "jwt");
-                ctx.res_status = .unauthorized;
-                try ctx.renderJson(.{ .err = "Invalid or expired token" });
-                return false;
+                http_error.setDetail(ctx, "jwt");
+                return error.Unauthorized;
             };
             defer jwt.freeClaims(ctx.allocator, claims);
             try ctx.setAttr("jwt_sub", claims.sub);
             if (claims.role) |role| {
                 try ctx.setAttr("jwt_role", role);
             }
+            try ctx.setExt(@import("../core/extension.zig").JwtIdentity, .{
+                .sub = ctx.getAttr("jwt_sub").?,
+                .role = ctx.getAttr("jwt_role") orelse "",
+            });
             return true;
         }
     };

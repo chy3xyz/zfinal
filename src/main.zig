@@ -13,6 +13,13 @@ test {
     _ = @import("auth/jwt.zig");
     _ = @import("version.zig");
     _ = @import("core/keepalive_safety.zig");
+    _ = @import("core/http_error.zig");
+    _ = @import("core/extract.zig");
+    _ = @import("core/state.zig");
+    _ = @import("core/tenant.zig");
+    _ = @import("core/extension.zig");
+    _ = @import("core/stock_interceptors.zig");
+    _ = @import("core/oneshot.zig");
 }
 
 // Export core modules
@@ -22,6 +29,14 @@ pub const Context = @import("core/context.zig").Context;
 pub const Router = @import("core/router.zig").Router;
 pub const Handler = @import("core/router.zig").Handler;
 pub const HttpMethod = @import("core/router.zig").HttpMethod;
+pub const HttpError = @import("core/http_error.zig").HttpError;
+pub const http_error = @import("core/http_error.zig");
+pub const extract = @import("core/extract.zig");
+pub const state = @import("core/state.zig");
+pub const tenant = @import("core/tenant.zig");
+pub const extension = @import("core/extension.zig");
+pub const oneshot = @import("core/oneshot.zig");
+pub const stock = @import("core/stock_interceptors.zig");
 pub const Server = @import("core/server.zig").Server;
 pub const StaticAdmin = @import("core/static_admin.zig");
 pub const ServerConfig = @import("core/server.zig").ServerConfig;

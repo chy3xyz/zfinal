@@ -1,12 +1,10 @@
-//! L3 ports demo — tenant header + outbox + store/cache/bus DI.
+//! L3 ports demo — comptime `app_id` + setState + outbox + store/cache/bus.
 //!
 //! ```
 //! zig build run-ports-l3
-//! curl -X POST localhost:8089/orders -H 'X-Tenant-Id: acme' -d '{"id":"o1","sku":"A"}'
-//! curl localhost:8089/orders/o1 -H 'X-Tenant-Id: acme'
+//! curl -X POST localhost:8089/orders -H 'X-App-Id: acme' -d '{"id":"o1","sku":"A"}'
+//! curl localhost:8089/orders/o1 -H 'X-App-Id: acme'
 //! ```
-//!
-//! See doc/progressive_architecture.md (L3)
 
 const std = @import("std");
 const zfinal = @import("zfinal");
@@ -17,49 +15,32 @@ const MemoryBus = @import("adapters/memory_bus.zig").MemoryBus;
 const MemoryOutbox = @import("adapters/memory_outbox.zig").MemoryOutbox;
 const OrdersService = @import("service/orders.zig").OrdersService;
 
-var g_orders: OrdersService = undefined;
-
-fn tenantFromHeader(ctx: *zfinal.Context) ?[]const u8 {
-    return ctx.getHeader("X-Tenant-Id");
-}
+const AppState = struct {
+    orders: *OrdersService,
+};
 
 fn placeHandler(ctx: *zfinal.Context) !void {
-    const tenant = tenantFromHeader(ctx) orelse {
-        ctx.res_status = .bad_request;
-        try ctx.renderJson(.{ .err = "missing X-Tenant-Id" });
-        return;
-    };
+    const st = try ctx.state(AppState);
+    const tenant = try zfinal.extract.requireTenant(ctx, zfinal.tenant.app_id);
     const body = try ctx.getBodyText();
     defer ctx.allocator.free(body);
-    if (body.len == 0) {
-        ctx.res_status = .bad_request;
-        try ctx.renderJson(.{ .err = "empty body" });
-        return;
-    }
+    if (body.len == 0) return error.BadRequest;
     const order_id = try ctx.getParaDefault("id", "demo");
     const idem = try ctx.getParaDefault("idempotency_key", order_id);
-    try g_orders.placeOrder(ctx.allocator, tenant, order_id, idem, body);
-    try ctx.renderJson(.{ .ok = true, .tenant = tenant, .id = order_id });
+    try st.orders.placeOrder(ctx.allocator, tenant, order_id, idem, body);
+    try ctx.renderJson(.{ .ok = true, .app_id = tenant, .id = order_id });
 }
 
 fn getHandler(ctx: *zfinal.Context) !void {
-    const tenant = tenantFromHeader(ctx) orelse {
-        ctx.res_status = .bad_request;
-        try ctx.renderJson(.{ .err = "missing X-Tenant-Id" });
-        return;
-    };
-    const id = ctx.getPathParam("id") orelse {
-        ctx.res_status = .bad_request;
-        try ctx.renderJson(.{ .err = "missing id" });
-        return;
-    };
-    const row = try g_orders.getOrder(ctx.allocator, tenant, id);
+    const st = try ctx.state(AppState);
+    const tenant = try zfinal.extract.requireAppId(ctx);
+    const id = try zfinal.extract.requireParam(ctx, "id");
+    const row = try st.orders.getOrder(ctx.allocator, tenant, id);
     if (row) |r| {
         defer ctx.allocator.free(r);
         try ctx.renderText(r);
     } else {
-        ctx.res_status = .not_found;
-        try ctx.renderJson(.{ .err = "not found" });
+        return error.NotFound;
     }
 }
 
@@ -76,25 +57,28 @@ pub fn main(init: std.process.Init) !void {
     var outbox_a = MemoryOutbox{ .allocator = allocator };
     defer outbox_a.deinit();
 
-    g_orders = .{
+    var orders: OrdersService = .{
         .store = store_a.port(),
         .cache = cache_a.port(),
         .bus = bus_a.port(),
         .outbox = outbox_a.port(),
     };
+    var app_state: AppState = .{ .orders = &orders };
 
     var app = zfinal.ZFinal.init(allocator);
     defer app.deinit();
     app.setConfig(.{ .port = 8089 });
+    app.setState(AppState, &app_state);
 
+    try app.addGlobalInterceptor(zfinal.stock.createTraceInterceptor());
     try app.post("/orders", placeHandler);
     try app.get("/orders/:id", getHandler);
     try app.get("/health", struct {
         fn h(ctx: *zfinal.Context) !void {
-            try ctx.renderJson(.{ .status = "ok", .demo = "ports-l3" });
+            try ctx.renderJson(.{ .status = "ok", .demo = "ports-l3", .tenant_field = zfinal.tenant.app_id.field_name });
         }
     }.h);
 
-    std.log.info("ports-l3 listening on :8089 (tenant + outbox + bus)", .{});
+    std.log.info("ports-l3 listening on :8089 (setState + comptime app_id + trace)", .{});
     try app.start();
 }

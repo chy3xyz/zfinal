@@ -56,6 +56,7 @@ Runnable demo in [`examples/ai-blog-5min/`](../examples/ai-blog-5min/ZF_GEN.md).
 | Build a complete app from scratch | [`.claude/skills/zfinal-app.md`](../.claude/skills/zfinal-app.md) |
 | Add a module to the framework | [`.claude/skills/zfinal-framework.md`](../.claude/skills/zfinal-framework.md) |
 | Follow architecture best practices | [architecture_best_practices.md](architecture_best_practices.md) |
+| Smart routing (REST + actions.zig) | [smart_routing.md](smart_routing.md) |
 | Scale to millions of users (ops topology) | [scale_to_millions.md](scale_to_millions.md) |
 | Reverse proxy + force close (keep-alive) | [reverse_proxy.md](reverse_proxy.md) |
 | Progressive code architecture L0→L3 | [progressive_architecture.md](progressive_architecture.md) |
@@ -68,6 +69,7 @@ Runnable demo in [`examples/ai-blog-5min/`](../examples/ai-blog-5min/ZF_GEN.md).
 | You want to… | Read |
 |--------------|------|
 | Architecture best practices (layers, plugins, AI boundaries) | [architecture_best_practices.md](architecture_best_practices.md) |
+| Smart routing best practices (actions.zig / nested / wildcard) | [smart_routing.md](smart_routing.md) |
 | Scale-out for millions of users | [scale_to_millions.md](scale_to_millions.md) |
 | nginx/Caddy + force Connection: close | [reverse_proxy.md](reverse_proxy.md) |
 | Progressive app architecture (L0→L3) | [progressive_architecture.md](progressive_architecture.md) |
@@ -81,6 +83,7 @@ Runnable demo in [`examples/ai-blog-5min/`](../examples/ai-blog-5min/ZF_GEN.md).
 | Use the utility kits | [kits.md](kits.md) |
 | Compare with JFinal (Java inspiration) | [jfinal_comparison.md](jfinal_comparison.md) |
 | Migrate a legacy Java/PHP/Go/Rust project | [java_migration.md](java_migration.md) |
+| Use State / extract / HttpError / oneshot | [http_ergonomics.md](http_ergonomics.md) |
 | Use the `zf` CLI | [zf_cli.md](zf_cli.md) |
 | Build an HTMX-driven UI | [htmx_template.md](htmx_template.md) |
 | Follow a full tutorial (Life3 app) | [tutorial_life3.md](tutorial_life3.md) |

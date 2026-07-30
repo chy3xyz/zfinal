@@ -174,6 +174,8 @@ pub const ConnectionPool = struct {
             // Ping OUTSIDE the pool mutex — a blocking driver ping must not
             // serialize every other worker thread.
             if (candidate.ping()) {
+                // Mark checked-out before handing to the caller so a racing
+                // release/double-path can detect ownership.
                 candidate.checkOut();
                 return candidate;
             }
@@ -188,12 +190,32 @@ pub const ConnectionPool = struct {
     pub fn release(self: *ConnectionPool, conn: *DB) !void {
         mutex_init.lockMut(&self.mutex);
         defer {
-            mutex_init.signalCond(&self.cond);
+            // Wake all waiters. `signal` is enough for one returned conn in the
+            // textbook sense, but under bursty acquire/release a single signal
+            // + timedwait/spurious-wake interplay is harder to reason about.
+            // Broadcast is cheap here (waiters re-check `available` under the
+            // same mutex) and matches destroy/keepAlive. Note: condvar wake
+            // policy does **not** by itself cause process Abort — that usually
+            // means heap/magic panic or double-use of a driver connection.
+            mutex_init.broadcastCond(&self.cond);
             mutex_init.unlockMut(&self.mutex);
         }
 
+        // Double-release would append the same *DB twice → two acquire()s get
+        // one MySQL/PG handle → libmysql abort / magic corruption under load.
+        if (!conn.checked_out) {
+            logger.getLogger().errFmt("ConnectionPool.release: connection not checked out (double release?)", .{});
+            return error.AlreadyReleased;
+        }
+        for (self.available.items) |item| {
+            if (item == conn) {
+                logger.getLogger().errFmt("ConnectionPool.release: connection already in available list", .{});
+                return error.AlreadyReleased;
+            }
+        }
+
         try self.available.append(self.allocator, conn);
-        conn.checkIn(); // mark as available only after it is back in the pool
+        conn.checkIn();
     }
 
     pub fn keepAlive(self: *ConnectionPool) void {

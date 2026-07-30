@@ -108,6 +108,7 @@ pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Spec {
     while (lines2.next()) |raw_line| {
         const line = std.mem.trim(u8, raw_line, " \t\r");
         if (try collectRoute(allocator, line, &prefixes, &spec)) continue;
+        _ = try collectActionKeyRoute(allocator, line, &spec);
     }
 
     dedupe(&spec);
@@ -183,6 +184,34 @@ fn collectRoute(
         return true;
     }
     return false;
+}
+
+/// Scan `actions.zig` lines: `.action_key = "/path"` (+ optional `.method = .GET`).
+fn collectActionKeyRoute(allocator: std.mem.Allocator, line: []const u8, spec: *Spec) !bool {
+    const key_pos = std.mem.indexOf(u8, line, ".action_key") orelse return false;
+    const after = line[key_pos..];
+    const path_lit = extractFirstStringLiteral(allocator, after) orelse return false;
+    if (path_lit.len == 0 or path_lit[0] != '/') {
+        allocator.free(path_lit);
+        return false;
+    }
+    const method: HttpMethod = blk: {
+        // Prefer method on the same line (actions table row)
+        if (std.mem.indexOf(u8, line, ".method")) |mp| {
+            const win = line[mp..@min(line.len, mp + 24)];
+            if (std.mem.indexOf(u8, win, ".GET")) |_| break :blk .GET;
+            if (std.mem.indexOf(u8, win, ".POST")) |_| break :blk .POST;
+            if (std.mem.indexOf(u8, win, ".PUT")) |_| break :blk .PUT;
+            if (std.mem.indexOf(u8, win, ".PATCH")) |_| break :blk .PATCH;
+            if (std.mem.indexOf(u8, win, ".DELETE")) |_| break :blk .DELETE;
+        }
+        break :blk .POST;
+    };
+    const normalized = try normalizePath(allocator, path_lit);
+    allocator.free(path_lit);
+    errdefer allocator.free(normalized);
+    try spec.routes.append(allocator, .{ .method = method, .path = normalized });
+    return true;
 }
 
 /// Find the offset of `.<mname>(` in `line`. Accepts any match — downstream
@@ -355,6 +384,18 @@ pub fn renderYaml(allocator: std.mem.Allocator, spec: Spec) ![]u8 {
     try appendIndented(allocator, &out, 3, "type: http\n");
     try appendIndented(allocator, &out, 3, "scheme: bearer\n");
     try appendIndented(allocator, &out, 3, "bearerFormat: JWT\n");
+    try appendIndented(allocator, &out, 1, "schemas:\n");
+    try appendIndented(allocator, &out, 2, "HttpError:\n");
+    try appendIndented(allocator, &out, 3, "type: object\n");
+    try appendIndented(allocator, &out, 3, "required: [err, msg]\n");
+    try appendIndented(allocator, &out, 3, "properties:\n");
+    try appendIndented(allocator, &out, 4, "err:\n");
+    try appendIndented(allocator, &out, 5, "type: string\n");
+    try appendIndented(allocator, &out, 5, "description: machine code (bad_request, unauthorized, ...)\n");
+    try appendIndented(allocator, &out, 4, "msg:\n");
+    try appendIndented(allocator, &out, 5, "type: string\n");
+    try appendIndented(allocator, &out, 4, "detail:\n");
+    try appendIndented(allocator, &out, 5, "type: string\n");
     try out.appendSlice(allocator, "paths:\n");
 
     // Group routes by path. spec.routes is already sorted, so first-occurrence
@@ -410,14 +451,38 @@ pub fn renderYaml(allocator: std.mem.Allocator, spec: Spec) ![]u8 {
             try appendIndented(allocator, &out, 5, "description: OK\n");
             try appendIndented(allocator, &out, 4, "'400':\n");
             try appendIndented(allocator, &out, 5, "description: Bad Request\n");
+            try appendIndented(allocator, &out, 5, "content:\n");
+            try appendIndented(allocator, &out, 6, "application/json:\n");
+            try appendIndented(allocator, &out, 7, "schema:\n");
+            try appendIndented(allocator, &out, 8, "$ref: '#/components/schemas/HttpError'\n");
             if (r.method != .GET) {
                 try appendIndented(allocator, &out, 4, "'401':\n");
                 try appendIndented(allocator, &out, 5, "description: Unauthorized\n");
+                try appendIndented(allocator, &out, 5, "content:\n");
+                try appendIndented(allocator, &out, 6, "application/json:\n");
+                try appendIndented(allocator, &out, 7, "schema:\n");
+                try appendIndented(allocator, &out, 8, "$ref: '#/components/schemas/HttpError'\n");
             }
             if (params.len > 0) {
                 try appendIndented(allocator, &out, 4, "'404':\n");
                 try appendIndented(allocator, &out, 5, "description: Not Found\n");
+                try appendIndented(allocator, &out, 5, "content:\n");
+                try appendIndented(allocator, &out, 6, "application/json:\n");
+                try appendIndented(allocator, &out, 7, "schema:\n");
+                try appendIndented(allocator, &out, 8, "$ref: '#/components/schemas/HttpError'\n");
             }
+            try appendIndented(allocator, &out, 4, "'422':\n");
+            try appendIndented(allocator, &out, 5, "description: Unprocessable Entity\n");
+            try appendIndented(allocator, &out, 5, "content:\n");
+            try appendIndented(allocator, &out, 6, "application/json:\n");
+            try appendIndented(allocator, &out, 7, "schema:\n");
+            try appendIndented(allocator, &out, 8, "$ref: '#/components/schemas/HttpError'\n");
+            try appendIndented(allocator, &out, 4, "'429':\n");
+            try appendIndented(allocator, &out, 5, "description: Too Many Requests\n");
+            try appendIndented(allocator, &out, 5, "content:\n");
+            try appendIndented(allocator, &out, 6, "application/json:\n");
+            try appendIndented(allocator, &out, 7, "schema:\n");
+            try appendIndented(allocator, &out, 8, "$ref: '#/components/schemas/HttpError'\n");
             i += 1;
         }
     }

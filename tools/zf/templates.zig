@@ -216,10 +216,10 @@ pub const routes_zig =
     \\
     \\    // User endpoints — replace with real handlers
     \\    try app.get("/api/v1/users", handler.user.list);
-    \\    try app.get("/api/v1/users/{id}", handler.user.show);
+    \\    try app.get("/api/v1/users/:id", handler.user.show);
     \\    try app.post("/api/v1/users", handler.user.create);
-    \\    try app.put("/api/v1/users/{id}", handler.user.update);
-    \\    try app.delete("/api/v1/users/{id}", handler.user.delete);
+    \\    try app.put("/api/v1/users/:id", handler.user.update);
+    \\    try app.delete("/api/v1/users/:id", handler.user.delete);
     \\
     \\    // Attach middleware to protected routes
     \\    try app.addGlobalMiddleware(middleware.logging);

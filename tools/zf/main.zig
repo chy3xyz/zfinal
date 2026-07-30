@@ -11,6 +11,7 @@ const ensureDir = zf_shared.ensureDir;
 const cmd_migrate = @import("cmd_migrate.zig");
 const cmd_openapi = @import("cmd_openapi.zig");
 const cmd_check = @import("cmd_check.zig");
+const cmd_routes = @import("cmd_routes.zig");
 const cmd_crud = @import("cmd_crud.zig");
 const cmd_fixture = @import("cmd_fixture.zig");
 const cmd_bench = @import("cmd_bench.zig");
@@ -60,6 +61,7 @@ const Command = enum {
     bench,
     ai,
     openapi,
+    routes,
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -360,6 +362,9 @@ pub fn main(init: std.process.Init) !void {
             }
             try handleOpenapi(allocator, out_path);
         },
+        .routes => {
+            try cmd_routes.handleRoutes(allocator, args);
+        },
     }
 }
 
@@ -389,6 +394,7 @@ fn parseCommand(cmd: []const u8) ?Command {
     if (std.mem.eql(u8, cmd, "bench")) return .bench;
     if (std.mem.eql(u8, cmd, "ai")) return .ai;
     if (std.mem.eql(u8, cmd, "openapi")) return .openapi;
+    if (std.mem.eql(u8, cmd, "routes")) return .routes;
     return null;
 }
 
@@ -420,6 +426,8 @@ fn printHelp(exe_name: []const u8) void {
     std.debug.print("  test, t                 Run tests (zig build test)\n", .{});
     std.debug.print("  version, v              Show version information\n", .{});
     std.debug.print("  openapi [--out <file>]  Generate minimal OpenAPI 3.0.3 spec from project routes\n", .{});
+    std.debug.print("  routes [--json] [--check] [--root DIR]\n", .{});
+    std.debug.print("                            Generate routes.zig from modules/**/actions.zig\n", .{});
     std.debug.print("  help, h                 Show this help message\n", .{});
     std.debug.print("\n", .{});
     std.debug.print("Examples:\n", .{});

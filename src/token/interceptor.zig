@@ -3,6 +3,7 @@ const Interceptor = @import("../interceptor/interceptor.zig").Interceptor;
 const Context = @import("../core/context.zig").Context;
 const TokenManager = @import("token.zig").TokenManager;
 const audit = @import("../core/audit.zig");
+const http_error = @import("../core/http_error.zig");
 
 /// Token 拦截器配置
 pub const TokenInterceptorConfig = struct {
@@ -25,18 +26,16 @@ pub fn createTokenInterceptor(config: TokenInterceptorConfig) Interceptor {
             // 获取 Token
             const token_value = try ctx.getPara(cfg.token_name) orelse {
                 audit.log(.csrf_reject, path, "missing");
-                ctx.res_status = .bad_request;
-                try ctx.renderJson(.{ .@"error" = "Missing token" });
-                return false;
+                http_error.setDetail(ctx, cfg.token_name);
+                return error.BadRequest;
             };
 
             // 验证 Token
             const valid = try cfg.token_manager.validate(token_value);
             if (!valid) {
                 audit.log(.csrf_reject, path, "invalid");
-                ctx.res_status = .bad_request;
-                try ctx.renderJson(.{ .@"error" = cfg.error_message });
-                return false;
+                http_error.setDetail(ctx, cfg.error_message);
+                return error.BadRequest;
             }
             return true;
         }

@@ -3,20 +3,20 @@
 //! CORS allow-list, security headers, request ID, idle/read timeouts,
 //! graceful shutdown.
 //!
+//! API routes: `src/modules/api/actions.zig` → `zf routes` → `routes.zig`.
+//! App deps via `app.setState(AppState, …)` / `ctx.state(AppState)`.
 //! See PRODUCTION_AUDIT.md deployment contract (contractual 9.8).
 
 const std = @import("std");
 const zfinal = @import("zfinal");
+const api_handler = @import("src/modules/api/handler.zig");
+const api_routes = @import("src/modules/api/routes.zig");
+const interceptors = @import("src/interceptors.zig");
 
 pub const log_level = "info";
 
 var g_metrics: zfinal.Metrics = undefined;
-var g_token_mgr: *zfinal.TokenManager = undefined;
 var g_rate: *zfinal.RateLimitHandler = undefined;
-var g_jwt_secret: []const u8 = "change-me-in-production-min-32-bytes!!";
-var g_jwt_secret_prev: ?[]const u8 = null;
-var g_jwt_iss: ?[]const u8 = null;
-var g_jwt_aud: ?[]const u8 = null;
 
 fn probeProcessAlive() bool {
     return true;
@@ -38,17 +38,21 @@ pub fn main(init: std.process.Init) !void {
     g_metrics = zfinal.Metrics.init(allocator);
     defer g_metrics.deinit();
 
+    var app_state: api_handler.AppState = .{
+        .token_mgr = undefined,
+        .jwt_secret = "change-me-in-production-min-32-bytes!!",
+    };
     if (std.c.getenv("JWT_SECRET")) |s| {
-        g_jwt_secret = std.mem.span(s);
+        app_state.jwt_secret = std.mem.span(s);
     }
     if (std.c.getenv("JWT_SECRET_PREVIOUS")) |s| {
-        g_jwt_secret_prev = std.mem.span(s);
+        app_state.jwt_secret_prev = std.mem.span(s);
     }
     if (std.c.getenv("JWT_ISS")) |s| {
-        g_jwt_iss = std.mem.span(s);
+        app_state.jwt_iss = std.mem.span(s);
     }
     if (std.c.getenv("JWT_AUD")) |s| {
-        g_jwt_aud = std.mem.span(s);
+        app_state.jwt_aud = std.mem.span(s);
     }
     const use_hsts = std.c.getenv("ENABLE_HSTS") != null;
 
@@ -74,7 +78,8 @@ pub fn main(init: std.process.Init) !void {
     var token_mgr = zfinal.TokenManager.init(allocator);
     defer token_mgr.deinit();
     token_mgr.setTTL(3600);
-    g_token_mgr = &token_mgr;
+    app_state.token_mgr = &token_mgr;
+    app.setState(api_handler.AppState, &app_state);
 
     var rate_limiter = zfinal.RateLimitHandler.init(allocator);
     defer rate_limiter.deinit();
@@ -85,16 +90,16 @@ pub fn main(init: std.process.Init) !void {
     // rate_limiter.trusted_proxies = &.{"127.0.0.1"};
     g_rate = &rate_limiter;
 
-    const csrf = zfinal.createTokenInterceptor(.{
+    interceptors.csrf = zfinal.createTokenInterceptor(.{
         .token_manager = &token_mgr,
         .token_name = "_token",
         .error_message = "Invalid or expired CSRF token",
     });
     const rate_mw = zfinal.createRateLimitInterceptor(&rate_limiter);
-    const jwt_mw = zfinal.createJwtAuthInterceptorWithOptions(g_jwt_secret, .{
-        .expected_iss = g_jwt_iss,
-        .expected_aud = g_jwt_aud,
-        .previous_secret = g_jwt_secret_prev,
+    interceptors.jwt = zfinal.createJwtAuthInterceptorWithOptions(app_state.jwt_secret, .{
+        .expected_iss = app_state.jwt_iss,
+        .expected_aud = app_state.jwt_aud,
+        .previous_secret = app_state.jwt_secret_prev,
         .leeway_sec = 30,
     });
 
@@ -116,61 +121,10 @@ pub fn main(init: std.process.Init) !void {
     try app.addGlobalInterceptor(zfinal.createCorsAllowlistInterceptor(cors_origins_buf[0..cors_n]));
     try app.addGlobalInterceptor(rate_mw);
 
-    var api = zfinal.RouteGroup.init(&app, "/api");
-    _ = try api.get("/form", handleForm);
-    try app.postWithInterceptors("/api/submit", handleSubmit, &.{csrf});
-    try app.getWithInterceptors("/api/me", handleMe, &.{jwt_mw});
-    try app.post("/api/token", handleIssueToken);
+    try api_routes.register(&app);
 
     zfinal.getLogger().infoFmt("Listening on http://0.0.0.0:8080 (drain=15s idle=30s)", .{});
     zfinal.getLogger().infoFmt("Health: /health | Form: /api/form | POST /api/submit | JWT /api/me", .{});
 
     try app.start();
-}
-
-fn handleForm(ctx: *zfinal.Context) !void {
-    const token = try g_token_mgr.generate();
-    defer ctx.allocator.free(token);
-
-    var html_buf: [2048]u8 = undefined;
-    const html = try std.fmt.bufPrint(&html_buf,
-        \\<html><body>
-        \\<h1>ZFinal Production</h1>
-        \\<p>Health: /health</p>
-        \\<form method="POST" action="/api/submit">
-        \\  <input type="hidden" name="_token" value="{s}">
-        \\  <input name="message" placeholder="message" required>
-        \\  <button type="submit">Submit</button>
-        \\</form>
-        \\</body></html>
-    , .{token});
-    try ctx.renderHtml(html);
-}
-
-fn handleSubmit(ctx: *zfinal.Context) !void {
-    const msg = try ctx.getPara("message") orelse "";
-    try ctx.renderJson(.{ .ok = true, .received = msg });
-}
-
-fn handleIssueToken(ctx: *zfinal.Context) !void {
-    var ts: std.c.timespec = undefined;
-    _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
-    const now: i64 = @intCast(ts.sec);
-    const token = try zfinal.jwtSign(ctx.allocator, g_jwt_secret, .{
-        .sub = "demo-user",
-        .exp = now + 3600,
-        .iat = now,
-        .iss = g_jwt_iss,
-        .aud = g_jwt_aud,
-        .role = "user",
-    });
-    defer ctx.allocator.free(token);
-    try ctx.renderJson(.{ .token = token, .token_type = "Bearer", .expires_in = 3600 });
-}
-
-fn handleMe(ctx: *zfinal.Context) !void {
-    const sub = ctx.getAttr("jwt_sub") orelse "unknown";
-    const role = ctx.getAttr("jwt_role") orelse "";
-    const request_id = ctx.getAttr("request_id") orelse "";
-    try ctx.renderJson(.{ .sub = sub, .role = role, .request_id = request_id });
 }

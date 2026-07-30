@@ -2,6 +2,7 @@
 const std = @import("std");
 const openapi = @import("openapi");
 const zf_shared = @import("zf_shared.zig");
+const cmd_routes = @import("cmd_routes.zig");
 
 const readFileAlloc = zf_shared.readFileAlloc;
 const safeWrite = zf_shared.safeWrite;
@@ -117,6 +118,10 @@ pub fn handleOpenapi(allocator: std.mem.Allocator, out_path: []const u8) !void {
     };
     defer spec.deinit();
 
+    // Merge smart_routing actions.zig (convention / nested / action_key) so OpenAPI
+    // stays aligned even before/without regenerating routes.zig.
+    try mergeActionsRoutes(allocator, &spec);
+
     const yaml = try openapi.renderYaml(allocator, spec);
     defer allocator.free(yaml);
 
@@ -126,6 +131,72 @@ pub fn handleOpenapi(allocator: std.mem.Allocator, out_path: []const u8) !void {
     // OpenAPI YAML usually has no zones → expect `.gen.new` on re-run.
     try safeWrite(allocator, out_path, yaml, false);
     std.debug.print("\nTip: feed this file to Swagger UI / Redoc / openapi-generator.\n", .{});
+}
+
+fn mergeActionsRoutes(allocator: std.mem.Allocator, spec: *openapi.Spec) !void {
+    const flats = cmd_routes.collectFlatRoutes(allocator, "src/modules") catch |err| {
+        if (err == error.FileNotFound) return;
+        // No modules / parse errors: soft-skip
+        std.debug.print("   (actions merge skipped: {t})\n", .{err});
+        return;
+    };
+    defer {
+        for (flats) |r| r.deinit(allocator);
+        allocator.free(flats);
+    }
+    if (flats.len == 0) return;
+    var added: usize = 0;
+    for (flats) |fr| {
+        const method: openapi.HttpMethod = blk: {
+            if (std.mem.eql(u8, fr.method, "GET")) break :blk .GET;
+            if (std.mem.eql(u8, fr.method, "POST")) break :blk .POST;
+            if (std.mem.eql(u8, fr.method, "PUT")) break :blk .PUT;
+            if (std.mem.eql(u8, fr.method, "PATCH")) break :blk .PATCH;
+            if (std.mem.eql(u8, fr.method, "DELETE")) break :blk .DELETE;
+            continue;
+        };
+        // normalize :id → {id}
+        const normalized = try openapiNormalizePath(allocator, fr.path);
+        // dedupe against existing
+        var exists = false;
+        for (spec.routes.items) |ex| {
+            if (ex.method == method and std.mem.eql(u8, ex.path, normalized)) {
+                exists = true;
+                break;
+            }
+        }
+        if (exists) {
+            allocator.free(normalized);
+            continue;
+        }
+        try spec.routes.append(allocator, .{ .method = method, .path = normalized });
+        added += 1;
+    }
+    if (added > 0) std.debug.print("   +{d} from actions.zig\n", .{added});
+}
+
+fn openapiNormalizePath(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
+    var buf: std.Io.Writer.Allocating = .init(allocator);
+    errdefer buf.deinit();
+    const w = &buf.writer;
+    var parts = std.mem.splitScalar(u8, path, '/');
+    var first = true;
+    while (parts.next()) |p| {
+        if (p.len == 0) continue;
+        if (!first) try w.writeByte('/');
+        first = false;
+        if (p[0] == ':') {
+            try w.print("{{{s}}}", .{p[1..]});
+        } else if (p[0] == '*') {
+            try w.print("{{{s}}}", .{p[1..]});
+        } else {
+            try w.writeAll(p);
+        }
+    }
+    // leading slash
+    const body = try buf.toOwnedSlice();
+    defer allocator.free(body);
+    return try std.fmt.allocPrint(allocator, "/{s}", .{body});
 }
 
 pub fn printOpenapiHelp(exe_name: []const u8) void {
@@ -140,6 +211,7 @@ pub fn printOpenapiHelp(exe_name: []const u8) void {
     std.debug.print("  - Recognises app.<method>WithInterceptors(...)\n", .{});
     std.debug.print("  - Recognises RouteGroup.init(&app, \"/prefix\") + group.<method>(...)\n", .{});
     std.debug.print("  - Normalises :id → {{id}} and renders path parameters\n", .{});
+    std.debug.print("  - Merges routes from src/modules/**/actions.zig (smart_routing)\n", .{});
     std.debug.print("  - Dedupes by (method, path), stable sort\n", .{});
     std.debug.print("  - Emits info(title, version) and per-operation '200' response\n", .{});
     std.debug.print("\n", .{});

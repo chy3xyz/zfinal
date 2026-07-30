@@ -20,6 +20,8 @@ pub const ZFinal = struct {
     config: ServerConfig,
     /// Optional request metrics. When set, `dispatch` auto-records status classes.
     metrics: ?*Metrics = null,
+    /// Typed app State (see `setState` / `Context.state`).
+    app_state: @import("state.zig").Handle = .{},
 
     /// Initialize a new ZFinal application. Routes, plugins, and config
     /// are added before calling `start()`.
@@ -54,6 +56,22 @@ pub const ZFinal = struct {
     /// Attach shared Metrics so the core server auto-records connections/requests.
     pub fn setMetrics(self: *ZFinal, metrics: *Metrics) void {
         self.metrics = metrics;
+    }
+
+    /// Attach typed application State. Handlers read it via `ctx.state(T)`.
+    /// `ptr` must outlive the server (typically a local in `main`).
+    pub fn setState(self: *ZFinal, comptime T: type, ptr: *T) void {
+        self.app_state.set(T, ptr);
+    }
+
+    /// SPA / custom 404 when no route matches (not used for 405).
+    pub fn setFallback(self: *ZFinal, handler: Handler) !void {
+        try self.router.setFallback(handler);
+    }
+
+    /// Register several module `routes.register` callbacks (Router::merge analogue).
+    pub fn merge(self: *ZFinal, registers: []const *const fn (*ZFinal) anyerror!void) !void {
+        for (registers) |reg| try reg(self);
     }
 
     /// Register a plugin. Plugins are started in registration order when
@@ -137,10 +155,17 @@ pub const ZFinal = struct {
     /// Start the HTTP server. Blocks until shutdown or fatal error.
     /// Automatically starts all registered plugins before accepting connections.
     pub fn start(self: *ZFinal) !void {
+        try self.router.seal();
         try self.plugin_manager.startAll();
         var server = try Server.init(self.allocator, &self.router, self.config);
         server.metrics = self.metrics;
+        server.app_state = self.app_state;
         try server.start();
+    }
+
+    /// API version prefix group (smart_routing). Same as `RouteGroup.init(self, prefix)`.
+    pub fn mountApi(self: *ZFinal, prefix: []const u8) RouteGroup {
+        return RouteGroup.init(self, prefix);
     }
 };
 
@@ -175,31 +200,50 @@ pub const RouteGroup = struct {
         return try std.fmt.allocPrint(allocator, "{s}{s}", .{ self.prefix, path });
     }
 
-    /// Register a GET route with the group prefix.
-    pub fn get(self: *RouteGroup, path: []const u8, handler: Handler) !void {
+    fn register(self: *RouteGroup, method: HttpMethod, path: []const u8, handler: Handler) !void {
         const full_path = try self.buildPath(path, self.app.allocator);
         defer self.app.allocator.free(full_path);
-        try self.app.get(full_path, handler);
+        if (self.interceptors.interceptors.items.len == 0) {
+            try self.app.router.addWithMethod(full_path, method, handler);
+        } else {
+            try self.app.router.addWithMethodAndInterceptors(
+                full_path,
+                method,
+                handler,
+                try cloneInterceptorChain(&self.interceptors),
+            );
+        }
+    }
+
+    fn cloneInterceptorChain(src: *const InterceptorChain) !InterceptorChain {
+        var chain = InterceptorChain.init(src.allocator);
+        errdefer chain.deinit();
+        for (src.interceptors.items) |i| try chain.add(i);
+        return chain;
+    }
+
+    /// Register a GET route with the group prefix.
+    pub fn get(self: *RouteGroup, path: []const u8, handler: Handler) !void {
+        try self.register(.GET, path, handler);
     }
 
     /// Register a POST route with the group prefix.
     pub fn post(self: *RouteGroup, path: []const u8, handler: Handler) !void {
-        const full_path = try self.buildPath(path, self.app.allocator);
-        defer self.app.allocator.free(full_path);
-        try self.app.post(full_path, handler);
+        try self.register(.POST, path, handler);
     }
 
     /// Register a PUT route with the group prefix.
     pub fn put(self: *RouteGroup, path: []const u8, handler: Handler) !void {
-        const full_path = try self.buildPath(path, self.app.allocator);
-        defer self.app.allocator.free(full_path);
-        try self.app.put(full_path, handler);
+        try self.register(.PUT, path, handler);
+    }
+
+    /// Register a PATCH route with the group prefix.
+    pub fn patch(self: *RouteGroup, path: []const u8, handler: Handler) !void {
+        try self.register(.PATCH, path, handler);
     }
 
     /// Register a DELETE route with the group prefix.
     pub fn delete(self: *RouteGroup, path: []const u8, handler: Handler) !void {
-        const full_path = try self.buildPath(path, self.app.allocator);
-        defer self.app.allocator.free(full_path);
-        try self.app.delete(full_path, handler);
+        try self.register(.DELETE, path, handler);
     }
 };

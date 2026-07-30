@@ -11,6 +11,7 @@
 
 - 容量与拓扑 → [scale_to_millions.md](scale_to_millions.md)
 - L0→L3 渐进代码架构 → [progressive_architecture.md](progressive_architecture.md)
+- 智能路由（`actions.zig` / 嵌套 / 尾通配）→ [smart_routing.md](smart_routing.md)
 
 ---
 

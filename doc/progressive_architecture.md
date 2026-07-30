@@ -243,7 +243,9 @@ pub fn placeOrder(self: *OrdersService, …, idempotency_key: []const u8) !Order
 
 ### 规则
 
-- Handler 解析并传入 `tenant_id`（JWT / 头），**禁止** service 默认 `tenant_id=0` 扫全表。
+- Handler 解析并传入租户键（JWT / 头），**禁止** service 默认 `tenant_id=0` / `app_id=0` 扫全表。
+- **字段名 comptime 配置**：默认 `zfinal.tenant.tenant_id`；ZigShop 用 `zfinal.tenant.app_id`
+  （`app_id` + `X-App-Id`）。`extract.requireTenant(ctx, comptime cfg)`。见 [http_ergonomics.md](http_ergonomics.md)。
 - 跨机异步优先 `ports/bus` + **`QueueRobustMQClient`（Kafka/RobustMQ）** 或 **`QueueNatsClient`（NATS）**；
   `QueueClient` 作为 `memory_bus` 适配器，便于单测。
 - 分片：先在 SQL / 缓存 key 带上分片键；物理分库可后置，避免提前拆模块。

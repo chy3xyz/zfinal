@@ -7,6 +7,7 @@ const Metrics = @import("metrics.zig").Metrics;
 const getLog = @import("logger.zig").getLogger;
 const shutdown = @import("shutdown.zig");
 const io_instance = @import("../io_instance.zig");
+const http_error = @import("http_error.zig");
 
 pub const ServerConfig = struct {
     host: []const u8 = "0.0.0.0",
@@ -39,6 +40,8 @@ pub const ServerConfig = struct {
     /// keep-alive on nginx/Caddy — `doc/reverse_proxy.md`.
     /// Set false only after full body-drain coverage + upstream fix + soak tests.
     force_connection_close: bool = true,
+    /// Default `Context.compress_enabled` for responses (gzip when client accepts).
+    compress_responses: bool = true,
 };
 
 /// Error set for server operations. Wrapped to fit Group.async std.Io.Cancelable!void constraint.
@@ -63,6 +66,8 @@ pub const Server = struct {
     config: ServerConfig,
     /// Optional shared metrics; when set, dispatch auto-records status classes.
     metrics: ?*Metrics = null,
+    /// Typed app State from `ZFinal.setState`.
+    app_state: @import("state.zig").Handle = .{},
     active_conns: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     err_handle: ErrorHandle = .{},
     /// Listener socket, stored so a shutdown watchdog can close it to unblock accept().
@@ -343,6 +348,8 @@ fn dispatch(request: *http.Server.Request, server: *Server) !void {
 
     var ctx = Context.init(request, server.allocator);
     ctx.max_body_size = server.config.max_body_size;
+    ctx.compress_enabled = server.config.compress_responses;
+    ctx.app_state = server.app_state;
     // Set the per-request deadline up front. Handlers / dispatch loops
     // can check `ctx.isExpired()` to bail out of long work.
     if (server.config.request_timeout_ms > 0) {
@@ -354,8 +361,7 @@ fn dispatch(request: *http.Server.Request, server: *Server) !void {
     // already-expired requests (e.g. clock skew, very fast 504).
     if (ctx.isExpired()) {
         getLog().warnFmt("Request already past deadline at dispatch: {s} {s}", .{ @tagName(request.head.method), target });
-        ctx.res_status = .request_timeout;
-        ctx.renderText("Request Timeout") catch {};
+        http_error.render(&ctx, error.RequestTimeout) catch {};
         if (server.metrics) |m| m.recordRequest(@intFromEnum(ctx.res_status));
         return;
     }
@@ -370,12 +376,14 @@ fn dispatch(request: *http.Server.Request, server: *Server) !void {
         }
         if (ctx.isExpired()) {
             getLog().warnFmt("Request timed out in handler: {s} {s}", .{ @tagName(request.head.method), target });
-            ctx.res_status = .request_timeout;
-            ctx.renderText("Request Timeout") catch {};
+            http_error.render(&ctx, error.RequestTimeout) catch {};
+        } else if (http_error.isHttpError(err)) {
+            http_error.render(&ctx, err) catch |render_err| {
+                getLog().warnFmt("Failed to render HttpError response: {t}", .{render_err});
+            };
         } else {
             getLog().errFmt("Handler error: {} for {s} {s}", .{ err, @tagName(request.head.method), target });
-            ctx.res_status = .internal_server_error;
-            ctx.renderText("Internal Server Error") catch |render_err| {
+            http_error.render(&ctx, error.InternalServerError) catch |render_err| {
                 getLog().warnFmt("Failed to render 500 response: {t}", .{render_err});
             };
         }

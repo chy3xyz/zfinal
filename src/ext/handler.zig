@@ -166,8 +166,6 @@ pub const RateLimitHandler = struct {
         if (self.requests.getPtr(client_key)) |info| {
             if (now - info.window_start < self.window_seconds) {
                 if (info.count >= self.max_requests) {
-                    ctx.res_status = .too_many_requests;
-                    try ctx.renderJson(.{ .err = "Too many requests" });
                     return error.TooManyRequests;
                 }
                 info.count += 1;

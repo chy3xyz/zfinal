@@ -25,7 +25,7 @@ pub fn createSecurityHeadersInterceptor(include_hsts: bool) zfinal.Interceptor {
     };
 }
 
-/// Propagate or generate `X-Request-Id`; sets ctx attr `request_id`.
+/// Propagate or generate `X-Request-Id`; sets attr + typed `extension.RequestId`.
 pub fn createRequestIdInterceptor() zfinal.Interceptor {
     const Impl = struct {
         fn before(ctx: *zfinal.Context) !bool {
@@ -36,6 +36,9 @@ pub fn createRequestIdInterceptor() zfinal.Interceptor {
             defer ctx.allocator.free(id);
             try ctx.setAttr("request_id", id);
             try ctx.setHeader("X-Request-Id", id);
+            // Attr owns a copy; Extension points at the attr lifetime.
+            const rid = ctx.getAttr("request_id").?;
+            try ctx.setExt(zfinal.extension.RequestId, .{ .value = rid });
             return true;
         }
     };

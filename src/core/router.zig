@@ -1,5 +1,6 @@
 const std = @import("std");
 const Context = @import("context.zig").Context;
+const http_error = @import("http_error.zig");
 const InterceptorChain = @import("../interceptor/interceptor.zig").InterceptorChain;
 const io_instance = @import("../io_instance.zig");
 
@@ -32,10 +33,11 @@ pub const HttpMethod = enum {
     }
 };
 
-/// 路由段类型
+/// 路由段类型（smart_routing：static > :param > *wildcard）
 const SegmentType = enum {
     static,
     param,
+    wildcard,
 };
 
 /// 路由段
@@ -46,52 +48,72 @@ const Segment = struct {
 
 /// 路由定义
 pub const Route = struct {
-    pattern: []const u8, // 路径模式，如 "/users/:id"
+    pattern: []const u8, // 路径模式，如 "/users/:id" 或 "/assets/*path"
     method: HttpMethod, // HTTP 方法
     handler: Handler,
     interceptors: InterceptorChain,
     segments: []Segment, // 预解析的路由段
-    param_names: [][]const u8, // 参数名列表
+    param_names: [][]const u8, // 参数名列表（含通配名）
+    has_wildcard: bool = false,
 
-    /// 检查路径是否匹配此路由
+    /// 方法 + 路径均匹配
     pub fn matches(self: *const Route, path: []const u8, method: HttpMethod) bool {
-        // 方法必须匹配
         if (self.method != .ANY and self.method != method) return false;
+        return self.matchesPath(path);
+    }
 
-        // 快速路径：如果没有参数，直接比较
+    /// 仅路径形状匹配（用于 405 Allow 收集）
+    pub fn matchesPath(self: *const Route, path: []const u8) bool {
         if (self.param_names.len == 0) {
             return std.mem.eql(u8, self.pattern, path);
         }
 
-        // 优化后的匹配逻辑
         var path_it = std.mem.splitScalar(u8, path, '/');
-
-        // 跳过第一个空段（因为路径以 / 开头）
         if (path.len > 0 and path[0] == '/') {
             _ = path_it.next();
         }
 
         for (self.segments) |segment| {
-            const path_part = path_it.next() orelse return false;
-
             switch (segment.type) {
                 .static => {
+                    const path_part = path_it.next() orelse return false;
                     if (!std.mem.eql(u8, segment.value, path_part)) return false;
                 },
                 .param => {
-                    // 参数匹配任意非空值
+                    const path_part = path_it.next() orelse return false;
                     if (path_part.len == 0) return false;
+                },
+                .wildcard => {
+                    // 至少一段非空后缀；吃掉剩余全部
+                    const first = path_it.next() orelse return false;
+                    if (first.len == 0) return false;
+                    while (path_it.next()) |_| {}
+                    return true;
                 },
             }
         }
 
-        // 确保路径没有剩余部分
         return path_it.next() == null;
     }
 
-    /// 提取路径参数
+    /// 匹配特异度：静态 > 参数 > 通配（同前缀下更具体者优先）
+    pub fn specificity(self: *const Route) i32 {
+        var score: i32 = 0;
+        for (self.segments) |segment| {
+            score += switch (segment.type) {
+                .static => @as(i32, 1000),
+                .param => 10,
+                .wildcard => 1,
+            };
+        }
+        if (self.has_wildcard) score -= 100_000;
+        return score;
+    }
+
+    /// 提取路径参数（通配值为 path 上的连续子串，无分配）
     pub fn extractParams(self: *const Route, path: []const u8, allocator: std.mem.Allocator) !std.StringHashMap([]const u8) {
         var params = std.StringHashMap([]const u8).init(allocator);
+        errdefer params.deinit();
         if (self.param_names.len == 0) return params;
 
         var path_it = std.mem.splitScalar(u8, path, '/');
@@ -100,10 +122,24 @@ pub const Route = struct {
         }
 
         for (self.segments) |segment| {
-            const path_part = path_it.next() orelse break;
-
-            if (segment.type == .param) {
-                try params.put(segment.value, path_part);
+            switch (segment.type) {
+                .static => {
+                    _ = path_it.next() orelse break;
+                },
+                .param => {
+                    const path_part = path_it.next() orelse break;
+                    try params.put(segment.value, path_part);
+                },
+                .wildcard => {
+                    const first = path_it.next() orelse break;
+                    const offset = @intFromPtr(first.ptr) - @intFromPtr(path.ptr);
+                    var rest = path[offset..];
+                    if (rest.len > 0 and rest[rest.len - 1] == '/') {
+                        rest = rest[0 .. rest.len - 1];
+                    }
+                    try params.put(segment.value, rest);
+                    while (path_it.next()) |_| {}
+                },
             }
         }
 
@@ -133,6 +169,10 @@ pub const Router = struct {
     param_cache_mutex: std.Io.Mutex = .init,
     global_interceptors: InterceptorChain,
     allocator: std.mem.Allocator,
+    /// After `seal()`, further `add*` calls fail with `error.RouterSealed`.
+    sealed: bool = false,
+    /// Optional SPA / custom 404 handler when no route matches (and not 405).
+    fallback: ?Handler = null,
 
     pub fn init(allocator: std.mem.Allocator) Router {
         return Router{
@@ -143,6 +183,11 @@ pub const Router = struct {
             .global_interceptors = InterceptorChain.init(allocator),
             .allocator = allocator,
         };
+    }
+
+    pub fn setFallback(self: *Router, handler: Handler) !void {
+        if (self.sealed) return error.RouterSealed;
+        self.fallback = handler;
     }
 
     const ParamCacheLookup = union(enum) {
@@ -241,10 +286,19 @@ pub const Router = struct {
 
     /// 添加指定方法和带拦截器的路由
     pub fn addWithMethodAndInterceptors(self: *Router, path: []const u8, method: HttpMethod, handler: Handler, interceptors: InterceptorChain) !void {
+        if (self.sealed) return error.RouterSealed;
+
         const parsed = try parseRoute(path, self.allocator);
         errdefer {
             self.allocator.free(parsed.segments);
             self.allocator.free(parsed.param_names);
+        }
+
+        // 同 METHOD + pattern → 失败（smart_routing：禁止静默覆盖）
+        for (self.routes.items) |*existing| {
+            if (existing.method == method and std.mem.eql(u8, existing.pattern, path)) {
+                return error.DuplicateRoute; // errdefer frees parsed.*
+            }
         }
 
         const owned_path = try self.allocator.dupe(u8, path);
@@ -257,12 +311,12 @@ pub const Router = struct {
             .interceptors = interceptors,
             .segments = parsed.segments,
             .param_names = parsed.param_names,
+            .has_wildcard = parsed.has_wildcard,
         };
 
         try self.routes.append(self.allocator, route);
 
-        // O(1) fast path: index static routes (no params) by "{method}:{path}"
-        // First registration wins (same as linear-scan first-match).
+        // O(1) fast path: index static routes (no params / wildcards)
         if (parsed.param_names.len == 0) {
             var key_buf: [256]u8 = undefined;
             const key = staticRouteKey(method, owned_path, &key_buf);
@@ -275,6 +329,45 @@ pub const Router = struct {
                 gop.value_ptr.* = self.routes.items.len - 1;
             }
         }
+    }
+
+    /// Freeze the route table: sort by specificity (desc), rebuild static index,
+    /// reject further registrations. Call once after all modules `register`.
+    pub fn seal(self: *Router) !void {
+        if (self.sealed) return;
+        // Insertion sort by specificity descending (stable enough for small N)
+        var i: usize = 1;
+        while (i < self.routes.items.len) : (i += 1) {
+            var j = i;
+            while (j > 0 and self.routes.items[j].specificity() > self.routes.items[j - 1].specificity()) {
+                const tmp = self.routes.items[j];
+                self.routes.items[j] = self.routes.items[j - 1];
+                self.routes.items[j - 1] = tmp;
+                j -= 1;
+            }
+        }
+        // Rebuild static map with new indices
+        var key_it = self.static_routes.keyIterator();
+        while (key_it.next()) |key| self.allocator.free(key.*);
+        self.static_routes.clearRetainingCapacity();
+        for (self.routes.items, 0..) |*route, idx| {
+            if (route.param_names.len != 0) continue;
+            var key_buf: [256]u8 = undefined;
+            const key = staticRouteKey(route.method, route.pattern, &key_buf);
+            const key_owned = try self.allocator.dupe(u8, key);
+            errdefer self.allocator.free(key_owned);
+            const gop = try self.static_routes.getOrPut(key_owned);
+            if (gop.found_existing) {
+                self.allocator.free(key_owned);
+            } else {
+                gop.value_ptr.* = idx;
+            }
+        }
+        // Drop param cache — indices may have moved
+        for (self.param_cache_order.items) |item| self.allocator.free(item);
+        self.param_cache_order.clearRetainingCapacity();
+        self.param_route_cache.clearRetainingCapacity();
+        self.sealed = true;
     }
 
     /// Build the hashmap lookup key for a method + path combination.
@@ -291,7 +384,14 @@ pub const Router = struct {
 
     /// Like `match`, but returns a stable route index (safe across concurrent
     /// param-cache updates; prefer this inside `execute`).
+    /// HEAD 无专属路由时回退到同 path 的 GET（smart_routing §5.5）。
     pub fn matchIndex(self: *Router, path: []const u8, method: HttpMethod) ?usize {
+        if (self.matchIndexForMethod(path, method)) |idx| return idx;
+        if (method == .HEAD) return self.matchIndexForMethod(path, .GET);
+        return null;
+    }
+
+    fn matchIndexForMethod(self: *Router, path: []const u8, method: HttpMethod) ?usize {
         // O(1) fast path for exact-match static routes
         var key_buf: [256]u8 = undefined;
         const method_key = staticRouteKey(method, path, &key_buf);
@@ -304,8 +404,7 @@ pub const Router = struct {
             return idx;
         }
 
-        // Parameterized-route cache (FIFO, capped). Key includes method
-        // so GET /users/42 and POST /users/42 don't collide.
+        // Parameterized / wildcard cache (FIFO). Key includes method.
         const cache_key = staticRouteKey(method, path, &key_buf);
         switch (self.paramCacheLookup(cache_key)) {
             .hit => |idx| return idx,
@@ -313,31 +412,85 @@ pub const Router = struct {
             .miss => {},
         }
 
-        // Fall back to O(n) linear scan for parameterized routes
+        // 线性扫描：在所有匹配中取特异度最高者（静态 > :param > *wildcard）
         var found: ?usize = null;
+        var best_score: i32 = std.math.minInt(i32);
         for (self.routes.items, 0..) |*route, idx| {
             if (route.matches(path, method)) {
-                found = idx;
-                break;
+                const score = route.specificity();
+                if (found == null or score > best_score) {
+                    found = idx;
+                    best_score = score;
+                }
             }
         }
-        // Cache the result (or negative result) to skip the scan on
-        // repeat hits to the same parameterized URL.
         self.paramCachePut(cache_key, found) catch {};
         return found;
+    }
+
+    /// 收集某 path 上已注册的方法（不含 method 过滤），用于 405 Allow。
+    fn methodsForPath(self: *Router, path: []const u8, buf: *[8]HttpMethod) []const HttpMethod {
+        var n: usize = 0;
+        for (self.routes.items) |*route| {
+            if (!route.matchesPath(path)) continue;
+            if (route.method == .ANY) {
+                // ANY → 列出常用方法
+                const common = [_]HttpMethod{ .GET, .POST, .PUT, .PATCH, .DELETE, .HEAD, .OPTIONS };
+                for (common) |m| {
+                    if (n < buf.len and !containsMethod(buf[0..n], m)) {
+                        buf[n] = m;
+                        n += 1;
+                    }
+                }
+                continue;
+            }
+            if (n < buf.len and !containsMethod(buf[0..n], route.method)) {
+                buf[n] = route.method;
+                n += 1;
+            }
+        }
+        return buf[0..n];
+    }
+
+    fn containsMethod(hay: []const HttpMethod, needle: HttpMethod) bool {
+        for (hay) |m| if (m == needle) return true;
+        return false;
+    }
+
+    fn formatAllowHeader(methods: []const HttpMethod, buf: []u8) []const u8 {
+        var w: std.Io.Writer = .fixed(buf);
+        for (methods, 0..) |m, i| {
+            if (i > 0) w.writeAll(", ") catch break;
+            w.writeAll(@tagName(m)) catch break;
+        }
+        return w.buffered();
     }
 
     /// 执行路由处理
     pub fn execute(self: *Router, path: []const u8, method: HttpMethod, ctx: *Context) !void {
         const idx = self.matchIndex(path, method) orelse {
-            // Route not matched — still run global interceptors (e.g. CORS preflight)
             for (self.global_interceptors.interceptors.items) |interceptor| {
                 if (interceptor.before) |before| {
                     if (!(try before(ctx))) return;
                 }
             }
-            ctx.res_status = .not_found;
-            try ctx.renderText("404 Not Found");
+
+            var allow_buf: [8]HttpMethod = undefined;
+            const allow = self.methodsForPath(path, &allow_buf);
+            if (allow.len > 0) {
+                var hdr_buf: [128]u8 = undefined;
+                const allow_hdr = formatAllowHeader(allow, &hdr_buf);
+                try ctx.setHeader("Allow", allow_hdr);
+                try http_error.renderStatus(ctx, .method_not_allowed, "method_not_allowed", "Method Not Allowed");
+                return;
+            }
+
+            if (self.fallback) |fb| {
+                try fb(ctx);
+                return;
+            }
+
+            try http_error.renderStatus(ctx, .not_found, "not_found", "Not Found");
             return;
         };
 
@@ -377,23 +530,40 @@ pub const Router = struct {
 const ParsedRoute = struct {
     segments: []Segment,
     param_names: [][]const u8,
+    has_wildcard: bool = false,
 };
 
-/// 解析路由模式
+/// 解析路由模式（`:id` / `{id}` 参数；末段 `*path` 尾通配）
 fn parseRoute(path: []const u8, allocator: std.mem.Allocator) !ParsedRoute {
     var segments = std.ArrayList(Segment).empty;
+    errdefer segments.deinit(allocator);
     var param_names = std.ArrayList([]const u8).empty;
+    errdefer param_names.deinit(allocator);
 
     var parts = std.mem.splitScalar(u8, path, '/');
-
-    // 跳过第一个空部分（如果路径以 / 开头）
     if (path.len > 0 and path[0] == '/') {
         _ = parts.next();
     }
 
+    var has_wildcard = false;
     while (parts.next()) |part| {
-        if (part.len > 0 and part[0] == ':') {
+        if (has_wildcard) return error.InvalidRoutePattern; // * 后禁止再跟段
+
+        if (part.len > 1 and part[0] == '*') {
             const name = part[1..];
+            if (name.len == 0) return error.InvalidRoutePattern;
+            try segments.append(allocator, .{ .type = .wildcard, .value = name });
+            try param_names.append(allocator, name);
+            has_wildcard = true;
+        } else if (part.len > 0 and part[0] == ':') {
+            const name = part[1..];
+            if (name.len == 0) return error.InvalidRoutePattern;
+            try segments.append(allocator, .{ .type = .param, .value = name });
+            try param_names.append(allocator, name);
+        } else if (part.len >= 3 and part[0] == '{' and part[part.len - 1] == '}') {
+            // 过渡兼容：`{id}` ≡ `:id`（生成器已改为 `:id`）
+            const name = part[1 .. part.len - 1];
+            if (name.len == 0) return error.InvalidRoutePattern;
             try segments.append(allocator, .{ .type = .param, .value = name });
             try param_names.append(allocator, name);
         } else {
@@ -404,6 +574,7 @@ fn parseRoute(path: []const u8, allocator: std.mem.Allocator) !ParsedRoute {
     return ParsedRoute{
         .segments = try segments.toOwnedSlice(allocator),
         .param_names = try param_names.toOwnedSlice(allocator),
+        .has_wildcard = has_wildcard,
     };
 }
 
@@ -509,7 +680,7 @@ test "route any method matching" {
     try std.testing.expect(router.match("/api/any", .DELETE) != null);
 }
 
-test "route registration order priority" {
+test "route registration rejects duplicate METHOD+path" {
     const allocator = std.testing.allocator;
     var router = Router.init(allocator);
     defer router.deinit();
@@ -521,12 +692,69 @@ test "route registration order priority" {
         fn f(_: *Context) !void {}
     }.f;
     try router.addWithMethod("/api/data", .GET, h1);
-    try router.addWithMethod("/api/data", .GET, h2); // duplicate, both stored
+    try std.testing.expectError(error.DuplicateRoute, router.addWithMethod("/api/data", .GET, h2));
 
-    // First registered route matches (linear scan)
     const route = router.match("/api/data", .GET).?;
-    // Both registered — priority is first-match
     try std.testing.expect(route.handler == h1);
+}
+
+test "wildcard route matching and extraction" {
+    const allocator = std.testing.allocator;
+    var router = Router.init(allocator);
+    defer router.deinit();
+
+    const h = struct {
+        fn f(_: *Context) !void {}
+    }.f;
+    try router.addWithMethod("/assets/*path", .GET, h);
+    try router.addWithMethod("/assets/logo.png", .GET, h);
+
+    // Exact static wins over wildcard
+    const static_hit = router.match("/assets/logo.png", .GET).?;
+    try std.testing.expectEqualStrings("/assets/logo.png", static_hit.pattern);
+
+    try std.testing.expect(router.match("/assets", .GET) == null);
+    const wild = router.match("/assets/a/b/c.txt", .GET).?;
+    try std.testing.expect(wild.has_wildcard);
+    var params = try wild.extractParams("/assets/a/b/c.txt", allocator);
+    defer params.deinit();
+    try std.testing.expectEqualStrings("a/b/c.txt", params.get("path").?);
+}
+
+test "HEAD falls back to GET" {
+    const allocator = std.testing.allocator;
+    var router = Router.init(allocator);
+    defer router.deinit();
+    const h = struct {
+        fn f(_: *Context) !void {}
+    }.f;
+    try router.addWithMethod("/ping", .GET, h);
+    try std.testing.expect(router.match("/ping", .HEAD) != null);
+}
+
+test "brace param alias {id}" {
+    const allocator = std.testing.allocator;
+    const parsed = try parseRoute("/users/{id}", allocator);
+    defer allocator.free(parsed.segments);
+    defer allocator.free(parsed.param_names);
+    try std.testing.expectEqual(@as(usize, 1), parsed.param_names.len);
+    try std.testing.expectEqualStrings("id", parsed.param_names[0]);
+}
+
+test "router seal rejects further registration" {
+    const allocator = std.testing.allocator;
+    var router = Router.init(allocator);
+    defer router.deinit();
+    const h = struct {
+        fn f(_: *Context) !void {}
+    }.f;
+    try router.addWithMethod("/a", .GET, h);
+    try router.addWithMethod("/b/:id", .GET, h);
+    try router.seal();
+    try std.testing.expect(router.sealed);
+    try std.testing.expectError(error.RouterSealed, router.addWithMethod("/c", .GET, h));
+    // After seal, more-specific still matches
+    try std.testing.expect(router.match("/b/1", .GET) != null);
 }
 
 test "param route cache FIFO eviction no double-free" {

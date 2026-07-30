@@ -406,7 +406,18 @@ pub fn build(b: *std.Build) void {
         const zf_tests = b.addTest(.{ .root_module = zf_test_mod });
         const run_zf_tests = b.addRunFile(zf_tests.getEmittedBin());
         run_zf_tests.expectExitCode(0);
+
+        const routes_test_mod = b.createModule(.{
+            .root_source_file = b.path("tools/zf/cmd_routes.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        const routes_tests = b.addTest(.{ .root_module = routes_test_mod });
+        const run_routes_tests = b.addRunFile(routes_tests.getEmittedBin());
+        run_routes_tests.expectExitCode(0);
+
         const zf_test_step = b.step("test-zf", "Run zf code generator regression tests");
         zf_test_step.dependOn(&run_zf_tests.step);
+        zf_test_step.dependOn(&run_routes_tests.step);
     }
 }
