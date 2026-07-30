@@ -55,13 +55,13 @@
 |-----|----------|--------|
 | Zig **0.17-dev** drift | P1 | Pin + CI |
 | Keep-alive unsafe by default | P1 | force-close + proxy KA + drain + CI regression; flip checklist in [`doc/reverse_proxy.md`](doc/reverse_proxy.md) §9; wait #25017 |
-| OpenAPI per-entity DTO fields | P2 | Named `JsonObject`/`JsonOk` refs; field-level DTO still manual |
+| OpenAPI per-entity DTO fields | P2 | **Closed 2026-07-31** — ORM `pub const Name = struct` → `Name`/`NameInput` schemas |
 
 ## Gaps closed (2026-07-31)
 
 | Gap | Fix |
 |-----|-----|
-| Interceptor static `var` secrets | `userdata` + `before_ud` + `heapCfg` |
+| Interceptor static `var` secrets | `userdata` + caller-owned `*const Cfg` (no `heapCfg`) |
 | `oneshot.capture` no headers | `captureWith` + `Context.mock_headers` / `mock_body` |
 | Extension 16 slots | capacity 32 + clearer full log |
 | Trace attr strings | `extension.TraceMeta` |

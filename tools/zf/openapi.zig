@@ -5,10 +5,9 @@
 //!   - `app.get/post/put/patch/delete("/path", ...)`
 //!   - `app.getWithInterceptors/...` variants
 //!   - `RouteGroup.init(&app, "/prefix")` + group `.get/post/...`
+//!   - `pub const Name = struct { … }` → `components.schemas.Name` / `NameInput`
 //!
-//! v0.21 infers path strings + path parameters, adds bearer JWT security on
-//! mutating operations, generic JSON request bodies, and standard error
-//! responses (400/401/404). Response schemas are still not introspected.
+//! Mutating ops get bearer JWT + `{Resource}Input` when a matching DTO exists.
 
 const std = @import("std");
 
@@ -34,16 +33,40 @@ pub const Route = struct {
     path: []const u8,
 };
 
+/// One property on a discovered DTO (from `model.zig` / ORM structs).
+pub const DtoField = struct {
+    name: []const u8,
+    /// OpenAPI primitive: string | integer | number | boolean
+    type_name: []const u8,
+    nullable: bool = false,
+};
+
+/// Named JSON schema derived from Zig `pub const Name = struct { … }`.
+pub const DtoSchema = struct {
+    name: []const u8,
+    fields: []DtoField,
+
+    pub fn deinit(self: *DtoSchema, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        for (self.fields) |f| allocator.free(f.name);
+        allocator.free(self.fields);
+        self.* = undefined;
+    }
+};
+
 /// Parsed OpenAPI spec. `routes` is sorted by (path, method) and deduped.
 pub const Spec = struct {
     title: []const u8,
     version: []const u8,
     routes: std.ArrayList(Route),
+    dtos: std.ArrayList(DtoSchema) = .empty,
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: *Spec) void {
         for (self.routes.items) |r| self.allocator.free(r.path);
         self.routes.deinit(self.allocator);
+        for (self.dtos.items) |*d| d.deinit(self.allocator);
+        self.dtos.deinit(self.allocator);
         self.* = undefined;
     }
 };
@@ -113,6 +136,7 @@ pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Spec {
 
     dedupe(&spec);
     std.mem.sort(Route, spec.routes.items, {}, lessThanRoute);
+    try collectDtosFromSource(allocator, source, &spec);
 
     return spec;
 }
@@ -358,14 +382,275 @@ fn lessThanRoute(_: void, a: Route, b: Route) bool {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DTO discovery (field-level schemas from Zig ORM structs)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const skip_dto_names = [_][]const u8{ "Data", "Self", "T", "Error", "Config", "Options", "Bag", "Entry" };
+
+fn shouldSkipDtoName(name: []const u8) bool {
+    for (skip_dto_names) |s| {
+        if (std.mem.eql(u8, s, name)) return true;
+    }
+    return false;
+}
+
+fn zigTypeToOpenApi(zt: []const u8) struct { type_name: []const u8, nullable: bool } {
+    var t = std.mem.trim(u8, zt, " \t");
+    var nullable = false;
+    if (t.len > 0 and t[0] == '?') {
+        nullable = true;
+        t = t[1..];
+    }
+    if (std.mem.eql(u8, t, "bool")) return .{ .type_name = "boolean", .nullable = nullable };
+    if (std.mem.startsWith(u8, t, "i") or std.mem.startsWith(u8, t, "u")) {
+        if (std.mem.indexOfScalar(u8, t, '[') == null)
+            return .{ .type_name = "integer", .nullable = nullable };
+    }
+    if (std.mem.startsWith(u8, t, "f32") or std.mem.startsWith(u8, t, "f64"))
+        return .{ .type_name = "number", .nullable = nullable };
+    return .{ .type_name = "string", .nullable = nullable };
+}
+
+/// Scan `source` for `pub const Name = struct { field: Type, … }` and fill `spec.dtos`.
+pub fn collectDtosFromSource(allocator: std.mem.Allocator, source: []const u8, spec: *Spec) !void {
+    try collectStructDtosFromSource(allocator, source, spec);
+    try collectZentDtosFromSource(allocator, source, spec);
+}
+
+fn dtoExists(spec: *const Spec, name: []const u8) bool {
+    for (spec.dtos.items) |d| {
+        if (std.mem.eql(u8, d.name, name)) return true;
+    }
+    return false;
+}
+
+fn appendDtoIfNew(allocator: std.mem.Allocator, spec: *Spec, name: []const u8, fields: *std.ArrayList(DtoField)) !void {
+    if (fields.items.len == 0) {
+        fields.deinit(allocator);
+        return;
+    }
+    if (dtoExists(spec, name)) {
+        for (fields.items) |f| allocator.free(f.name);
+        fields.deinit(allocator);
+        return;
+    }
+    try spec.dtos.append(allocator, .{
+        .name = try allocator.dupe(u8, name),
+        .fields = try fields.toOwnedSlice(allocator),
+    });
+}
+
+fn collectStructDtosFromSource(allocator: std.mem.Allocator, source: []const u8, spec: *Spec) !void {
+    var i: usize = 0;
+    while (i < source.len) {
+        const rest = source[i..];
+        const marker = "pub const ";
+        const mpos = std.mem.indexOf(u8, rest, marker) orelse break;
+        i += mpos + marker.len;
+        const after = source[i..];
+        const name_end = std.mem.indexOfAny(u8, after, " \t=") orelse continue;
+        const name = std.mem.trim(u8, after[0..name_end], " \t");
+        if (name.len == 0 or name[0] < 'A' or name[0] > 'Z') continue;
+        if (shouldSkipDtoName(name)) continue;
+
+        const eq = std.mem.indexOf(u8, after, "= struct") orelse continue;
+        // Avoid matching far-away structs: require "= struct" soon after name.
+        if (eq > name_end + 24) continue;
+        const brace = std.mem.indexOfScalar(u8, after[eq..], '{') orelse continue;
+        const body_start = eq + brace + 1;
+        var depth: i32 = 1;
+        var j = body_start;
+        while (j < after.len and depth > 0) : (j += 1) {
+            if (after[j] == '{') depth += 1;
+            if (after[j] == '}') depth -= 1;
+        }
+        if (depth != 0) continue;
+        const body = after[body_start .. j - 1];
+
+        var fields = std.ArrayList(DtoField).empty;
+        errdefer {
+            for (fields.items) |f| allocator.free(f.name);
+            fields.deinit(allocator);
+        }
+        var lines = std.mem.splitScalar(u8, body, '\n');
+        while (lines.next()) |raw| {
+            const line = std.mem.trim(u8, raw, " \t\r");
+            if (line.len == 0 or line[0] == '/' or line[0] == '#') continue;
+            if (std.mem.startsWith(u8, line, "pub ") or std.mem.startsWith(u8, line, "const ") or
+                std.mem.startsWith(u8, line, "fn ") or std.mem.startsWith(u8, line, "comptime"))
+                continue;
+            const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+            const fname = std.mem.trim(u8, line[0..colon], " \t");
+            if (fname.len == 0 or !std.ascii.isAlphabetic(fname[0])) continue;
+            var type_part = std.mem.trim(u8, line[colon + 1 ..], " \t");
+            if (std.mem.indexOfScalar(u8, type_part, ',')) |c| type_part = std.mem.trim(u8, type_part[0..c], " \t");
+            if (std.mem.indexOfScalar(u8, type_part, '=')) |e| type_part = std.mem.trim(u8, type_part[0..e], " \t");
+            if (type_part.len == 0) continue;
+            const mapped = zigTypeToOpenApi(type_part);
+            const owned_name = try allocator.dupe(u8, fname);
+            errdefer allocator.free(owned_name);
+            try fields.append(allocator, .{
+                .name = owned_name,
+                .type_name = mapped.type_name,
+                .nullable = mapped.nullable,
+            });
+        }
+        try appendDtoIfNew(allocator, spec, name, &fields);
+    }
+}
+
+fn zentFieldOpenApiType(kind: []const u8) []const u8 {
+    if (std.mem.eql(u8, kind, "Int") or std.mem.eql(u8, kind, "Uint")) return "integer";
+    if (std.mem.eql(u8, kind, "Float") or std.mem.eql(u8, kind, "Decimal")) return "number";
+    if (std.mem.eql(u8, kind, "Bool") or std.mem.eql(u8, kind, "Boolean")) return "boolean";
+    return "string"; // String, Text, DateTime, UUID, …
+}
+
+/// Parse zent `Schema("Name", .{ .fields = &.{ field.String("x"), … } })`.
+pub fn collectZentDtosFromSource(allocator: std.mem.Allocator, source: []const u8, spec: *Spec) !void {
+    var i: usize = 0;
+    while (i < source.len) {
+        const rest = source[i..];
+        const marker = "Schema(\"";
+        const mpos = std.mem.indexOf(u8, rest, marker) orelse break;
+        i += mpos + marker.len;
+        const after = source[i..];
+        const qend = std.mem.indexOfScalar(u8, after, '"') orelse continue;
+        const name = after[0..qend];
+        if (name.len == 0 or shouldSkipDtoName(name)) continue;
+
+        // Find `.fields = &.{` within a reasonable window after Schema("Name"
+        const window_end = @min(after.len, qend + 800);
+        const window = after[0..window_end];
+        const fields_key = std.mem.indexOf(u8, window, ".fields") orelse continue;
+        const amp = std.mem.indexOf(u8, window[fields_key..], ".{") orelse
+            std.mem.indexOf(u8, window[fields_key..], "&[") orelse continue;
+        var body_start = fields_key + amp;
+        // skip to after `.{` or `&.{`
+        if (std.mem.indexOf(u8, window[body_start..], "{")) |br| {
+            body_start = body_start + br + 1;
+        } else continue;
+
+        var depth: i32 = 1;
+        var j = body_start;
+        while (j < window.len and depth > 0) : (j += 1) {
+            if (window[j] == '{') depth += 1;
+            if (window[j] == '}') depth -= 1;
+        }
+        if (depth != 0) continue;
+        const body = window[body_start .. j - 1];
+
+        var fields = std.ArrayList(DtoField).empty;
+        errdefer {
+            for (fields.items) |f| allocator.free(f.name);
+            fields.deinit(allocator);
+        }
+
+        // Match field.Kind("name") occurrences
+        var bi: usize = 0;
+        while (bi < body.len) {
+            const chunk = body[bi..];
+            const fpos = std.mem.indexOf(u8, chunk, "field.") orelse break;
+            bi += fpos + "field.".len;
+            const kind_rest = body[bi..];
+            const kind_end = std.mem.indexOfAny(u8, kind_rest, "(\t ") orelse continue;
+            const kind = kind_rest[0..kind_end];
+            const paren = std.mem.indexOfScalar(u8, kind_rest, '(') orelse continue;
+            const after_paren = kind_rest[paren + 1 ..];
+            const lit = std.mem.indexOfScalar(u8, after_paren, '"') orelse continue;
+            const lit_rest = after_paren[lit + 1 ..];
+            const lit_end = std.mem.indexOfScalar(u8, lit_rest, '"') orelse continue;
+            const fname = lit_rest[0..lit_end];
+            if (fname.len == 0) continue;
+            const owned = try allocator.dupe(u8, fname);
+            errdefer allocator.free(owned);
+            try fields.append(allocator, .{
+                .name = owned,
+                .type_name = zentFieldOpenApiType(kind),
+                .nullable = false,
+            });
+            bi += paren + 1 + lit + 1 + lit_end;
+        }
+        try appendDtoIfNew(allocator, spec, name, &fields);
+    }
+}
+
+/// Last non-`{param}` path segment, PascalCased singular (users → User).
+fn dtoNameForPath(allocator: std.mem.Allocator, path: []const u8) !?[]const u8 {
+    var last: ?[]const u8 = null;
+    var it = std.mem.splitScalar(u8, path, '/');
+    while (it.next()) |seg| {
+        if (seg.len == 0) continue;
+        if (seg[0] == '{') continue;
+        last = seg;
+    }
+    const seg = last orelse return null;
+    if (std.mem.eql(u8, seg, "api") or std.mem.eql(u8, seg, "health") or std.mem.eql(u8, seg, "metrics"))
+        return null;
+
+    var base = seg;
+    if (base.len > 1 and base[base.len - 1] == 's' and !std.mem.endsWith(u8, base, "ss"))
+        base = base[0 .. base.len - 1];
+
+    var buf = try allocator.alloc(u8, base.len);
+    @memcpy(buf, base);
+    buf[0] = std.ascii.toUpper(buf[0]);
+    var i: usize = 1;
+    while (i < buf.len) : (i += 1) {
+        if (buf[i] == '_' or buf[i] == '-') {
+            // drop separator and upper next
+            if (i + 1 < buf.len) buf[i + 1] = std.ascii.toUpper(buf[i + 1]);
+        }
+    }
+    // Remove _ and -
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+    for (buf) |c| {
+        if (c == '_' or c == '-') continue;
+        try out.append(allocator, c);
+    }
+    allocator.free(buf);
+    if (out.items.len == 0) return null;
+    return try out.toOwnedSlice(allocator);
+}
+
+fn findDto(spec: Spec, name: []const u8) ?*const DtoSchema {
+    for (spec.dtos.items) |*d| {
+        if (std.mem.eql(u8, d.name, name)) return d;
+    }
+    return null;
+}
+
+fn appendDtoSchema(allocator: std.mem.Allocator, out: *std.ArrayList(u8), dto: DtoSchema, suffix: []const u8) !void {
+    try appendIndented(allocator, out, 2, "");
+    try out.appendSlice(allocator, dto.name);
+    try out.appendSlice(allocator, suffix);
+    try out.appendSlice(allocator, ":\n");
+    try appendIndented(allocator, out, 3, "type: object\n");
+    try appendIndented(allocator, out, 3, "properties:\n");
+    for (dto.fields) |f| {
+        if (suffix.len > 0 and std.mem.eql(u8, f.name, "id")) continue; // Input omits id
+        try appendIndented(allocator, out, 4, "");
+        try out.appendSlice(allocator, f.name);
+        try out.appendSlice(allocator, ":\n");
+        try appendIndented(allocator, out, 5, "type: ");
+        try out.appendSlice(allocator, f.type_name);
+        try out.append(allocator, '\n');
+        if (f.nullable) {
+            try appendIndented(allocator, out, 5, "nullable: true\n");
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // YAML renderer
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Render `spec` as an OpenAPI 3.0.3 YAML document.
 ///
 /// Each operation has path parameters, standard responses, and (for POST/PUT/PATCH)
-/// a generic JSON request body. Mutating operations declare `bearerAuth` security.
-/// The renderer is deterministic: same spec → same bytes.
+/// a JSON request body (`{Resource}Input` when a matching DTO exists). Mutating
+/// operations declare `bearerAuth` security. Deterministic: same spec → same bytes.
 pub fn renderYaml(allocator: std.mem.Allocator, spec: Spec) ![]u8 {
     var out = std.ArrayList(u8).empty;
     errdefer out.deinit(allocator);
@@ -407,6 +692,10 @@ pub fn renderYaml(allocator: std.mem.Allocator, spec: Spec) ![]u8 {
     try appendIndented(allocator, &out, 5, "type: boolean\n");
     try appendIndented(allocator, &out, 4, "data:\n");
     try appendIndented(allocator, &out, 5, "$ref: '#/components/schemas/JsonObject'\n");
+    for (spec.dtos.items) |dto| {
+        try appendDtoSchema(allocator, &out, dto, "");
+        try appendDtoSchema(allocator, &out, dto, "Input");
+    }
     try out.appendSlice(allocator, "paths:\n");
 
     // Group routes by path. spec.routes is already sorted, so first-occurrence
@@ -446,13 +735,23 @@ pub fn renderYaml(allocator: std.mem.Allocator, spec: Spec) ![]u8 {
                 }
             }
 
+            const dto_guess_name = try dtoNameForPath(allocator, path);
+            defer if (dto_guess_name) |n| allocator.free(n);
+            const dto = if (dto_guess_name) |n| findDto(spec, n) else null;
+
             if (r.method == .POST or r.method == .PUT or r.method == .PATCH) {
                 try appendIndented(allocator, &out, 3, "requestBody:\n");
                 try appendIndented(allocator, &out, 4, "required: true\n");
                 try appendIndented(allocator, &out, 4, "content:\n");
                 try appendIndented(allocator, &out, 5, "application/json:\n");
                 try appendIndented(allocator, &out, 6, "schema:\n");
-                try appendIndented(allocator, &out, 7, "$ref: '#/components/schemas/JsonObject'\n");
+                try appendIndented(allocator, &out, 7, "$ref: '#/components/schemas/");
+                if (dto) |d| {
+                    try out.appendSlice(allocator, d.name);
+                    try out.appendSlice(allocator, "Input'\n");
+                } else {
+                    try out.appendSlice(allocator, "JsonObject'\n");
+                }
                 try appendIndented(allocator, &out, 3, "security:\n");
                 try appendIndented(allocator, &out, 4, "- bearerAuth: []\n");
             }
@@ -463,7 +762,13 @@ pub fn renderYaml(allocator: std.mem.Allocator, spec: Spec) ![]u8 {
             try appendIndented(allocator, &out, 5, "content:\n");
             try appendIndented(allocator, &out, 6, "application/json:\n");
             try appendIndented(allocator, &out, 7, "schema:\n");
-            try appendIndented(allocator, &out, 8, "$ref: '#/components/schemas/JsonOk'\n");
+            try appendIndented(allocator, &out, 8, "$ref: '#/components/schemas/");
+            if (dto) |d| {
+                try out.appendSlice(allocator, d.name);
+                try out.appendSlice(allocator, "'\n");
+            } else {
+                try out.appendSlice(allocator, "JsonOk'\n");
+            }
             try appendIndented(allocator, &out, 4, "'400':\n");
             try appendIndented(allocator, &out, 5, "description: Bad Request\n");
             try appendIndented(allocator, &out, 5, "content:\n");

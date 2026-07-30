@@ -1,20 +1,22 @@
 //! Stock interceptors (tower-http style layers as ZFinal Interceptors).
 const std = @import("std");
 const Interceptor = @import("../interceptor/interceptor.zig").Interceptor;
-const heapCfg = @import("../interceptor/interceptor.zig").heapCfg;
 const Context = @import("context.zig").Context;
 const extension = @import("extension.zig");
 const getLog = @import("logger.zig").getLogger;
 
-/// Cap `ctx.max_body_size` for routes that opt in (global ServerConfig remains the ceiling).
-pub fn createBodyLimitInterceptor(max_bytes: usize) Interceptor {
-    const cfg = heapCfg(usize, max_bytes);
+pub const BodyLimitConfig = struct { max_bytes: usize };
+pub const TimeoutConfig = struct { timeout_ms: u64 };
+pub const CompressionConfig = struct { enabled: bool };
+
+/// Cap `ctx.max_body_size`. `cfg` must outlive the interceptor.
+pub fn createBodyLimitInterceptor(cfg: *const BodyLimitConfig) Interceptor {
     return .{
         .name = "body_limit",
-        .userdata = cfg,
+        .userdata = @constCast(cfg),
         .before_ud = struct {
             fn before(ctx: *Context, ud: ?*anyopaque) !bool {
-                const limit = @as(*usize, @ptrCast(@alignCast(ud.?))).*;
+                const limit = @as(*const BodyLimitConfig, @ptrCast(@alignCast(ud.?))).max_bytes;
                 ctx.max_body_size = @min(ctx.max_body_size, limit);
                 return true;
             }
@@ -23,14 +25,13 @@ pub fn createBodyLimitInterceptor(max_bytes: usize) Interceptor {
 }
 
 /// Shorten the per-request handler deadline (ms). 0 = no-op.
-pub fn createTimeoutInterceptor(timeout_ms: u64) Interceptor {
-    const cfg = heapCfg(u64, timeout_ms);
+pub fn createTimeoutInterceptor(cfg: *const TimeoutConfig) Interceptor {
     return .{
         .name = "timeout",
-        .userdata = cfg,
+        .userdata = @constCast(cfg),
         .before_ud = struct {
             fn before(ctx: *Context, ud: ?*anyopaque) !bool {
-                const ms = @as(*u64, @ptrCast(@alignCast(ud.?))).*;
+                const ms = @as(*const TimeoutConfig, @ptrCast(@alignCast(ud.?))).timeout_ms;
                 if (ms > 0) ctx.setTimeoutMs(ms);
                 return true;
             }
@@ -39,14 +40,13 @@ pub fn createTimeoutInterceptor(timeout_ms: u64) Interceptor {
 }
 
 /// Force gzip/deflate negotiation on/off for this request.
-pub fn createCompressionInterceptor(enabled: bool) Interceptor {
-    const cfg = heapCfg(bool, enabled);
+pub fn createCompressionInterceptor(cfg: *const CompressionConfig) Interceptor {
     return .{
         .name = "compression",
-        .userdata = cfg,
+        .userdata = @constCast(cfg),
         .before_ud = struct {
             fn before(ctx: *Context, ud: ?*anyopaque) !bool {
-                ctx.compress_enabled = @as(*bool, @ptrCast(@alignCast(ud.?))).*;
+                ctx.compress_enabled = @as(*const CompressionConfig, @ptrCast(@alignCast(ud.?))).enabled;
                 return true;
             }
         }.before,
@@ -99,11 +99,15 @@ pub fn createRequestIdExtInterceptor() Interceptor {
     };
 }
 
-test "body limit interceptor shrinks max" {
-    const a = createBodyLimitInterceptor(1024);
-    const b = createBodyLimitInterceptor(2048);
+test "body limit interceptor uses distinct caller-owned configs" {
+    const a_cfg = BodyLimitConfig{ .max_bytes = 1024 };
+    const b_cfg = BodyLimitConfig{ .max_bytes = 2048 };
+    const a = createBodyLimitInterceptor(&a_cfg);
+    const b = createBodyLimitInterceptor(&b_cfg);
     try std.testing.expect(a.userdata != b.userdata);
-    _ = createTimeoutInterceptor(100);
-    _ = createCompressionInterceptor(false);
+    const t_cfg = TimeoutConfig{ .timeout_ms = 100 };
+    const c_cfg = CompressionConfig{ .enabled = false };
+    _ = createTimeoutInterceptor(&t_cfg);
+    _ = createCompressionInterceptor(&c_cfg);
     _ = createTraceInterceptor();
 }

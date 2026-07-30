@@ -2,9 +2,9 @@
 
 ## Default: JWT-stateless
 
-Production apps should prefer **`createJwtAuthInterceptorWithOptions`** (or
-`createJwtAuthInterceptor` for secret-only) + `jwtSign` / `jwtVerifyWithOptions`
-(see `examples/production`). No shared session store is required across instances.
+Production apps should prefer **`createJwtAuthInterceptorWithOptions(&jwt_cfg)`** (or
+`createJwtAuthInterceptor`) + `jwtSign` / `jwtVerifyWithOptions`
+(see `examples/production`). Config structs are **caller-owned** and must outlive the interceptor. No shared session store is required across instances.
 
 - Claims: `sub`, `exp`, optional `nbf` / `iss` / `aud` / `role`
 - Rejects `alg=none`; supports `previous_secret` for HMAC key rotation
@@ -20,11 +20,12 @@ Wire globally (as in `examples/production`):
 
 ```zig
 try app.addGlobalInterceptor(zfinal.createRequestIdInterceptor());
-try app.addGlobalInterceptor(zfinal.createSecurityHeadersInterceptor(true)); // HSTS when TLS terminates
+var sec: zfinal.SecurityHeadersConfig = .{ .include_hsts = true }; // when TLS terminates
+try app.addGlobalInterceptor(zfinal.createSecurityHeadersInterceptor(&sec));
 ```
 
 - `createRequestIdInterceptor`: propagate or generate `X-Request-Id`, set attr `request_id`
-- `createSecurityHeadersInterceptor(include_hsts)`: nosniff / frame deny / XSS / optional HSTS
+- `createSecurityHeadersInterceptor(*SecurityHeadersConfig)`: nosniff / frame deny / XSS / optional HSTS
 
 ## In-memory `SessionStore`
 

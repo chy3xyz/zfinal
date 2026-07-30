@@ -90,21 +90,27 @@ pub fn main(init: std.process.Init) !void {
     // rate_limiter.trusted_proxies = &.{"127.0.0.1"};
     g_rate = &rate_limiter;
 
-    interceptors.csrf = zfinal.createTokenInterceptor(.{
+    var csrf_cfg: zfinal.TokenInterceptorConfig = .{
         .token_manager = &token_mgr,
         .token_name = "_token",
         .error_message = "Invalid or expired CSRF token",
-    });
+    };
+    interceptors.csrf = zfinal.createTokenInterceptor(&csrf_cfg);
     const rate_mw = zfinal.createRateLimitInterceptor(&rate_limiter);
-    interceptors.jwt = zfinal.createJwtAuthInterceptorWithOptions(app_state.jwt_secret, .{
-        .expected_iss = app_state.jwt_iss,
-        .expected_aud = app_state.jwt_aud,
-        .previous_secret = app_state.jwt_secret_prev,
-        .leeway_sec = 30,
-    });
+    var jwt_cfg: zfinal.JwtAuthConfig = .{
+        .secret = app_state.jwt_secret,
+        .opts = .{
+            .expected_iss = app_state.jwt_iss,
+            .expected_aud = app_state.jwt_aud,
+            .previous_secret = app_state.jwt_secret_prev,
+            .leeway_sec = 30,
+        },
+    };
+    interceptors.jwt = zfinal.createJwtAuthInterceptorWithOptions(&jwt_cfg);
 
     try app.addGlobalInterceptor(zfinal.createRequestIdInterceptor());
-    try app.addGlobalInterceptor(zfinal.createSecurityHeadersInterceptor(use_hsts));
+    var sec_cfg: zfinal.SecurityHeadersConfig = .{ .include_hsts = use_hsts };
+    try app.addGlobalInterceptor(zfinal.createSecurityHeadersInterceptor(&sec_cfg));
 
     // Explicit origins — never ship wildcard CORS for credentialed APIs.
     const cors_origin = blk: {
@@ -118,7 +124,8 @@ pub fn main(init: std.process.Init) !void {
         cors_origins_buf[1] = std.mem.span(o2);
         cors_n = 2;
     }
-    try app.addGlobalInterceptor(zfinal.createCorsAllowlistInterceptor(cors_origins_buf[0..cors_n]));
+    var cors_cfg: zfinal.CorsAllowlistConfig = .{ .origins = cors_origins_buf[0..cors_n] };
+    try app.addGlobalInterceptor(zfinal.createCorsAllowlistInterceptor(&cors_cfg));
     try app.addGlobalInterceptor(rate_mw);
 
     try api_routes.register(&app);

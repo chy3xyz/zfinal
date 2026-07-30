@@ -691,12 +691,20 @@ test "openapi: dedupes by method+path" {
 test "openapi: renderYaml produces minimal OpenAPI 3.0.3" {
     const allocator = std.testing.allocator;
     const src =
+        \\pub const User = struct {
+        \\    id: i64,
+        \\    name: []const u8,
+        \\    active: bool,
+        \\};
         \\try app.get("/health", h);
         \\try app.get("/users/:id", show);
         \\try app.post("/users", create);
     ;
     var spec = try openapi.parse(allocator, src);
     defer spec.deinit();
+
+    try std.testing.expect(spec.dtos.items.len >= 1);
+    try std.testing.expectEqualStrings("User", spec.dtos.items[0].name);
 
     const yaml = try openapi.renderYaml(allocator, spec);
     defer allocator.free(yaml);
@@ -729,6 +737,9 @@ test "openapi: renderYaml produces minimal OpenAPI 3.0.3" {
     try std.testing.expect(std.mem.indexOf(u8, yaml, "HttpError:") != null);
     try std.testing.expect(std.mem.indexOf(u8, yaml, "JsonObject:") != null);
     try std.testing.expect(std.mem.indexOf(u8, yaml, "JsonOk:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "User:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "UserInput:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "$ref: '#/components/schemas/UserInput'") != null);
     try std.testing.expect(std.mem.indexOf(u8, yaml, "requestBody:") != null);
     try std.testing.expect(std.mem.indexOf(u8, yaml, "security:") != null);
     try std.testing.expect(std.mem.indexOf(u8, yaml, "'401':") != null);
@@ -755,4 +766,37 @@ test "openapi: YAML output is stable across runs" {
     defer allocator.free(yaml2);
 
     try std.testing.expectEqualStrings(yaml1, yaml2);
+}
+
+test "openapi: zent Schema fields become DTOs" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub const Product = Schema("Product", .{
+        \\    .fields = &.{
+        \\        field.Int("seller_id"),
+        \\        field.String("name"),
+        \\        field.Int("price_cents"),
+        \\        field.Bool("active"),
+        \\    },
+        \\});
+        \\try app.get("/products/:id", show);
+        \\try app.post("/products", create);
+    ;
+    var spec = try openapi.parse(allocator, src);
+    defer spec.deinit();
+    try std.testing.expect(spec.dtos.items.len >= 1);
+    var found = false;
+    for (spec.dtos.items) |d| {
+        if (std.mem.eql(u8, d.name, "Product")) {
+            found = true;
+            try std.testing.expect(d.fields.len >= 3);
+        }
+    }
+    try std.testing.expect(found);
+    const yaml = try openapi.renderYaml(allocator, spec);
+    defer allocator.free(yaml);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "Product:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "ProductInput:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "seller_id:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "$ref: '#/components/schemas/ProductInput'") != null);
 }

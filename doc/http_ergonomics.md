@@ -13,7 +13,17 @@ global interceptors → route interceptors → handler → after (reverse)
 - Do not mix: never `renderJson` then `return error.*` (double-write guarded by `response_started`).
 - Rate limit / demo Auth / `ParamExt` also return `HttpError` (no hand-rolled body).
 - After any successful `respond` (`render*`, `renderFile`, `renderCsv`, `redirect`, SSE start), `markResponded()` sets `response_started` so a second render is a no-op.
-- Interceptor factories that need config use `userdata` + `before_ud` (no shared static `var`).
+- Interceptor factories take **caller-owned** `*const Cfg` (no `heapCfg` / no static `var`):
+  `JwtAuthConfig`, `TokenInterceptorConfig`, `CorsAllowlistConfig`, `SecurityHeadersConfig`,
+  `stock.BodyLimitConfig`, …
+- Prefer `before_ud` + `userdata` for new interceptors; plain `before` remains for zero-config layers.
+- Migrate old generated handlers: `zf check --heal` injects `failHttp` / `extract.requireParamInt`
+  (or regenerate with `zf crud:sql`).
+
+```zig
+var jwt_cfg: zfinal.JwtAuthConfig = .{ .secret = secret, .opts = .{ .leeway_sec = 30 } };
+try app.addGlobalInterceptor(zfinal.createJwtAuthInterceptorWithOptions(&jwt_cfg));
+```
 
 ## State (app-wide)
 
@@ -41,12 +51,21 @@ See prior sections — `extract.*`, `HttpError` table, comptime `tenant.app_id`.
 
 | Helper | Role |
 |--------|------|
-| `createBodyLimitInterceptor(n)` | Cap `ctx.max_body_size` |
-| `createTimeoutInterceptor(ms)` | `ctx.setTimeoutMs` |
-| `createCompressionInterceptor(bool)` | Per-request gzip on/off |
+| `createBodyLimitInterceptor(*BodyLimitConfig)` | Cap `ctx.max_body_size` |
+| `createTimeoutInterceptor(*TimeoutConfig)` | `ctx.setTimeoutMs` |
+| `createCompressionInterceptor(*CompressionConfig)` | Per-request gzip on/off |
 | `createTraceInterceptor()` | Access log after handler |
 
+```zig
+var bl: zfinal.stock.BodyLimitConfig = .{ .max_bytes = 1024 * 1024 };
+try app.addGlobalInterceptor(zfinal.stock.createBodyLimitInterceptor(&bl));
+```
+
 Server default: `ServerConfig.compress_responses` (default true).
+
+### Cache interceptor
+
+`createCacheInterceptor(*CacheInterceptorConfig)`: GET hit short-circuits. **After-store only works with `oneshot.capture`** (no TCP body buffer). Production HTTP caching: handler + `CacheKit`, or reverse-proxy cache.
 
 ## Fallback / merge
 
@@ -88,7 +107,12 @@ defer auth.deinit();
 
 **Keep-alive:** production still defaults `force_connection_close=true` until zig#25017 is fixed — see `doc/reverse_proxy.md` §9.
 
-`zf openapi` emits `components.schemas.HttpError`, `JsonObject`, `JsonOk` and `$ref`s on requestBody / 200 / 400/401/404/422/429.
+`zf openapi` emits `components.schemas.HttpError`, `JsonObject`, `JsonOk`, plus
+per-entity DTOs from:
+- ORM `pub const Name = struct { … }` → `Name` / `NameInput`
+- zent `Schema("Name", .{ .fields = &.{ field.String("…"), … } })` → same
+
+Routes under `/users` / `/products` `$ref` those DTOs when names match.
 
 ## DI boundary
 

@@ -23,6 +23,7 @@ pub fn handleCheck(allocator: std.mem.Allocator, heal: bool, ai_zones: bool, pro
         patched += try healComptimeVar(allocator);
         patched += try healDupeZ(allocator);
         patched += try healBufPrintZ(allocator);
+        patched += try healHttpErrorHandler(allocator);
         std.debug.print("\n════════════════════════════════════════\n", .{});
         std.debug.print("Healed: {d} file(s) patched.\n", .{patched});
         if (patched == 0) std.debug.print("✅ No issues found — code already healthy.\n", .{});
@@ -399,6 +400,49 @@ fn checkHandRolledErrorEnvelope(allocator: std.mem.Allocator, pass: *u32, warn: 
         std.debug.print("✅ PASS: no hand-rolled HttpError envelopes\n", .{});
         pass.* += 1;
     }
+
+    // Caller-owned interceptor cfg: flag legacy value-arg / heapCfg usage.
+    var cfg_warn: u32 = 0;
+    for (roots) |root| {
+        var dir = std.Io.Dir.cwd().openDir(zf_shared.io, root, .{ .iterate = true }) catch continue;
+        defer dir.close(zf_shared.io);
+        var walker = dir.walk(allocator) catch continue;
+        defer walker.deinit();
+        while (walker.next(zf_shared.io) catch null) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.basename, ".zig")) continue;
+            if (std.mem.eql(u8, entry.basename, "interceptor.zig")) continue;
+            if (std.mem.eql(u8, entry.basename, "cmd_check.zig")) continue;
+            const full = std.fmt.allocPrint(allocator, "{s}/{s}", .{ root, entry.path }) catch continue;
+            defer allocator.free(full);
+            const content = readFileAlloc(allocator, full) catch continue;
+            defer allocator.free(content);
+            if (std.mem.indexOf(u8, content, "heapCfg(") != null) {
+                std.debug.print("⚠️  WARN: {s} uses heapCfg — prefer caller-owned *const Cfg\n", .{full});
+                warn.* += 1;
+                cfg_warn += 1;
+            }
+            // Old JWT factory: createJwtAuthInterceptorWithOptions("secret", .{
+            if (std.mem.indexOf(u8, content, "createJwtAuthInterceptorWithOptions(\"") != null or
+                std.mem.indexOf(u8, content, "createJwtAuthInterceptorWithOptions('") != null)
+            {
+                std.debug.print("⚠️  WARN: {s} passes JWT secret by value — use JwtAuthConfig + &cfg\n", .{full});
+                warn.* += 1;
+                cfg_warn += 1;
+            }
+            if (std.mem.indexOf(u8, content, "createSecurityHeadersInterceptor(true)") != null or
+                std.mem.indexOf(u8, content, "createSecurityHeadersInterceptor(false)") != null)
+            {
+                std.debug.print("⚠️  WARN: {s} passes HSTS bool by value — use SecurityHeadersConfig + &cfg\n", .{full});
+                warn.* += 1;
+                cfg_warn += 1;
+            }
+        }
+    }
+    if (cfg_warn == 0) {
+        std.debug.print("✅ PASS: interceptor configs are caller-owned\n", .{});
+        pass.* += 1;
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -605,6 +649,106 @@ fn healDupeZ(allocator: std.mem.Allocator) !u32 {
         try std.Io.Dir.cwd().writeFile(zf_shared.io, .{ .sub_path = path, .data = new_content });
         std.debug.print("  ✓ healed: {s} (dupeZ → allocSentinel — manual @memcpy needed)\n", .{path});
         patched += 1;
+    }
+    return patched;
+}
+
+/// Migrate generated handlers from legacy `err(ctx, status, msg, code)` /
+/// hand-rolled parseId to `failHttp` + `extract.requireParamInt`.
+/// Scans `src/` and `examples/`. Safe to re-run (no-op when already migrated).
+fn healHttpErrorHandler(allocator: std.mem.Allocator) !u32 {
+    var patched: u32 = 0;
+    var paths: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (paths.items) |p| allocator.free(p);
+        paths.deinit(allocator);
+    }
+    try findFilesAll(allocator, "src", &paths);
+    try findFilesAll(allocator, "examples", &paths);
+
+    const fail_http_fn =
+        \\fn failHttp(ctx: *zfinal.Context, http_err: anyerror, comptime detail: []const u8) anyerror {
+        \\    zfinal.http_error.setDetail(ctx, detail);
+        \\    return http_err;
+        \\}
+        \\
+    ;
+
+    const old_parse_id =
+        \\/// Parse and validate ID path parameter.
+        \\fn parseId(ctx: *zfinal.Context) !i64 {
+        \\    const id_str = ctx.getPathParam("id") orelse {
+        \\        ctx.res_status = .bad_request;
+        \\        try ctx.renderJson(.{ .err = "Missing ID" });
+        \\        return error.InvalidId;
+        \\    };
+        \\    return std.fmt.parseInt(i64, id_str, 10) catch {
+        \\        ctx.res_status = .bad_request;
+        \\        try ctx.renderJson(.{ .err = "Invalid ID" });
+        \\        return error.InvalidId;
+        \\    };
+        \\}
+    ;
+
+    const new_parse_id =
+        \\/// Parse path `:id` via extract (HttpError.BadRequest on failure).
+        \\fn parseId(ctx: *zfinal.Context) !i64 {
+        \\    return zfinal.extract.requireParamInt(ctx, i64, "id");
+        \\}
+    ;
+
+    for (paths.items) |path| {
+        const base = std.fs.path.basename(path);
+        if (!std.mem.startsWith(u8, base, "handler")) continue;
+
+        const f = std.Io.Dir.cwd().openFile(zf_shared.io, path, .{}) catch continue;
+        defer f.close(zf_shared.io);
+        const stat = try f.stat(zf_shared.io);
+        if (stat.size > 1_000_000) continue;
+        const raw = try allocator.alloc(u8, @intCast(stat.size));
+        defer allocator.free(raw);
+        _ = try std.Io.File.readPositionalAll(f, zf_shared.io, raw, 0);
+
+        const needs =
+            std.mem.indexOf(u8, raw, "return err(ctx, .forbidden, \"Missing CSRF token\"") != null or
+            std.mem.indexOf(u8, raw, "return err(ctx, .not_found, \"Not found\"") != null or
+            std.mem.indexOf(u8, raw, "rateLimiter.handle(ctx) catch {}") != null or
+            std.mem.indexOf(u8, raw, old_parse_id) != null;
+        if (!needs) continue;
+
+        var content = try allocator.dupe(u8, raw);
+        defer allocator.free(content);
+
+        if (std.mem.indexOf(u8, content, "fn failHttp(") == null) {
+            if (std.mem.indexOf(u8, content, "fn err(ctx: *zfinal.Context, status: std.http.Status")) |idx| {
+                const inserted = try std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ content[0..idx], fail_http_fn, content[idx..] });
+                allocator.free(content);
+                content = inserted;
+            }
+        }
+
+        inline for (.{
+            .{ "rateLimiter.handle(ctx) catch {};", "try rateLimiter.handle(ctx);" },
+            .{ "return err(ctx, .forbidden, \"Missing CSRF token\", 40301);", "return failHttp(ctx, error.Forbidden, \"csrf_token\");" },
+            .{ "return err(ctx, .forbidden, \"Invalid CSRF token\", 40302);", "return failHttp(ctx, error.Forbidden, \"csrf_token\");" },
+            .{ "return err(ctx, .not_found, \"Not found\", 40401);", "return failHttp(ctx, error.NotFound, \"id\");" },
+            .{ "return err(ctx, .unprocessable_entity, \"Validation failed\", 42201);", "return failHttp(ctx, error.UnprocessableEntity, \"validation\");" },
+        }) |pair| {
+            const replaced = try std.mem.replaceOwned(u8, allocator, content, pair[0], pair[1]);
+            allocator.free(content);
+            content = replaced;
+        }
+        {
+            const replaced = try std.mem.replaceOwned(u8, allocator, content, old_parse_id, new_parse_id);
+            allocator.free(content);
+            content = replaced;
+        }
+
+        if (!std.mem.eql(u8, content, raw)) {
+            try std.Io.Dir.cwd().writeFile(zf_shared.io, .{ .sub_path = path, .data = content });
+            std.debug.print("  ✓ healed: {s} (HttpError / failHttp)\n", .{path});
+            patched += 1;
+        }
     }
     return patched;
 }

@@ -716,9 +716,9 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         if (col.is_auto_increment) continue;
         const zt = zigType(col);
         const line = if (std.mem.startsWith(u8, zt, "i64") or std.mem.startsWith(u8, zt, "?i64"))
-            try std.fmt.allocPrint(allocator, "            .{s} = if ((try ctx.getPara(\"{s}\"))) |v| (std.fmt.parseInt(i64, v, 10) catch return err(ctx, .bad_request, \"Invalid {s}\", 40001)) else 0,\n", .{ col.name, col.name, col.name })
+            try std.fmt.allocPrint(allocator, "            .{s} = if ((try ctx.getPara(\"{s}\"))) |v| (std.fmt.parseInt(i64, v, 10) catch return failHttp(ctx, error.BadRequest, \"{s}\")) else 0,\n", .{ col.name, col.name, col.name })
         else if (std.mem.startsWith(u8, zt, "f64") or std.mem.startsWith(u8, zt, "?f64"))
-            try std.fmt.allocPrint(allocator, "            .{s} = if ((try ctx.getPara(\"{s}\"))) |v| (std.fmt.parseFloat(f64, v) catch return err(ctx, .bad_request, \"Invalid {s}\", 40001)) else 0.0,\n", .{ col.name, col.name, col.name })
+            try std.fmt.allocPrint(allocator, "            .{s} = if ((try ctx.getPara(\"{s}\"))) |v| (std.fmt.parseFloat(f64, v) catch return failHttp(ctx, error.BadRequest, \"{s}\")) else 0.0,\n", .{ col.name, col.name, col.name })
         else if (std.mem.eql(u8, zt, "bool"))
             try std.fmt.allocPrint(allocator, "            .{s} = if ((try ctx.getPara(\"{s}\"))) |v| (std.mem.eql(u8, v, \"true\") or std.mem.eql(u8, v, \"1\") or std.mem.eql(u8, v, \"t\")) else false,\n", .{ col.name, col.name })
         else if (std.mem.eql(u8, zt, "?bool"))
@@ -740,6 +740,12 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\const tokenMgr = @import("{s}deps.zig").getTokenMgr();
         \\const rateLimiter = @import("{s}deps.zig").getRateLimiter();
         \\
+        \\fn failHttp(ctx: *zfinal.Context, http_err: anyerror, comptime detail: []const u8) anyerror {{
+        \\    zfinal.http_error.setDetail(ctx, detail);
+        \\    return http_err;
+        \\}}
+        \\
+        \\/// Legacy envelope with app-specific numeric `code` (prefer failHttp / HttpError).
         \\fn err(ctx: *zfinal.Context, status: std.http.Status, comptime msg: []const u8, code: i32) !void {{
         \\    ctx.res_status = status;
         \\    try ctx.renderJson(.{{ .err = msg, .code = code }});
@@ -747,8 +753,8 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\
         \\/// CSRF guard: validates csrf_token using TokenManager.
         \\fn csrfGuard(ctx: *zfinal.Context) !void {{
-        \\    const token = try ctx.getPara("csrf_token") orelse return err(ctx, .forbidden, "Missing CSRF token", 40301);
-        \\    if (!try tokenMgr.validate(token)) return err(ctx, .forbidden, "Invalid CSRF token", 40302);
+        \\    const token = try ctx.getPara("csrf_token") orelse return failHttp(ctx, error.Forbidden, "csrf_token");
+        \\    if (!try tokenMgr.validate(token)) return failHttp(ctx, error.Forbidden, "csrf_token");
         \\}}
         \\
         \\/// List {s} records with pagination + rate limiting + search.
@@ -776,7 +782,7 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\    const id = try parseId(ctx);
         \\    const db = try pool.acquire();
         \\    defer pool.release(db) catch {{}};
-        \\    const item = try service.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
+        \\    const item = try service.findById(db, id, ctx.allocator) orelse return failHttp(ctx, error.NotFound, "id");
         \\    defer item.deinit(ctx.allocator);
         \\    try ctx.renderJson(.{{ .data = item }});
         \\}}
@@ -789,7 +795,7 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\    const data: service.Data = .{{
         \\{s}    }};
         \\    const instance = service.create(db, data) catch |e| {{
-        \\        if (e == error.ValidationError) return err(ctx, .unprocessable_entity, "Validation failed", 42201);
+        \\        if (e == error.ValidationError) return failHttp(ctx, error.UnprocessableEntity, "validation");
         \\        return e;
         \\    }};
         \\    try ctx.renderJson(.{{ .ok = true, .id = instance.id }});
@@ -813,7 +819,7 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\    const id = try parseId(ctx);
         \\    const db = try pool.acquire();
         \\    defer pool.release(db) catch {{}};
-        \\    var item = try service.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
+        \\    var item = try service.findById(db, id, ctx.allocator) orelse return failHttp(ctx, error.NotFound, "id");
         \\    try item.delete(db);
         \\    try ctx.renderJson(.{{ .ok = true }});
         \\}}
@@ -824,7 +830,7 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\    const id = try parseId(ctx);
         \\    const db = try pool.acquire();
         \\    defer pool.release(db) catch {{}};
-        \\    var item = try service.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
+        \\    var item = try service.findById(db, id, ctx.allocator) orelse return failHttp(ctx, error.NotFound, "id");
         \\{s}    try item.save(db);
         \\    try ctx.renderJson(.{{ .ok = true }});
         \\}}

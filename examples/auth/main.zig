@@ -17,12 +17,13 @@ pub fn main() !void {
 
     app.setPort(8080);
 
-    // 创建 Token 拦截器
-    const token_interceptor = zfinal.createTokenInterceptor(.{
+    // 创建 Token 拦截器（cfg 须活过 app.start）
+    var token_cfg: zfinal.TokenInterceptorConfig = .{
         .token_manager = &token_manager,
         .token_name = "_token",
         .error_message = "Invalid or expired token, please refresh",
-    });
+    };
+    const token_interceptor = zfinal.createTokenInterceptor(&token_cfg);
 
     // 使用内联结构体定义处理器，捕获 token_manager
     const Handlers = struct {

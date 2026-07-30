@@ -100,9 +100,10 @@ pub const AuthInterceptor = @import("interceptor/interceptor.zig").AuthIntercept
 pub const CORSInterceptor = @import("interceptor/interceptor.zig").CORSInterceptor;
 pub const createCorsInterceptor = @import("interceptor/interceptor.zig").createCorsInterceptor;
 pub const createCorsAllowlistInterceptor = @import("interceptor/interceptor.zig").createCorsAllowlistInterceptor;
+pub const CorsAllowlistConfig = @import("interceptor/interceptor.zig").CorsAllowlistConfig;
 pub const createJwtAuthInterceptor = @import("interceptor/interceptor.zig").createJwtAuthInterceptor;
 pub const createJwtAuthInterceptorWithOptions = @import("interceptor/interceptor.zig").createJwtAuthInterceptorWithOptions;
-pub const heapCfg = @import("interceptor/interceptor.zig").heapCfg;
+pub const JwtAuthConfig = @import("interceptor/interceptor.zig").JwtAuthConfig;
 
 // Auth
 pub const Jwt = @import("auth/jwt.zig");
@@ -209,6 +210,7 @@ pub const WebSocketOpCode = @import("websocket/websocket.zig").OpCode;
 pub const TokenManager = @import("token/token.zig").TokenManager;
 pub const Token = @import("token/token.zig").Token;
 pub const createTokenInterceptor = @import("token/interceptor.zig").createTokenInterceptor;
+pub const TokenInterceptorConfig = @import("token/interceptor.zig").TokenInterceptorConfig;
 
 // Export Captcha modules
 pub const CaptchaManager = @import("captcha/captcha.zig").CaptchaManager;
@@ -227,6 +229,7 @@ pub const createCacheInterceptorWithOptions = @import("ext/interceptor.zig").cre
 pub const CacheInterceptorConfig = @import("ext/interceptor.zig").CacheInterceptorConfig;
 pub const createRateLimitInterceptor = @import("ext/interceptor.zig").createRateLimitInterceptor;
 pub const createSecurityHeadersInterceptor = @import("ext/security_interceptor.zig").createSecurityHeadersInterceptor;
+pub const SecurityHeadersConfig = @import("ext/security_interceptor.zig").SecurityHeadersConfig;
 pub const createRequestIdInterceptor = @import("ext/security_interceptor.zig").createRequestIdInterceptor;
 pub const RenderExt = @import("ext/util.zig").RenderExt;
 pub const ParamExt = @import("ext/util.zig").ParamExt;

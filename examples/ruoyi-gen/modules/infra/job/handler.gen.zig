@@ -7,6 +7,10 @@ const pool_ref = &@import("../../../deps.zig").pool;
 const token_ref = &@import("../../../deps.zig").tokenMgr;
 const limit_ref = &@import("../../../deps.zig").rateLimiter;
 
+fn failHttp(ctx: *zfinal.Context, http_err: anyerror, comptime detail: []const u8) anyerror {
+    zfinal.http_error.setDetail(ctx, detail);
+    return http_err;
+}
 fn err(ctx: *zfinal.Context, status: std.http.Status, comptime msg: []const u8, code: i32) !void {
     ctx.res_status = status;
     try ctx.renderJson(.{ .err = msg, .code = code });
@@ -14,8 +18,8 @@ fn err(ctx: *zfinal.Context, status: std.http.Status, comptime msg: []const u8, 
 
 /// CSRF guard: validates csrf_token using TokenManager.
 fn csrfGuard(ctx: *zfinal.Context) !void {
-    const token = try ctx.getPara("csrf_token") orelse return err(ctx, .forbidden, "Missing CSRF token", 40301);
-    if (!try token_ref.validate(token)) return err(ctx, .forbidden, "Invalid CSRF token", 40302);
+    const token = try ctx.getPara("csrf_token") orelse return failHttp(ctx, error.Forbidden, "csrf_token");
+    if (!try token_ref.validate(token)) return failHttp(ctx, error.Forbidden, "csrf_token");
 }
 
 /// List InfraJob records with pagination + rate limiting.
@@ -39,7 +43,7 @@ pub fn show(ctx: *zfinal.Context) !void {
     const id = try parseId(ctx);
     const db = try pool_ref.acquire();
     defer pool_ref.release(db) catch {};
-    const item = try service.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
+    const item = try service.findById(db, id, ctx.allocator) orelse return failHttp(ctx, error.NotFound, "id");
     defer item.deinit(ctx.allocator);
     try ctx.renderJson(.{ .data = item });
 }
@@ -65,7 +69,7 @@ pub fn create(ctx: *zfinal.Context) !void {
         .deleted = if ((try ctx.getPara("deleted"))) |v| (std.mem.eql(u8, v, "true") or std.mem.eql(u8, v, "1") or std.mem.eql(u8, v, "t")) else false,
     };
     const instance = service.create(db, data) catch |e| {
-        if (e == error.ValidationError) return err(ctx, .unprocessable_entity, "Validation failed", 42201);
+        if (e == error.ValidationError) return failHttp(ctx, error.UnprocessableEntity, "validation");
         return e;
     };
     try ctx.renderJson(.{ .ok = true, .id = instance.id });
@@ -77,7 +81,7 @@ pub fn update(ctx: *zfinal.Context) !void {
     const id = try parseId(ctx);
     const db = try pool_ref.acquire();
     defer pool_ref.release(db) catch {};
-    var item = try service.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
+    var item = try service.findById(db, id, ctx.allocator) orelse return failHttp(ctx, error.NotFound, "id");
     if (try ctx.getPara("name")) |v| item.data.name = v;
     if (try ctx.getPara("status")) |v| item.data.status = std.fmt.parseInt(i64, v, 10) catch item.data.status;
     if (try ctx.getPara("handler_name")) |v| item.data.handler_name = v;
@@ -102,7 +106,7 @@ pub fn delete(ctx: *zfinal.Context) !void {
     const id = try parseId(ctx);
     const db = try pool_ref.acquire();
     defer pool_ref.release(db) catch {};
-    var item = try service.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
+    var item = try service.findById(db, id, ctx.allocator) orelse return failHttp(ctx, error.NotFound, "id");
     try item.delete(db);
     try ctx.renderJson(.{ .ok = true });
 }
@@ -113,7 +117,7 @@ pub fn patch(ctx: *zfinal.Context) !void {
     const id = try parseId(ctx);
     const db = try pool_ref.acquire();
     defer pool_ref.release(db) catch {};
-    var item = try service.findById(db, id, ctx.allocator) orelse return err(ctx, .not_found, "Not found", 40401);
+    var item = try service.findById(db, id, ctx.allocator) orelse return failHttp(ctx, error.NotFound, "id");
     if (try ctx.getPara("name")) |v| item.data.name = v;
     if (try ctx.getPara("status")) |v| item.data.status = std.fmt.parseInt(i64, v, 10) catch item.data.status;
     if (try ctx.getPara("handler_name")) |v| item.data.handler_name = v;
@@ -131,16 +135,7 @@ pub fn patch(ctx: *zfinal.Context) !void {
     try ctx.renderJson(.{ .ok = true });
 }
 
-/// Parse and validate ID path parameter.
+/// Parse path `:id` via extract (HttpError.BadRequest on failure).
 fn parseId(ctx: *zfinal.Context) !i64 {
-    const id_str = ctx.getPathParam("id") orelse {
-        ctx.res_status = .bad_request;
-        try ctx.renderJson(.{ .err = "Missing ID" });
-        return error.InvalidId;
-    };
-    return std.fmt.parseInt(i64, id_str, 10) catch {
-        ctx.res_status = .bad_request;
-        try ctx.renderJson(.{ .err = "Invalid ID" });
-        return error.InvalidId;
-    };
+    return zfinal.extract.requireParamInt(ctx, i64, "id");
 }

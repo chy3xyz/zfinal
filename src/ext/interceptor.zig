@@ -94,29 +94,30 @@ pub fn createAccessLogInterceptor() zfinal.Interceptor {
 }
 
 /// GET response-cache interceptor (CacheKit).
-/// Before: if `Cache-Control` allows and key hits, short-circuit with cached body.
-/// After: store successful GET JSON/text responses (status 200) when `X-Cache-Store: 1`
-/// was set by the handler, or always for GET 200 when `auto_store` is true (default).
+///
+/// **Before**: on GET cache hit → `renderText` + `return false` (short-circuit).
+/// **After store**: only when `ctx.capture` is set (oneshot / in-process tests).
+/// Live TCP responses do not buffer the body for re-store — use `CacheKit` in the
+/// handler, or run behind a reverse-proxy cache.
 pub const CacheInterceptorConfig = struct {
     cache: *zfinal.CacheKit,
-    /// Key prefix; full key = prefix + method + path (no query).
+    /// Key prefix; full key = prefix + `GET:` + path (no query).
     key_prefix: []const u8 = "zf:http:",
     ttl_sec: i64 = 60,
     auto_store: bool = true,
 };
 
-pub fn createCacheInterceptor(cache: *zfinal.CacheKit) zfinal.Interceptor {
-    return createCacheInterceptorWithOptions(.{ .cache = cache });
+pub fn createCacheInterceptor(cfg: *const CacheInterceptorConfig) zfinal.Interceptor {
+    return createCacheInterceptorWithOptions(cfg);
 }
 
-pub fn createCacheInterceptorWithOptions(config: CacheInterceptorConfig) zfinal.Interceptor {
-    const cfg = zfinal.heapCfg(CacheInterceptorConfig, config);
+pub fn createCacheInterceptorWithOptions(cfg: *const CacheInterceptorConfig) zfinal.Interceptor {
     return zfinal.Interceptor{
         .name = "cache",
-        .userdata = cfg,
+        .userdata = @constCast(cfg),
         .before_ud = struct {
             fn before(ctx: *zfinal.Context, ud: ?*anyopaque) !bool {
-                const c: *CacheInterceptorConfig = @ptrCast(@alignCast(ud.?));
+                const c: *const CacheInterceptorConfig = @ptrCast(@alignCast(ud.?));
                 if (ctx.req.head.method != .GET) return true;
                 const target = ctx.req.head.target;
                 const path = if (std.mem.indexOfScalar(u8, target, '?')) |q| target[0..q] else target;
@@ -134,12 +135,12 @@ pub fn createCacheInterceptorWithOptions(config: CacheInterceptorConfig) zfinal.
         }.before,
         .after_ud = struct {
             fn after(ctx: *zfinal.Context, ud: ?*anyopaque) !void {
-                const c: *CacheInterceptorConfig = @ptrCast(@alignCast(ud.?));
+                const c: *const CacheInterceptorConfig = @ptrCast(@alignCast(ud.?));
                 if (ctx.req.head.method != .GET) return;
                 if (ctx.res_status != .ok) return;
                 if (!c.auto_store and ctx.getAttr("_cache_store") == null) return;
                 const key = ctx.getAttr("_cache_key") orelse return;
-                // Capture buffer only — TCP path would need a body buffer; skip if empty capture.
+                // Capture-mode only (no TCP body buffer).
                 if (ctx.capture) |cap| {
                     if (cap.body.items.len == 0) return;
                     c.cache.set(key, cap.body.items, c.ttl_sec) catch {};

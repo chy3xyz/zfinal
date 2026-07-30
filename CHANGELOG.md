@@ -1,5 +1,20 @@
 ## [Unreleased]
 
+### Added
+- **Caller-owned interceptor config**: factories take `*const Cfg` + `userdata` / `before_ud` (`JwtAuthConfig`, `CorsAllowlistConfig`, `TokenInterceptorConfig`, `SecurityHeadersConfig`, stock body-limit / timeout / compression). Removed public `heapCfg`.
+- **OpenAPI field-level DTOs**: `zf openapi` parses `pub const Name = struct` and zent `Schema("Name", field.*)` into `Name` / `NameInput` schemas with route `$ref`.
+- **Codegen `failHttp`**: generated handlers prefer HttpError (`failHttp` + `extract.requireParamInt`); legacy `err(..., code)` kept for numeric envelopes.
+- **`zf check --heal` HttpError migration**: patches old `handler*.zig` CSRF / not_found / validation / `parseId` patterns under `src/` and `examples/`.
+- **`zf check` WARN**: `heapCfg(`, legacy JWT/HSTS by-value factories.
+
+### Changed
+- Cache interceptor: GET hit short-circuit; after-store only with `ctx.capture` (documented).
+- `examples/production` / `auth` / `smart-routing` use stack-owned interceptor configs.
+- `examples/ruoyi-gen` handlers healed to `failHttp` (param named `http_err` to avoid shadowing legacy `fn err`).
+
+### Docs
+- `doc/http_ergonomics.md`, `doc/session.md`, `PRODUCTION_AUDIT.md`, `.life/evolution.md` updated for caller-owned cfg + heal.
+
 ## [0.20.8] - 2026-07-23
 
 ### Fixed

@@ -4,6 +4,52 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+## 2026-07-31 — zf check --heal HttpError + CHANGELOG
+
+**Session**: Continue — heal ruoyi handlers, fix failHttp shadowing
+**Changes**:
+1. `healHttpErrorHandler` — migrate CSRF / not_found / validation / parseId / rateLimiter
+2. `failHttp(..., http_err, ...)` — avoid shadowing legacy `fn err`
+3. Healed `examples/ruoyi-gen` handlers; CHANGELOG Unreleased; docs note `before_ud` + heal
+**Tests**: zig build install-zf + test-zf
+**Next**: keep-alive #25017; optional unify `before`/`before_ud` over time
+
+---
+
+## 2026-07-31 — zent Schema OpenAPI DTOs + cfg check
+
+**Session**: Continue — zent DTO parse, zf check caller-owned cfg
+**Changes**:
+1. `collectZentDtosFromSource` — `Schema("Name", field.*)` → OpenAPI `Name`/`NameInput`
+2. `zf check` WARN on `heapCfg` / legacy JWT+HSTS by-value factories
+**Tests**: zig build test-zf
+**Next**: keep-alive #25017; optional regen of ruoyi handler.gen
+
+---
+
+## 2026-07-31 — OpenAPI entity DTOs + codegen HttpError
+
+**Session**: Continue after caller-owned interceptor cfg (B + codegen)
+**Changes**:
+1. `openapi.collectDtosFromSource` — `pub const Name = struct` → `Name` / `NameInput` schemas + route `$ref`
+2. codegen `failHttp` for CSRF / not_found / validation / field parse; legacy `err` kept
+**Tests**: zig build test-zf + test
+**Next**: keep-alive #25017; zent Schema() DTO parse
+
+---
+
+## 2026-07-31 — Interceptor caller-owned config (A)
+
+**Session**: Remove heapCfg leak; factories take `*const Cfg`
+**Changes**:
+1. `JwtAuthConfig` / `CorsAllowlistConfig` / `TokenInterceptorConfig` / `SecurityHeadersConfig` / stock `*Config`
+2. production + auth examples hold cfg on stack; Cache store limitation documented
+3. Removed public `heapCfg`
+**Tests**: zig build test + test-zf + production build
+**Next**: field-level OpenAPI DTO; keep-alive #25017
+
+---
+
 ## 2026-07-31 — Ten-item ergonomics follow-up
 
 **Session**: Interceptor userdata, captureWith, OpenAPI DTOs, check/codegen/blog/cache

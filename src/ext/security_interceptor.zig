@@ -1,17 +1,19 @@
 const std = @import("std");
 const zfinal = @import("../main.zig");
 const RandomKit = @import("../kit/random_kit.zig").RandomKit;
-const heapCfg = @import("../interceptor/interceptor.zig").heapCfg;
 
-/// Set standard security response headers (nosniff, frame deny, XSS, optional HSTS).
-pub fn createSecurityHeadersInterceptor(include_hsts: bool) zfinal.Interceptor {
-    const cfg = heapCfg(bool, include_hsts);
+pub const SecurityHeadersConfig = struct {
+    include_hsts: bool = true,
+};
+
+/// Set standard security response headers. `cfg` must outlive the interceptor.
+pub fn createSecurityHeadersInterceptor(cfg: *const SecurityHeadersConfig) zfinal.Interceptor {
     return zfinal.Interceptor{
         .name = "security_headers",
-        .userdata = cfg,
+        .userdata = @constCast(cfg),
         .before_ud = struct {
             fn before(ctx: *zfinal.Context, ud: ?*anyopaque) !bool {
-                const hsts = @as(*bool, @ptrCast(@alignCast(ud.?))).*;
+                const hsts = @as(*const SecurityHeadersConfig, @ptrCast(@alignCast(ud.?))).include_hsts;
                 try ctx.setHeader("X-Content-Type-Options", "nosniff");
                 try ctx.setHeader("X-Frame-Options", "DENY");
                 try ctx.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");

@@ -4,8 +4,8 @@
 const zfinal = @import("zfinal");
 
 // Placeholder — replace with real interceptors in your app:
-//   pub const auth = zfinal.createJwtAuthInterceptorWithOptions(...);
-//   pub const access_log = ...;
+//   var jwt_cfg: zfinal.JwtAuthConfig = .{ .secret = "…" };
+//   pub var auth = zfinal.createJwtAuthInterceptorWithOptions(&jwt_cfg);
 
 pub const auth: zfinal.Interceptor = .{ .name = "auth" };
 pub const access_log: zfinal.Interceptor = .{ .name = "access_log" };

@@ -6,14 +6,6 @@ const http_error = @import("../core/http_error.zig");
 
 pub const Handler = *const fn (*Context) anyerror!void;
 
-/// Process-lifetime heap config for interceptor factories (JWT/CORS/stock, …).
-/// Prefer caller-owned pointers when available (e.g. `*RateLimitHandler`).
-pub fn heapCfg(comptime T: type, value: T) *T {
-    const p = std.heap.page_allocator.create(T) catch @panic("interceptor config OOM");
-    p.* = value;
-    return p;
-}
-
 fn runBefore(interceptor: *const Interceptor, ctx: *Context) !bool {
     if (interceptor.before_ud) |f| return try f(ctx, interceptor.userdata);
     if (interceptor.before) |f| return try f(ctx);
@@ -148,26 +140,25 @@ pub const AuthInterceptor = Interceptor{
     .before = authBefore,
 };
 
-/// Production JWT (HS256) auth. Expects `Authorization: Bearer <token>`.
-pub fn createJwtAuthInterceptor(secret: []const u8) Interceptor {
-    return createJwtAuthInterceptorWithOptions(secret, .{});
-}
-
-const JwtAuthCfg = struct {
-    sec: []const u8,
-    verify_opts: jwt.VerifyOptions,
+/// Caller-owned JWT auth config (must outlive the Interceptor).
+pub const JwtAuthConfig = struct {
+    secret: []const u8,
+    opts: jwt.VerifyOptions = .{},
 };
 
+/// Production JWT (HS256). `cfg` must outlive the returned interceptor (stack / AppState).
+pub fn createJwtAuthInterceptor(cfg: *const JwtAuthConfig) Interceptor {
+    return createJwtAuthInterceptorWithOptions(cfg);
+}
+
 /// Production JWT with `VerifyOptions` (iss/aud/rotation/leeway).
-/// Config is heap-copied once (process lifetime) so multiple instances do not share static vars.
-pub fn createJwtAuthInterceptorWithOptions(secret: []const u8, opts: jwt.VerifyOptions) Interceptor {
-    const cfg = heapCfg(JwtAuthCfg, .{ .sec = secret, .verify_opts = opts });
+pub fn createJwtAuthInterceptorWithOptions(cfg: *const JwtAuthConfig) Interceptor {
     return Interceptor{
         .name = "jwt_auth",
-        .userdata = cfg,
+        .userdata = @constCast(cfg),
         .before_ud = struct {
             fn before(ctx: *Context, ud: ?*anyopaque) !bool {
-                const c: *JwtAuthCfg = @ptrCast(@alignCast(ud.?));
+                const c: *const JwtAuthConfig = @ptrCast(@alignCast(ud.?));
                 const hdr = ctx.getHeader("Authorization") orelse {
                     http_error.setDetail(ctx, "Authorization");
                     return error.Unauthorized;
@@ -182,7 +173,7 @@ pub fn createJwtAuthInterceptorWithOptions(secret: []const u8, opts: jwt.VerifyO
                 _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
                 const now: i64 = @intCast(ts.sec);
 
-                const claims = jwt.verifyWithOptions(ctx.allocator, c.sec, token, now, c.verify_opts) catch {
+                const claims = jwt.verifyWithOptions(ctx.allocator, c.secret, token, now, c.opts) catch {
                     const path = if (std.mem.indexOfScalar(u8, ctx.req.head.target, '?')) |q|
                         ctx.req.head.target[0..q]
                     else
@@ -207,7 +198,7 @@ pub fn createJwtAuthInterceptorWithOptions(secret: []const u8, opts: jwt.VerifyO
 }
 
 /// Default CORS: `Access-Control-Allow-Origin: *`.
-/// **Not safe for credentialed browser APIs.** Prefer `createCorsInterceptor`.
+/// **Not safe for credentialed browser APIs.** Prefer `createCorsAllowlistInterceptor`.
 pub fn corsBefore(ctx: *Context) !bool {
     try ctx.setHeader("Access-Control-Allow-Origin", "*");
     try ctx.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
@@ -232,23 +223,19 @@ pub const CORSInterceptor = Interceptor{
     .after = corsAfter,
 };
 
-/// Production-oriented CORS: single explicit origin (no wildcard).
-pub fn createCorsInterceptor(allowed_origin: []const u8) Interceptor {
-    return createCorsAllowlistInterceptor(&.{allowed_origin});
-}
+/// Caller-owned CORS allow-list (must outlive the Interceptor).
+pub const CorsAllowlistConfig = struct {
+    origins: []const []const u8,
+};
 
-const CorsCfg = struct { origins: []const []const u8 };
-
-/// Production CORS with an allow-list of origins. Reflects request Origin when matched.
-/// `allowed_origins` must outlive the interceptor (typically static / AppState).
-pub fn createCorsAllowlistInterceptor(allowed_origins: []const []const u8) Interceptor {
-    const cfg = heapCfg(CorsCfg, .{ .origins = allowed_origins });
+/// Production CORS allow-list. Reflects request Origin when matched.
+pub fn createCorsAllowlistInterceptor(cfg: *const CorsAllowlistConfig) Interceptor {
     return Interceptor{
         .name = "cors_allowlist",
-        .userdata = cfg,
+        .userdata = @constCast(cfg),
         .before_ud = struct {
             fn before(ctx: *Context, ud: ?*anyopaque) !bool {
-                const origins = @as(*CorsCfg, @ptrCast(@alignCast(ud.?))).origins;
+                const origins = @as(*const CorsAllowlistConfig, @ptrCast(@alignCast(ud.?))).origins;
                 const req_origin = ctx.getHeader("Origin");
                 var matched: ?[]const u8 = null;
                 if (req_origin) |o| {
@@ -282,14 +269,21 @@ pub fn createCorsAllowlistInterceptor(allowed_origins: []const []const u8) Inter
     };
 }
 
-test "jwt auth interceptor uses distinct userdata configs" {
-    const a = createJwtAuthInterceptorWithOptions("secret-a-min-32-bytes!!!!!!!!!!!!!!", .{});
-    const b = createJwtAuthInterceptorWithOptions("secret-b-min-32-bytes!!!!!!!!!!!!!!", .{});
+/// Alias: single-origin allow-list via `CorsAllowlistConfig{ .origins = &.{ origin } }`.
+pub fn createCorsInterceptor(cfg: *const CorsAllowlistConfig) Interceptor {
+    return createCorsAllowlistInterceptor(cfg);
+}
+
+test "jwt auth interceptor uses distinct caller-owned configs" {
+    const cfg_a = JwtAuthConfig{ .secret = "secret-a-min-32-bytes!!!!!!!!!!!!!!" };
+    const cfg_b = JwtAuthConfig{ .secret = "secret-b-min-32-bytes!!!!!!!!!!!!!!" };
+    const a = createJwtAuthInterceptorWithOptions(&cfg_a);
+    const b = createJwtAuthInterceptorWithOptions(&cfg_b);
     try std.testing.expect(a.userdata != b.userdata);
-    const ca: *JwtAuthCfg = @ptrCast(@alignCast(a.userdata.?));
-    const cb: *JwtAuthCfg = @ptrCast(@alignCast(b.userdata.?));
-    try std.testing.expectEqualStrings("secret-a-min-32-bytes!!!!!!!!!!!!!!", ca.sec);
-    try std.testing.expectEqualStrings("secret-b-min-32-bytes!!!!!!!!!!!!!!", cb.sec);
+    const ca: *const JwtAuthConfig = @ptrCast(@alignCast(a.userdata.?));
+    const cb: *const JwtAuthConfig = @ptrCast(@alignCast(b.userdata.?));
+    try std.testing.expectEqualStrings(cfg_a.secret, ca.secret);
+    try std.testing.expectEqualStrings(cfg_b.secret, cb.secret);
 }
 
 test "interceptor basic" {
@@ -298,11 +292,9 @@ test "interceptor basic" {
     const testHandler = struct {
         fn handler(ctx: *Context) !void {
             _ = ctx;
-            // Handler would be called here
         }
     }.handler;
 
-    // Create a simple interceptor
     const interceptor = Interceptor{
         .name = "test",
         .before = struct {
@@ -313,7 +305,6 @@ test "interceptor basic" {
         }.before,
     };
 
-    // Note: Full test would require creating a mock Context
     _ = interceptor;
     _ = testHandler;
     _ = allocator;
