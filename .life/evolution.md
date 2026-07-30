@@ -4,6 +4,18 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+## 2026-07-31 — release v0.20.9
+
+**Session**: Ship smart routing + Axum ergonomics + interceptor/OpenAPI harden
+**Changes**:
+1. SSoT `0.20.9` (version.zig / zon / README / templates / dna)
+2. CHANGELOG cut from Unreleased (5 commits since v0.20.8)
+3. Tag `v0.20.9` + push
+**Tests**: prior session green (257p/11s + test-zf 31p)
+**Next**: keep-alive #25017
+
+---
+
 ## 2026-07-31 — Cfg lifetime / cache WARN / 404 after
 
 **Session**: Reliability polish (1+2+3)

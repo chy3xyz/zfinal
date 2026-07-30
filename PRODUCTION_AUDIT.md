@@ -1,6 +1,6 @@
 # ZFinal Framework — Production Readiness Audit
 
-**Date:** 2026-07-31 (CHANGELOG / package **0.20.8**)  
+**Date:** 2026-07-31 (CHANGELOG / package **0.20.9**)  
 **Zig:** `0.17.0-dev.1422+e863bf3be` (pinned in CI; `minimum_zig_version` in `build.zig.zon`)  
 **Status:** **Production-ready under the deployment contract below.**  
 **Headline score (contractual):** **9.8 / 10**  

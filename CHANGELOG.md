@@ -1,23 +1,24 @@
 ## [Unreleased]
 
+## [0.20.9] - 2026-07-31
+
 ### Added
+- **Smart routing**: `actions.zig` / `zf routes`, seal + specificity, CI check (see ADR-011).
+- **Axum-style HTTP ergonomics**: State / Extension / extract / HttpError / stock layers / fallback+merge / oneshot.capture(+With) / SSE helpers (ADR-012).
 - **Caller-owned interceptor config**: factories take `*const Cfg` + `userdata` / `before_ud` (`JwtAuthConfig`, `CorsAllowlistConfig`, `TokenInterceptorConfig`, `SecurityHeadersConfig`, stock body-limit / timeout / compression). Removed public `heapCfg`.
-- **OpenAPI field-level DTOs**: `zf openapi` parses `pub const Name = struct` and zent `Schema("Name", field.*)` into `Name` / `NameInput` schemas with route `$ref`.
-- **Codegen `failHttp`**: generated handlers use HttpError (`failHttp` + `extract.requireParamInt`); no dead `fn err`.
-- **`zf check --heal` HttpError migration**: patches CSRF / not_found / validation / `parseId`, and strips unused legacy `fn err`.
-- **`zf check` WARN**: `heapCfg(`, legacy JWT/HSTS by-value factories.
+- **OpenAPI field-level DTOs**: `zf openapi` parses `pub const Name = struct` and zent `Schema("Name", field.*)` into `Name` / `NameInput` with route `$ref`; irregular plurals (`categories`→`Category`).
+- **Codegen `failHttp`**: generated handlers use HttpError (`failHttp` + `extract.requireParamInt`); `zf check --heal` migrates and strips dead `fn err`.
+- **`zf check` WARNs**: `heapCfg(`, legacy JWT/HSTS by-value factories, temporary `&.{` interceptor cfg, Cache interceptor on `--prod`.
 
 ### Changed
-- **OpenAPI plural / `$ref`**: `categories`→`Category`, `boxes`→`Box`; raw-segment fallback; `*Input` omits `id`/`created_at`/`updated_at`/`create_time`/`update_time`/`deleted`.
-- **Interceptor `before_ud` convergence**: all stock/demo factories use `_ud`; `runBefore`/`runAfter` public and used by router 404 path; plain `before` kept as fallback.
-- **Reliability polish**: `zf check` WARNs temporary `&.{` interceptor cfg; Cache TCP store limits documented + `--prod` WARN; 404/405/fallback run global `runAfter`.
-- **Docs / scaffold HttpError alignment**: `SECURITY.md` / `PRODUCTION_AUDIT` caller-owned CORS/HSTS; `zf new` user handler returns `HttpError`; quickstart/codegen/migration samples updated.
-- Cache interceptor: GET hit short-circuit; after-store only with `ctx.capture` (documented).
-- `examples/production` / `auth` / `smart-routing` use stack-owned interceptor configs.
-- `examples/ruoyi-gen` handlers healed to `failHttp` only (dead `fn err` removed).
+- **Interceptor `before_ud` convergence**: all stock/demo factories use `_ud`; public `runBefore`/`runAfter`; 404/405/fallback run global `runAfter`.
+- **P0 HttpError unify**: RateLimit / demo Auth / ParamExt / production `me` Ext; `markResponded` on all render paths.
+- Cache interceptor: GET hit-only; after-store only with `ctx.capture` (documented).
+- Docs / scaffold HttpError alignment (`SECURITY.md`, `PRODUCTION_AUDIT`, `zf new` user handler, migration samples).
+- `examples/production` / `auth` / `smart-routing` / `ruoyi-gen` updated for caller-owned cfg + `failHttp`.
 
 ### Docs
-- `doc/http_ergonomics.md`, `doc/session.md`, `PRODUCTION_AUDIT.md`, `.life/evolution.md` updated for caller-owned cfg + heal.
+- `doc/http_ergonomics.md`, `doc/session.md`, `doc/reverse_proxy.md` §9, `PRODUCTION_AUDIT.md`, `.life/evolution.md`.
 
 ## [0.20.8] - 2026-07-23
 
