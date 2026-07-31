@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+## [0.20.11] - 2026-07-31
+
+### Fixed
+- **CI / `zig build` on Linux**: bump `zent` to **v0.12.1** (build.zig no longer uses
+  `extern "c" stat`; Zig 0.17 requires explicit libc for that and failed the
+  productized quality gate on Ubuntu).
+
 ## [0.20.10] - 2026-07-31
 
 ### Added
