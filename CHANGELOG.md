@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+### Docs
+- **Best-practice hub refresh (v0.20.9 / 2026-07-31)**: [`doc/best_practices.md`](doc/best_practices.md)
+  (task index + capability timeline); aligned architecture / progressive / scale /
+  index / core_concepts / advanced; test baseline **257p/11s**.
+- **JSON envelope best practices**: [`doc/api_envelope.md`](doc/api_envelope.md) (REST/HttpError vs zapi);
+  linked from architecture best practices, HTTP ergonomics, `doc/index.md`; ADR-013.
+
 ## [0.20.9] - 2026-07-31
 
 ### Added

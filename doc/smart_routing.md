@@ -1,8 +1,9 @@
 # ZFinal 智能路由最佳实践
 
+> **版本**：对齐 v0.20.9+ · ADR-011  
 > **立场**：绿场、无存量兼容包袱 → **一套真源、一种方言、只读运行时**。  
 > **灵感**：JFinal（约定 + ActionKey）· **实现**：`actions.zig` + `zf routes` · **内核**：表驱动匹配。  
-> **相关**：[architecture_best_practices.md](architecture_best_practices.md) · [codegen.md](codegen.md) · [reverse_proxy.md](reverse_proxy.md) · [openapi / zf](zf_cli.md)
+> **相关**：[best_practices.md](best_practices.md) · [architecture_best_practices.md](architecture_best_practices.md) · [codegen.md](codegen.md) · [reverse_proxy.md](reverse_proxy.md) · [openapi / zf](zf_cli.md)
 
 ---
 

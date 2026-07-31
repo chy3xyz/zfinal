@@ -1,7 +1,7 @@
 # 千万级用户支撑方案
 
-> **版本**：对齐 v0.13.7+  
-> **相关**：[progressive_architecture.md](progressive_architecture.md) · [architecture_best_practices.md](architecture_best_practices.md) · [`PRODUCTION_AUDIT.md`](../PRODUCTION_AUDIT.md)
+> **版本**：对齐 v0.20.9+ · 修订 **2026-07-31**  
+> **相关**：[progressive_architecture.md](progressive_architecture.md) · [architecture_best_practices.md](architecture_best_practices.md) · [best_practices.md](best_practices.md) · [`PRODUCTION_AUDIT.md`](../PRODUCTION_AUDIT.md) · [reverse_proxy.md](reverse_proxy.md)
 
 **结论：**「千万级用户」通常指注册量 / 月活，不是单机千万并发。  
 ZFinal 适合做 **无状态 API / BFF 节点**；要靠 **水平扩展 + 外部数据面** 撑住。  

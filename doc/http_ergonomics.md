@@ -1,6 +1,7 @@
 # HTTP ergonomics (Axum-inspired)
 
-Related: [smart_routing.md](smart_routing.md) · [progressive_architecture.md](progressive_architecture.md) · ADR-011 · ADR-012
+> **版本**：对齐 v0.20.9+ · ADR-012  
+> Related: [best_practices.md](best_practices.md) · [smart_routing.md](smart_routing.md) · [api_envelope.md](api_envelope.md) · [progressive_architecture.md](progressive_architecture.md) · ADR-011
 
 ## Layer order
 
@@ -53,7 +54,12 @@ JWT interceptor sets `JwtIdentity` after attrs. ≠ State.
 
 ## Extractors / HttpError / Tenant
 
-See prior sections — `extract.*`, `HttpError` table, comptime `tenant.app_id`.
+- Prefer `return error.NotFound` (etc.); `dispatch` maps via `http_error.render`.
+- Default JSON failure body: `{ "err": "<code>", "msg": "<message>", "detail"?: "…" }` —
+  see [api_envelope.md](api_envelope.md). Do **not** switch only errors to zapi `{code,msg,data}`
+  while successes stay `{ok}` / `{data}`.
+- Extractors: `extract.requireParamInt`, headers, etc.; set `http_error.setDetail` before return.
+- Tenant field naming is **comptime** (`tenant.app_id`).
 
 ## Stock layers (`zfinal.stock`)
 

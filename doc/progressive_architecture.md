@@ -1,8 +1,10 @@
 # 渐进式代码架构（由小到大）
 
+> **版本**：对齐 v0.20.9+ · 修订 **2026-07-31**  
 > **反向设计原则**：从 [千万级支撑方案](scale_to_millions.md) 倒推——  
 > **今天按最终形态的依赖方向写代码，但只实现当前阶段需要的组件。**  
-> 这样 L0 → L3 升级时改的是 **装配与实现**，不是推翻三层目录。
+> 这样 L0 → L3 升级时改的是 **装配与实现**，不是推翻三层目录。  
+> **总索**：[best_practices.md](best_practices.md) · **架构规范**：[architecture_best_practices.md](architecture_best_practices.md)
 
 **不变核心（全程遵守）：**
 
@@ -11,8 +13,9 @@ handler → service → model
   HTTP      业务       数据
 ```
 
-- 用 `zf crud:sql` 生成模块；只改 `ai-edit-zone`
-- 对外只用 `zfinal.*` 稳定 API（见 [architecture_best_practices.md](architecture_best_practices.md)）
+- 用 `zf crud:sql` / `zf crud:zent` 生成模块；只改 `ai-edit-zone`
+- 绿场路由优先 `actions.zig` + `zf routes`（v0.20.9+）
+- 对外只用 `zfinal.*` 稳定 API；错误用 `HttpError` / `failHttp`
 
 ---
 
@@ -69,9 +72,10 @@ try app.start();
 
 ### 规则
 
-- Service **不**读环境里的「从库 URL」——L0 只有一个 `*DB`。
-- Handler **不**直接 `DB.init`。
+- Service **不**读环境里的「从库 URL」——L0 只有一个 `*DB`（或一套 zent Schema）。
+- Handler **不**直接 `DB.init`；失败用 `return error.*` / `failHttp`，勿手搓错误 JSON。
 - 允许进程内 `CachePlugin` / `QueueClient`（单机演示即可）。
+- 路由：可用手写 `routes.register`；绿场更推荐 `actions.zig`（与 L1+ 同一真源）。
 
 ### 毕业标准
 
@@ -113,11 +117,13 @@ defer rate.deinit();
 ### 规则
 
 - 限流与真实 IP 策略集中在 **入口装配**，不散落在每个 handler。
+- 拦截器 cfg **caller-owned**（禁止 `createX(&.{…})`）；见 [http_ergonomics.md](http_ergonomics.md)。
 - 仍单库；可开始把 DSN 从环境变量读入（为 L2 换 PG 做准备）。
+- 生产保持 `force_connection_close=true`（[reverse_proxy.md](reverse_proxy.md)）。
 
 ### 毕业标准
 
-ReleaseSafe 可跑；`/health` 有指标；反代 TLS 文档化；压测基线有记录。
+ReleaseSafe 可跑；`/health` 有指标；反代 TLS 文档化；`zf check --prod` 绿；压测基线有记录。
 
 ---
 
@@ -297,22 +303,23 @@ main.zig 只组装 adapters → ports → service → routes
 
 ### L0 → L1
 
-- [ ] `/health` + 结构化日志  
-- [ ] 限流与代理策略只在装配层配置  
-- [ ] Cookie / CSRF 使用框架默认安全项  
+- [ ] `/health` + 结构化日志 + Metrics  
+- [ ] 限流与代理策略只在装配层配置（caller-owned cfg）  
+- [ ] Cookie / CSRF / SecurityHeaders / RequestId  
+- [ ] `force_connection_close=true` + 反代文档  
 
 ### L1 → L2
 
 - [ ] DSN / Redis URL 环境变量化  
-- [ ] Service 经 Store/Cache 端口注入  
+- [ ] Service 经 Store/Cache 端口注入（`zf g port` / `examples/ports-l2`）  
 - [ ] 双实例验证会话  
 - [ ] 池大小写入部署文档  
 
 ### L2 → L3
 
-- [ ] 表与缓存 key 含 `tenant_id`（或等价分片键）  
+- [ ] 表与缓存 key 含 `tenant_id`（或等价分片键；`extract.requireTenant`）  
 - [ ] 写路径幂等键  
-- [ ] `bus` 端口 + 至少一种跨机适配器（或 outbox 表）  
+- [ ] `bus` 端口 + 至少一种跨机适配器（或 outbox；`examples/ports-l3`）  
 - [ ] worker 可独立部署  
 
 ---
@@ -321,14 +328,15 @@ main.zig 只组装 adapters → ports → service → routes
 
 | 文档或示例 | 对应阶段 |
 |------------|----------|
-| `zf new` / `examples/hello` | L0 |
+| `zf new` / `examples/hello-world` | L0 |
+| `examples/smart-routing` | L0+ 路由真源 |
 | `examples/production` | L1 |
-| 本文 L2/L3 + `scale_to_millions.md` | 扩展目标 |
 | `zf g port store\|cache\|bus` | 生成 `src/ports` + `src/adapters` 脚手架 |
 | `examples/ports-l2` (`zig build run-ports-l2`) | L2 DI 可抄示例 |
 | `examples/ports-l3` (`zig build run-ports-l3`) | L3 tenant + outbox + 幂等可抄示例 |
-| `architecture_best_practices.md` | 全程规范 |
-| `PRODUCTION_AUDIT.md` | L1+ 部署契约 |
+| [best_practices.md](best_practices.md) | 总索 + 能力时间线 |
+| [architecture_best_practices.md](architecture_best_practices.md) | 全程规范 |
+| [`PRODUCTION_AUDIT.md`](../PRODUCTION_AUDIT.md) | L1+ 部署契约 |
 
 ---
 

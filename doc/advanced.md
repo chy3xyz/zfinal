@@ -1,101 +1,64 @@
 # 进阶功能
 
-## 1. 拦截器 (Interceptors / AOP)
+> **版本**：对齐 v0.20.9+ · 修订 **2026-07-31**  
+> 生产装配抄 [`examples/production`](../examples/production/) · 总索 [best_practices.md](best_practices.md)
 
-拦截器用于在请求处理前后执行逻辑，如日志记录、权限检查等。
+## 1. 拦截器 (Interceptors)
 
-### 定义拦截器
+请求前后横切。优先返回 `HttpError`；仅在已写响应时 `return false`（如 CORS 预检）。
 
 ```zig
-fn authBefore(ctx: *zfinal.Context) !bool {
+fn authBefore(ctx: *zfinal.Context, _: ?*anyopaque) !bool {
     const token = ctx.getHeader("Authorization");
-    if (token == null) {
-        ctx.res_status = .unauthorized;
-        try ctx.renderJson(.{ .@"error" = "Unauthorized" });
-        return false; // 拦截请求，不再继续
-    }
-    return true; // 放行
+    if (token == null) return error.Unauthorized;
+    return true;
 }
-
-pub const AuthInterceptor = zfinal.Interceptor{
-    .name = "auth",
-    .before = authBefore,
-};
 ```
 
-### 注册拦截器
+**Caller-owned cfg**（禁止 `createX(&.{…})`）：
 
-**全局拦截器**: 对所有请求生效。
 ```zig
-try app.addGlobalInterceptor(AuthInterceptor);
+var jwt_cfg: zfinal.JwtAuthConfig = .{ .secret = secret, .opts = .{ .leeway_sec = 30 } };
+try app.addGlobalInterceptor(zfinal.createJwtAuthInterceptorWithOptions(&jwt_cfg));
 ```
 
-**路由级拦截器**: 仅对特定路由生效。
-```zig
-try app.getWithInterceptors("/admin", AdminController.index, &.{AuthInterceptor});
-```
+Stock：`zfinal.stock.createBodyLimitInterceptor` / `Timeout` / `Compression` / `Trace`。  
+详情：[http_ergonomics.md](http_ergonomics.md)。
 
 ## 2. 验证器 (Validators)
 
-ZFinal 提供了一套流式验证 API。
-
 ```zig
-pub fn create(ctx: *zfinal.Context) !void {
-    var validator = zfinal.Validator.init(ctx.allocator);
-    defer validator.deinit();
-
-    const username = try ctx.getPara("username");
-    const email = try ctx.getPara("email");
-
-    try validator.validateRequired("username", username);
-    try validator.validateEmail("email", email);
-    try validator.validateMinLength("username", username, 3);
-
-    if (validator.hasErrors()) {
-        ctx.res_status = .bad_request;
-        // 直接序列化 validator 输出错误信息
-        try ctx.renderJson(.{ .errors = validator });
-        return;
-    }
-    
-    // ... 业务逻辑
+var validator = zfinal.Validator.init(ctx.allocator);
+defer validator.deinit();
+try validator.validateRequired("username", username);
+try validator.validateEmail("email", email);
+if (validator.hasErrors()) {
+    zfinal.http_error.setDetail(ctx, "validation");
+    return error.BadRequest;
 }
 ```
 
 ## 3. 文件上传
 
 ```zig
-pub fn upload(ctx: *zfinal.Context) !void {
-    // 获取上传的文件
-    const file = try ctx.getFile("avatar");
-    if (file) |f| {
-        defer f.deinit();
-        // 保存到指定目录
-        try f.saveToDir("uploads");
-        try ctx.renderJson(.{ .msg = "Upload success", .filename = f.filename });
-    }
+if (try ctx.getFile("avatar")) |f| {
+    defer f.deinit();
+    try f.saveToDir("uploads");
+    try ctx.renderJson(.{ .msg = "Upload success", .filename = f.filename });
 }
 ```
 
 ## 4. 插件系统 (Plugins)
 
-插件用于扩展框架功能，如缓存、定时任务等。
+可启停能力进 `plugin/`（Cache / Cron / Redis / MQTT / …）。半成品用 `zfinal.experimental.*` + ADR。  
+消息：稳定面 `QueueNatsClient` / `QueueRobustMQClient`（[nats.md](nats.md) · [robustmq.md](robustmq.md)）。
 
-### 缓存插件
+## 5. 规模与端口
 
-```zig
-var cache = zfinal.CachePlugin.init(allocator);
-try app.addPlugin(cache);
+L2/L3 抽 `ports` + `adapters`：`zf g port store|cache|bus`；示例 `ports-l2` / `ports-l3`。  
+见 [progressive_architecture.md](progressive_architecture.md)。
 
-// 使用缓存
-try cache.set("key", "value", 60); // 60s TTL
-const val = cache.get("key");
-```
+## 6. OpenAPI
 
-### 定时任务插件
-
-```zig
-var cron = zfinal.CronPlugin.init(allocator);
-try cron.addTask("* * * * *", myTaskFunction);
-try app.addPlugin(cron);
-```
+`zf openapi`：bearerAuth、JSON body、实体 `Name`/`NameInput` DTO、HttpError schema。  
+与默认信封字段保持一致（[api_envelope.md](api_envelope.md)）。

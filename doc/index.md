@@ -1,150 +1,88 @@
 # ZFinal — AI Speedrun Zig Web Framework
 
-> **🤖 If you are an AI agent: read `.claude/skills/zfinal-onboarding.md` first.**
-> That file is the 30-second orientation. This page is the long-form
-> reference. Both target the same goal: let an AI build a ZFinal
-> feature in minutes, not hours.
+> **🤖 If you are an AI agent: read `.claude/skills/zfinal-onboarding.md` first.**  
+> **Best practices hub:** [best_practices.md](best_practices.md)（任务索引 + v0.20.x 能力时间线）
 
-ZFinal is a high-performance Zig web framework with a unique property:
-**it is designed for AI-driven development**. Every generated file
-tells the AI exactly where to add business logic. The `zf` CLI emits
-machine-readable JSON. The in-framework `ZfTool` lets the AI invoke
-the generator from code. The result: an AI can add a CRUD feature in
-**5 minutes**.
+ZFinal is a high-performance Zig web framework **designed for AI-driven development**.
+Generated files mark `// ── ai-edit-zone: …`; `zf` emits JSON manifests; `zfinal.ZfTool`
+can invoke generators in-process. Current release: **v0.20.9** (Zig `0.17.0-dev.1422`).
 
 ## Why ZFinal
 
 | Property | Why it matters for AI |
 |----------|----------------------|
-| `zf crud:sql <file> --json` | Emits a manifest the AI parses instead of grepping the working tree |
-| `// ── ai-edit-zone: ...` markers | Edit only these blocks; regen **merges** matching zones (else `.gen.new` / `--force`) |
-| `zfinal.ZfTool` (in-framework) | The AI can call the generator from Zig code, no shell out |
-| `zig fmt` clean | 346+ files, all formatted; AI doesn't have to fight style |
-| `zf check` | Audits AI boundary compliance; catches hand-edited generated code |
-| `zig build test` | 145 tests pass, 0 leak, 0 fail; AI can rely on green CI |
+| `zf crud:sql` / `zf crud:zent` `--json` | Manifest instead of grepping the tree |
+| `ai-edit-zone` + zone **merge** | Regen keeps matching zone bodies |
+| `zf routes` + `actions.zig` | One routing source of truth (v0.20.9+) |
+| `zfinal.ZfTool` | In-process generator, no shell required |
+| `zf check` / `--heal` / `--prod` | Boundary + HttpError + production contract |
+| `zig build test` | **257 passed; 11 skipped; 0 failed** (baseline) |
 
 ## The 5-minute AI speedrun
 
 ```bash
-# 1. Schema is the source of truth
 cat schema.sql
-
-# 2. Generate everything (model, service, handler, routes, tests)
 zf crud:sql schema.sql --json > manifest.json
-
-# 3. Edit only inside ai-edit-zones
-$EDITOR src/modules/users/service.zig  # add business rules
-$EDITOR src/modules/users/handler.zig  # add auth checks
-
-# 4. Verify
-zf check && zig build test
-
-# 5. Run
-zig build run
+# Edit only ai-edit-zones → zf check && zig build test → zig build run
 ```
 
-5 commands. 5 minutes. Full walkthrough in [ai-quickstart.md](ai-quickstart.md).
-Runnable demo in [`examples/ai-blog-5min/`](../examples/ai-blog-5min/ZF_GEN.md).
+Path B (graphs / e-commerce): `zf crud:zent schema.zent --json`.  
+Walkthrough: [ai-quickstart.md](ai-quickstart.md) · Demo: `examples/ai-blog-5min/`.
 
 ## For AI agents
 
 | You want to… | Read |
 |--------------|------|
-| Get oriented (first 30 seconds) | [`.claude/skills/zfinal-onboarding.md`](../.claude/skills/zfinal-onboarding.md) |
-| Add a new feature / entity / route | [`.claude/skills/zfinal-ai-playbook.md`](../.claude/skills/zfinal-ai-playbook.md) |
-| Run / fix tests or health checks | [`.claude/skills/zfinal-health.md`](../.claude/skills/zfinal-health.md) |
-| Build a complete app from scratch | [`.claude/skills/zfinal-app.md`](../.claude/skills/zfinal-app.md) |
-| Add a module to the framework | [`.claude/skills/zfinal-framework.md`](../.claude/skills/zfinal-framework.md) |
-| Follow architecture best practices | [architecture_best_practices.md](architecture_best_practices.md) |
-| Smart routing (REST + actions.zig) | [smart_routing.md](smart_routing.md) |
-| Scale to millions of users (ops topology) | [scale_to_millions.md](scale_to_millions.md) |
-| Reverse proxy + force close (keep-alive) | [reverse_proxy.md](reverse_proxy.md) |
-| Progressive code architecture L0→L3 | [progressive_architecture.md](progressive_architecture.md) |
-| Understand Zig 0.17, memory safety, etc. | [`.claude/skills/zfinal-evolution.md`](../.claude/skills/zfinal-evolution.md) |
-| See a 5-minute walkthrough | [ai-quickstart.md](ai-quickstart.md) |
-| Run a live demo | `zig build run-ai-blog-5min` |
+| First 30 seconds | [`.claude/skills/zfinal-onboarding.md`](../.claude/skills/zfinal-onboarding.md) |
+| Best-practice hub (start here for architecture) | [best_practices.md](best_practices.md) |
+| Add feature / CRUD | [`.claude/skills/zfinal-ai-playbook.md`](../.claude/skills/zfinal-ai-playbook.md) |
+| zent / e-commerce | [`.claude/skills/zfinal-zent-ai.md`](../.claude/skills/zfinal-zent-ai.md) |
+| Health / CI | [`.claude/skills/zfinal-health.md`](../.claude/skills/zfinal-health.md) |
+| Architecture layers | [architecture_best_practices.md](architecture_best_practices.md) |
+| Envelopes / smart routing / HTTP | [api_envelope.md](api_envelope.md) · [smart_routing.md](smart_routing.md) · [http_ergonomics.md](http_ergonomics.md) |
+| L0→L3 / millions | [progressive_architecture.md](progressive_architecture.md) · [scale_to_millions.md](scale_to_millions.md) |
+| Keep-alive / reverse proxy | [reverse_proxy.md](reverse_proxy.md) |
 
 ## For humans
 
 | You want to… | Read |
 |--------------|------|
-| Architecture best practices (layers, plugins, AI boundaries) | [architecture_best_practices.md](architecture_best_practices.md) |
-| Smart routing best practices (actions.zig / nested / wildcard) | [smart_routing.md](smart_routing.md) |
-| Scale-out for millions of users | [scale_to_millions.md](scale_to_millions.md) |
-| nginx/Caddy + force Connection: close | [reverse_proxy.md](reverse_proxy.md) |
-| Progressive app architecture (L0→L3) | [progressive_architecture.md](progressive_architecture.md) |
-| 数据层：`DB` **或** `zent`（可作主力） | [zent.md](zent.md) |
-| RobustMQ / Kafka messaging | [robustmq.md](robustmq.md) |
-| NATS messaging | [nats.md](nats.md) |
-| Understand the framework's design | [core_concepts.md](core_concepts.md) |
-| Set up a project from scratch | [getting_started.md](getting_started.md) |
-| Use the database / ORM | [database.md](database.md) |
-| Write advanced features (interceptors, plugins, i18n) | [advanced.md](advanced.md) |
-| Use the utility kits | [kits.md](kits.md) |
-| Compare with JFinal (Java inspiration) | [jfinal_comparison.md](jfinal_comparison.md) |
-| Migrate a legacy Java/PHP/Go/Rust project | [java_migration.md](java_migration.md) |
-| Use State / extract / HttpError / oneshot | [http_ergonomics.md](http_ergonomics.md) |
-| Use the `zf` CLI | [zf_cli.md](zf_cli.md) |
-| Build an HTMX-driven UI | [htmx_template.md](htmx_template.md) |
-| Follow a full tutorial (Life3 app) | [tutorial_life3.md](tutorial_life3.md) |
+| Best practices index + timeline | [best_practices.md](best_practices.md) |
+| Architecture / progressive / scale | [architecture_best_practices.md](architecture_best_practices.md) · [progressive_architecture.md](progressive_architecture.md) · [scale_to_millions.md](scale_to_millions.md) |
+| Data: `DB` **or** `zent` | [zent.md](zent.md) · [database.md](database.md) |
+| Messaging | [nats.md](nats.md) · [robustmq.md](robustmq.md) |
+| Getting started / CLI | [getting_started.md](getting_started.md) · [zf_cli.md](zf_cli.md) |
+| Production contract | [`PRODUCTION_AUDIT.md`](../PRODUCTION_AUDIT.md) |
 
 ## What you get out of the box
 
-- HTTP/1.1 server with router, middleware, interceptors
-- Database layer (SQLite, PostgreSQL, MySQL) with connection pool
-- Active Record ORM with auto-generated CRUD
-- CSRF token manager, captcha, i18n, validators
-- WebSocket, template engine, metrics
-- 17 utility kits (string, hash, time, file, etc.)
-- 145+ unit tests + integration tests, 0 leak
+- HTTP/1.1 Fiber server, router, interceptors, smart routing (`actions.zig`)
+- Axum-inspired State / Extension / extract / HttpError / stock layers
+- SQLite (default) + opt-in PostgreSQL / MySQL; Active Record + **zent** graph ORM
+- CSRF, captcha, i18n, validators, JWT HS256/RS256
+- WebSocket, templates, metrics (6 route classes), plugins (Cache / Cron / Redis / MQTT / …)
+- Stable `QueueNatsClient` / `QueueRobustMQClient`; L2/L3 ports codegen
+- **257** unit tests (+ skips for live DB) · `test-zf` codegen suite · 0 leak target
 - Cross-platform: macOS, Linux, Windows
 
 ## Project structure (for AI agents)
 
 ```
 zfinal/
-├── src/                          # Framework source
-│   ├── main.zig                  # Public API
-│   ├── core/                     # Server, Router, Context
-│   ├── db/                       # DB + drivers + ORM
-│   ├── interceptor/              # Auth, CORS, CSRF
-│   ├── plugin/                   # Cache, Cron, Redis
-│   ├── kit/                      # 17 utility kits
-│   ├── aichat/                   # AI client + ZfTool
-│   └── io_instance.zig           # Global Io + allocator
-├── tools/zf/                     # CLI tool
-│   ├── main.zig                  # Entry point
-│   ├── codegen.zig               # Code generator
-│   ├── csql.zig                  # SQL parser
-│   ├── codegen_test.zig          # Generator tests
-│   └── templates.zig             # Code templates
-├── examples/                     # 10+ runnable examples
-│   ├── hello-world/
-│   ├── blog-single/
-│   ├── ai-blog-5min/             # AI speedrun demo
-│   └── ...
-├── doc/                          # This documentation
-├── .claude/skills/               # AI-recognizable skills
-│   ├── zfinal-onboarding.md      # Read first
-│   ├── zfinal-ai-playbook.md
-│   ├── zfinal-health.md
-│   ├── zfinal-framework.md
-│   ├── zfinal-app.md
-│   └── zfinal-evolution.md
-├── .claude/agents/
-│   └── zfinal-developer.md       # Sub-agent definition
-├── AGENTS.md                     # Top-level rules
-├── CLAUDE.md                     # Health Stack + skill routing
-└── build.zig                     # Build configuration
+├── src/                 # Framework (main.zig = public API)
+├── tools/zf/            # CLI (modular cmd_* + codegen)
+├── examples/            # production, smart-routing, ports-l2/l3, zent-shop, …
+├── doc/                 # Docs — start at best_practices.md / this index
+├── .claude/skills/      # Agent skills
+├── AGENTS.md / CLAUDE.md
+└── build.zig
 ```
 
 ## Versioning
 
-ZFinal uses semantic versioning. Current: **v0.9.2**. Releases are
-tagged on `main` and published via GitHub releases. The
-`zfinal.ZfTool.manifestFromSql` version field in the manifest
-matches the framework version.
+Semantic versioning. Current: **v0.20.9** (`src/version.zig` ≡ `build.zig.zon`).  
+Tagged releases on GitHub; manifests use the same `semver`.
 
 ## License
 
-ZFinal is open source. See [LICENSE](../LICENSE).
+See [LICENSE](../LICENSE).

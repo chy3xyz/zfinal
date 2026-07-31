@@ -79,7 +79,9 @@ pub fn isHttpError(err: anyerror) bool {
     return statusOf(err) != null;
 }
 
-/// Render `{ "err": "<code>", "msg": "<message>", "detail": ? }` JSON.
+/// Render default REST/HttpError envelope:
+/// `{ "err": "<code>", "msg": "<message>", "detail"?: "…" }`.
+/// For zapi `{code,msg,data}` see `doc/api_envelope.md` (app-level; not the framework default).
 pub fn render(ctx: *Context, err: anyerror) !void {
     if (ctx.response_started) return;
     const status = statusOf(err) orelse .internal_server_error;

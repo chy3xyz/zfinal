@@ -43,7 +43,7 @@ supports sub-agents, dispatching that is equivalent to invoking
 - For the standard add-a-feature flow (SQL → edit → verify → ship), follow `zfinal-ai-playbook`.
 - `zf crud:sql <file> --json` and `zf g <type> <name> --json` emit machine-readable manifests — always use `--json` when invoked by an AI agent.
 - Generated files contain `// ── ai-edit-zone: …` markers. Edit only inside these zones; modify the generator template (in `tools/zf/`) if you need to change boilerplate.
-- `zig build test` runs 231 tests; expected baseline is `220 passed; 11 skipped; 0 failed.`
+- `zig build test` runs unit tests; expected baseline is `257 passed; 11 skipped; 0 failed.`
 - On Zig `0.17.0-dev.1422+e863bf3be`, the server-mode test runner may crash with `EndOfStream`; `build.zig` works around this by running the compiled test binary directly via `b.addRunFile(lib_unit_tests.getEmittedBin())`.
 - If test output ends with `failed command:` but the summary line shows 144 passed and exit code is 0, treat it as a cosmetic build-system message.
 - `SQLite step failed: 19` is expected noise from the intentional constraint-violation test.

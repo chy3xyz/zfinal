@@ -4,6 +4,28 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+## 2026-07-31 — Best-practice docs refresh (timeline + hub)
+
+**Session**: Align BP docs with v0.20.9 features and current dates
+**Changes**:
+1. `doc/best_practices.md` — hub: task index + capability timeline + greenfield stack
+2. Refresh architecture / progressive / scale / index / core_concepts / advanced
+3. Baseline notes: 257p/11s; AGENTS / CLAUDE / PRODUCTION_AUDIT scorecard date
+**Next**: commit when asked
+
+---
+
+## 2026-07-31 — API envelope best-practice docs
+
+**Session**: Document REST/HttpError vs zapi; do not flip framework default
+**Changes**:
+1. `doc/api_envelope.md` — selection rules, anti-patterns, codegen/OpenAPI notes
+2. Wire into `architecture_best_practices`, `http_ergonomics`, `doc/index`, ADR-013
+3. Clarify `http_error.render` comment (default stays `err`/`msg`/`detail`)
+**Next**: —
+
+---
+
 ## 2026-07-31 — release v0.20.9
 
 **Session**: Ship smart routing + Axum ergonomics + interceptor/OpenAPI harden

@@ -79,7 +79,7 @@ src/modules/<sub>/<name>/
 
 ```bash
 zig build                  # framework + all examples
-zig build test             # 231 unit tests (baseline: 220 passed; 11 skipped; 0 failed)
+zig build test             # baseline: 257 passed; 11 skipped; 0 failed
 zig build test -Ddriver_pg=true -Ddriver_mysql=true  # all drivers
 zig build install-zf       # CLI tool → zig-out/bin/zf
 zig build run-hello        # hello-world demo
@@ -90,10 +90,12 @@ zig build -Dlog-level=debug  # compile-time log level
 
 ## 📚 Full docs
 
+- `doc/best_practices.md` — best-practice hub (task index + v0.20.x capability timeline)
 - `doc/zent.md` — data layer B: `zfinal.zent` as alternative / primary vs `DB`/`Model`
 - `doc/nats.md` — NATS connector (`QueueNatsClient`, zero dep)
 - `doc/robustmq.md` — RobustMQ / Kafka connector (`QueueRobustMQClient`)
 - `doc/architecture_best_practices.md` — code architecture best practices (layers, plugins, AI boundaries)
+- `doc/api_envelope.md` — JSON response envelopes (REST/HttpError vs zapi; one style per module)
 - `doc/scale_to_millions.md` — supporting ~10M users (topology, constraints, capacity)
 - `doc/progressive_architecture.md` — L0→L3 progressive code architecture derived from scale plan
 - `CHANGELOG.md` — version history

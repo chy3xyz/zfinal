@@ -16,7 +16,7 @@
 > `userdata` (no static secrets) landed; keep-alive residual unchanged — flip checklist still
 > [`doc/reverse_proxy.md`](doc/reverse_proxy.md) §9.
 
-## Scorecard (evidence-based, 2026-07-23)
+## Scorecard (evidence-based, 2026-07-31)
 
 | Dimension | Score | Evidence |
 |-----------|-------|----------|
@@ -24,7 +24,7 @@
 | Security | **9.9 / 10** | JWT HS256 + **RS256 sign/verify** + nbf/iss/aud + rotation; CORS; security headers + request ID; CSRF/rate-limit; `zf check --prod --root` |
 | Observability | **9.9 / 10** | Auto Metrics + latency histogram + **6 route classes** (health/metrics/api/admin/static/other) + `routeTemplate`; `/metrics` |
 | Ops / deployability | **9.8 / 10** | CI + drivers + live PG/MySQL + production + **`zf check --prod`** + [`doc/reverse_proxy.md`](doc/reverse_proxy.md) + [`benchmark/BASELINE.md`](benchmark/BASELINE.md) |
-| Docs / AI tooling | **9.8 / 10** | zone merge; ports-l2/**ports-l3**; reverse-proxy KA; deeper `zf openapi` (bearerAuth/body/responses) |
+| Docs / AI tooling | **9.9 / 10** | zone merge; ports-l2/**ports-l3**; reverse-proxy KA; deeper `zf openapi`; **[best_practices.md](doc/best_practices.md)** hub + envelope ADR-013 |
 | Optional (PG/MySQL/zent/messaging) | **9.6 / 10** | RobustMQ Metadata + range/sticky + Offset*; **MQTT native TLS**; Redis; live CI |
 | **Overall (contractual)** | **9.8 / 10** | Internet-facing BFF behind proxy: ready |
 | Absolute (toolchain) | **~9.2 / 10** | Zig-dev + keep-alive still default-forced |

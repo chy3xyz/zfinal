@@ -105,7 +105,7 @@ zf crud:sql schema.sql --json > manifest.json
 
 ```json
 {
-  "version": "0.9.0",
+  "version": "0.20.9",
   "tables": [
     {
       "name": "users",
