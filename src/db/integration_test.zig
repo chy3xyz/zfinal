@@ -18,7 +18,7 @@ fn getEnv(allocator: std.mem.Allocator, name: [:0]const u8, default: []const u8)
     return allocator.dupe(u8, default) catch return null;
 }
 
-fn tryOpenPG(allocator: std.mem.Allocator) !?DB {
+fn tryOpenPG(allocator: std.mem.Allocator) !?*DB {
     if (!build_opts.enable_pg) return null;
     const pwd = getEnv(allocator, "ZF_PG_PASSWORD", "") orelse return null;
     defer allocator.free(pwd);
@@ -32,18 +32,17 @@ fn tryOpenPG(allocator: std.mem.Allocator) !?DB {
     const db_name = getEnv(allocator, "ZF_PG_DATABASE", "zfinal_test") orelse return null;
     defer allocator.free(db_name);
 
-    const db = DB.init(allocator, DBConfig{
+    return DB.init(allocator, DBConfig{
         .db_type = .postgres,
         .host = host,
         .port = port,
         .database = db_name,
         .username = user,
         .password = pwd,
-    }) catch return null;
-    return db.*;
+    }) catch null;
 }
 
-fn tryOpenMY(allocator: std.mem.Allocator) !?DB {
+fn tryOpenMY(allocator: std.mem.Allocator) !?*DB {
     if (!build_opts.enable_mysql) return null;
     const pwd = getEnv(allocator, "ZF_MY_PASSWORD", "") orelse return null;
     defer allocator.free(pwd);
@@ -57,15 +56,14 @@ fn tryOpenMY(allocator: std.mem.Allocator) !?DB {
     const db_name = getEnv(allocator, "ZF_MY_DATABASE", "zfinal_test") orelse return null;
     defer allocator.free(db_name);
 
-    const db = DB.init(allocator, DBConfig{
+    return DB.init(allocator, DBConfig{
         .db_type = .mysql,
         .host = host,
         .port = port,
         .database = db_name,
         .username = user,
         .password = pwd,
-    }) catch return null;
-    return db.*;
+    }) catch null;
 }
 
 fn expectRow(result: anytype) ?*const @import("result.zig").Row {

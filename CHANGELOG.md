@@ -6,6 +6,9 @@
   drivers jobs were failing with undefined `PQ*` / `mysql_*`).
 - **`ruoyi-gen` gated on `-Ddriver_mysql`**: default `zig build` no longer requires
   `libmysqlclient` (macOS CI only installs SQLite).
+- **PG/MySQL live test teardown**: `tryOpenPG` / `tryOpenMY` returned a by-value
+  `DB` copy after `DB.init` heap-allocated `*DB`, so `destroy()` freed stack
+  memory (SafeAllocator panic). Helpers now return `?*DB`.
 
 ## [0.20.11] - 2026-07-31
 
