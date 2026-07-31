@@ -96,17 +96,14 @@ test "db: CRUD on SQLite" {
         defer result.deinit();
 
         try std.testing.expect(result.next());
-        var row = result.currentRow().?;
-        try std.testing.expectEqualStrings("foo", row.getText(0).?);
-        try std.testing.expectEqual(@as(i64, 10), (try row.getInt(1)).?);
+        try std.testing.expectEqualStrings("foo", result.getText(0).?);
+        try std.testing.expectEqual(@as(i64, 10), (try result.getInt(1)).?);
 
         try std.testing.expect(result.next());
-        row = result.currentRow().?;
-        try std.testing.expectEqualStrings("bar", row.getText(0).?);
+        try std.testing.expectEqualStrings("bar", result.getText(0).?);
 
         try std.testing.expect(result.next());
-        row = result.currentRow().?;
-        try std.testing.expectEqualStrings("baz", row.getText(0).?);
+        try std.testing.expectEqualStrings("baz", result.getText(0).?);
 
         try std.testing.expect(!result.next());
     }
@@ -157,15 +154,13 @@ test "db: parameter types on SQLite" {
     defer result.deinit();
 
     try std.testing.expect(result.next());
-    const row1 = result.currentRow().?;
-    try std.testing.expectEqual(@as(i64, 42), (try row1.getInt(0)).?);
-    try std.testing.expectEqualStrings("hello", row1.getText(2).?);
-    try std.testing.expect(row1.getText(3) == null);
+    try std.testing.expectEqual(@as(i64, 42), (try result.getInt(0)).?);
+    try std.testing.expectEqualStrings("hello", result.getText(2).?);
+    try std.testing.expect(result.getText(3) == null);
 
     try std.testing.expect(result.next());
-    const row2 = result.currentRow().?;
-    try std.testing.expectEqual(@as(i64, -1), (try row2.getInt(0)).?);
-    try std.testing.expectEqualStrings("", row2.getText(2).?);
+    try std.testing.expectEqual(@as(i64, -1), (try result.getInt(0)).?);
+    try std.testing.expectEqualStrings("", result.getText(2).?);
 }
 
 // ============================================================
@@ -255,7 +250,7 @@ test "db: unicode round-trip on SQLite" {
     defer result.deinit();
     for (texts) |expected| {
         try std.testing.expect(result.next());
-        try std.testing.expectEqualStrings(expected, result.currentRow().?.getText(0).?);
+        try std.testing.expectEqualStrings(expected, result.getText(0).?);
     }
 }
 
@@ -275,7 +270,7 @@ test "db: large data on SQLite" {
     var result = try db.query("SELECT data FROM large");
     defer result.deinit();
     try std.testing.expect(result.next());
-    const back = result.currentRow().?.getText(0).?;
+    const back = result.getText(0).?;
     try std.testing.expectEqual(big.len, back.len);
     try std.testing.expectEqualStrings(big[0..100], back[0..100]);
     try std.testing.expectEqualStrings(big[big.len - 100 ..], back[back.len - 100 ..]);
@@ -315,9 +310,8 @@ test "db: CRUD on PostgreSQL" {
     var result = try db.query("SELECT name, num FROM cross_crud");
     defer result.deinit();
     try std.testing.expect(result.next());
-    const row = result.currentRow().?;
-    try std.testing.expectEqualStrings("pg_test", row.getText(0).?);
-    try std.testing.expectEqual(@as(i64, 42), (try row.getInt(1)).?);
+    try std.testing.expectEqualStrings("pg_test", result.getText(0).?);
+    try std.testing.expectEqual(@as(i64, 42), (try result.getInt(1)).?);
 
     _ = db.exec("DROP TABLE IF EXISTS cross_crud") catch {};
 }
@@ -335,9 +329,8 @@ test "db: CRUD on MySQL" {
     var result = try db.query("SELECT name, num FROM cross_crud");
     defer result.deinit();
     try std.testing.expect(result.next());
-    const row = result.currentRow().?;
-    try std.testing.expectEqualStrings("my_test", row.getText(0).?);
-    try std.testing.expectEqual(@as(i64, 7), (try row.getInt(1)).?);
+    try std.testing.expectEqualStrings("my_test", result.getText(0).?);
+    try std.testing.expectEqual(@as(i64, 7), (try result.getInt(1)).?);
 
     _ = db.exec("DROP TABLE IF EXISTS cross_crud") catch {};
 }

@@ -274,8 +274,10 @@ const Cell = union(enum) {
 
 // Row.getInt(idx) / getFloat(idx) return the cached typed value —
 // no parseInt/parseFloat on every read. ~2x faster on numeric columns.
+// Fractional floats (MySQL SUM/DECIMAL money) → error.NotAnInteger; use getFloat.
 const row = result.currentRow().?;
 const id: i64 = (try row.getInt(0)).?;
+const total: f64 = (try row.getFloat(1)).?;
 ```
 
 Existing `getText` / `getInt` / `getBool` / `getCurrentRowMap`

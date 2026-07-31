@@ -3,6 +3,7 @@ const DBConfig = @import("config.zig").DBConfig;
 const DBType = @import("config.zig").DBType;
 const Cell = @import("result.zig").Cell;
 const ResultSet = @import("result.zig").ResultSet;
+const floatToI64Exact = @import("result.zig").floatToI64Exact;
 const SqlParam = @import("sql_param.zig").SqlParam;
 
 const builtin = @import("builtin");
@@ -327,7 +328,7 @@ pub const DB = struct {
 
         if (!result.next()) return null;
         const row = result.currentRow().?;
-        return scalarFromCell(T, row.cells[0], allocator);
+        return try scalarFromCell(T, row.cells[0], allocator);
     }
 
     /// Convenience variant: `execMany` runs the same prepared statement
@@ -634,13 +635,13 @@ fn isDeadlockError(err: anyerror) bool {
 ///
 /// For `T = []const u8`, the returned slice is heap-allocated via
 /// `allocator` and the caller owns it.
-fn scalarFromCell(comptime T: type, cell: Cell, allocator: std.mem.Allocator) ?T {
+fn scalarFromCell(comptime T: type, cell: Cell, allocator: std.mem.Allocator) !?T {
     return switch (T) {
         i64 => switch (cell) {
             .null => null,
             .int => |v| v,
             .bool => |b| if (b) 1 else 0,
-            .float => |v| @intFromFloat(v),
+            .float => |v| try floatToI64Exact(v),
             .text => |t| std.fmt.parseInt(i64, t, 10) catch null,
             .blob => null,
         },

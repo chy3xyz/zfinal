@@ -1,6 +1,15 @@
 ## [Unreleased]
 
 ### Fixed
+- **`getText` on SUM/DECIMAL floats**: numeric cells no longer format into a
+  threadlocal scratch buffer (ephemeral; easy to misread as ResultSet-owned and
+  observe freed/debug-fill `UUUUUUUU`). `getText` now materializes **row-owned**
+  strings valid until `Row.deinit`. MySQL still **dupes** `CAST(... AS CHAR)` /
+  `VAR_STRING` into the ResultSet allocator (the reported `mysql_free_result`
+  dangling-pointer path was not present). Prefer `getFloat` for money aggregates.
+- **MySQL SUM(varchar) / money via `getInt`**: `Row.getInt` / `queryScalar(i64)` /
+  `intAt` no longer silently truncate fractional `.float` cells (e.g. `30.80` → `30`).
+  Fractional values return `error.NotAnInteger`; use `getFloat` / `queryScalar(f64)`.
 - **RouteGroup param-route UAF**: `addWithMethodAndInterceptors` now dupes the path
   before `parseRoute`, so `Segment.value` / `param_names` point at owned memory.
   Previously `RouteGroup.register` freed its `allocPrint` buffer after register and

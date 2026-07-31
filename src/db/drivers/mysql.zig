@@ -909,6 +909,10 @@ pub const MySQLDB = struct {
     /// column's declared SQL type and emit a typed Cell. Numeric columns
     /// get parsed once here (parseInt / parseFloat) so consumer reads via
     /// `Row.getInt()` / `Row.getFloat()` hit the cached typed value.
+    ///
+    /// String-typed payloads (including `CAST(SUM(...) AS CHAR)`) are always
+    /// **duped** into the ResultSet allocator — never aliases into MYSQL_RES
+    /// or the temporary `ColumnBuf.text_buf`.
     fn mysqlTextToCell(allocator: std.mem.Allocator, text: []const u8, ft: c_uint) !Cell {
         return switch (ft) {
             c.MYSQL_TYPE_TINY,

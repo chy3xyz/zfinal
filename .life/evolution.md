@@ -4,6 +4,30 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+## 2026-07-31 — getText row-stable for SUM/float + no silent getInt trunc
+
+**Session**: Investigate reported MySQL SUM getText→UUUUUUUU; fix real hazard
+**Changes**:
+1. Verdict: mysql_free_result dangling text **not** in driver (already dupes)
+2. Real hazard: getText on `.float`/`.int` used threadlocal scratch — matches SUM vs VARCHAR table
+3. getText materializes row-owned numeric text; getInt refuses fractional float
+**Tests**: zig build test
+**Next**: —
+
+---
+
+## 2026-07-31 — Fix getInt silent truncate on SUM/money floats
+
+**Session**: Amount fields / MySQL SUM(varchar) — refuse fractional float→i64
+**Changes**:
+1. `floatToI64Exact` + `getInt` / `queryScalar(i64)` / `intAt` return `NotAnInteger`
+2. MySQL `mysqlStringPayloadToCell`: decimal-looking VAR_STRING → `.float`
+3. Regression tests for 30.80 / decimal text
+**Tests**: zig build test
+**Next**: —
+
+---
+
 ## 2026-07-31 — Fix RouteGroup param-route UAF
 
 **Session**: Smoke `:id` 404 root cause — parse before dupe left dangling segments

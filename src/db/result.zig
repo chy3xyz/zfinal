@@ -24,8 +24,14 @@ pub const Cell = union(enum) {
 pub const Row = struct {
     cells: []Cell,
     allocator: std.mem.Allocator,
+    /// Owned strings produced by `getText` for `.int` / `.float` cells.
+    /// Freed in `deinit`. Keeps SUM/DECIMAL `getText` valid for the row
+    /// lifetime (threadlocal scratch caused use-after-scope / UUUU symptoms).
+    numeric_text: std.ArrayListUnmanaged([]u8) = .empty,
 
     pub fn deinit(self: *Row) void {
+        for (self.numeric_text.items) |t| self.allocator.free(t);
+        self.numeric_text.deinit(self.allocator);
         for (self.cells) |cell| switch (cell) {
             .text => |t| self.allocator.free(t),
             .blob => |b| self.allocator.free(b),
@@ -37,23 +43,31 @@ pub const Row = struct {
     /// Get cell value as a text view.
     ///
     /// - `.null` → returns `null`
-    /// - `.text` → returns the slice as-is
-    /// - `.int` → returns a small static decimal string ("0".."9..9"). The
-    ///   slice points into a small static buffer owned by `Cell` — do NOT
-    ///   free it. Safe for `std.mem.eql` and `std.fmt.parseInt`.
-    /// - `.float` → returns a small static decimal string.
-    /// - `.bool` → returns "true" or "false" (static).
-    /// - `.blob` → returns the raw byte slice (callers must NOT treat as UTF-8).
-    pub fn getText(self: *const Row, index: usize) ?[]const u8 {
+    /// - `.text` / `.blob` → returns the row-owned slice (valid until `Row.deinit`)
+    /// - `.int` / `.float` / `.bool` → formats into a **row-owned** buffer (also
+    ///   valid until `deinit`). Prefer `getInt` / `getFloat` for typed reads;
+    ///   do not `free` the returned slice yourself.
+    pub fn getText(self: *Row, index: usize) ?[]const u8 {
         if (index >= self.cells.len) return null;
         return switch (self.cells[index]) {
             .null => null,
             .text => |t| t,
-            .int => |v| intTextBuf(v),
-            .float => |v| floatTextBuf(v),
-            .bool => |b| if (b) "true" else "false",
             .blob => |b| b,
+            .bool => |b| if (b) "true" else "false",
+            .int => |v| self.materializeNumericText(v),
+            .float => |v| self.materializeNumericText(v),
         };
+    }
+
+    fn materializeNumericText(self: *Row, value: anytype) ?[]const u8 {
+        var buf: [64]u8 = undefined;
+        const s = std.fmt.bufPrint(&buf, "{d}", .{value}) catch return null;
+        const owned = self.allocator.dupe(u8, s) catch return null;
+        self.numeric_text.append(self.allocator, owned) catch {
+            self.allocator.free(owned);
+            return null;
+        };
+        return owned;
     }
 
     /// Get cell value as i64.
@@ -62,14 +76,17 @@ pub const Row = struct {
     /// - `.int` → returns the value directly (no parsing)
     /// - `.bool` → 0 or 1
     /// - `.text` / `.blob` → parseInt from text (legacy compat)
-    /// - `.float` → @intFromFloat
+    /// - `.float` → only when the value is a finite **integral** float
+    ///   (e.g. `30.0`); fractional values such as MySQL `SUM(varchar)` /
+    ///   `DECIMAL` money (`30.80`) return `error.NotAnInteger` instead of
+    ///   silently truncating. Use `getFloat` for amounts.
     pub fn getInt(self: *const Row, index: usize) !?i64 {
         if (index >= self.cells.len) return null;
         return switch (self.cells[index]) {
             .null => null,
             .int => |v| v,
             .bool => |b| if (b) 1 else 0,
-            .float => |v| @intFromFloat(v),
+            .float => |v| try floatToI64Exact(v),
             .text => |t| try std.fmt.parseInt(i64, t, 10),
             .blob => |t| try std.fmt.parseInt(i64, t, 10),
         };
@@ -104,7 +121,8 @@ pub const Row = struct {
 
     /// Hot-loop helper: read a cell as i64 directly, without the error-union
     /// + optional wrapper of `getInt`. The caller is responsible for type
-    /// safety — this panics on out-of-bounds, null, or non-int cells.
+    /// safety — this panics on out-of-bounds, null, non-int, or **fractional
+    /// float** cells (same rule as `getInt` — no silent money truncation).
     ///
     /// Use this in tight sum/filter/aggregate loops where you've already
     /// validated the schema and want the fastest possible per-row read.
@@ -114,7 +132,7 @@ pub const Row = struct {
         return switch (self.cells[index]) {
             .int => |v| v,
             .bool => |b| if (b) 1 else 0,
-            .float => |v| @intFromFloat(v),
+            .float => |v| floatToI64Exact(v) catch @panic("Row.intAt called on non-integral float"),
             .null => @panic("Row.intAt called on NULL cell"),
             .text, .blob => @panic("Row.intAt called on non-numeric cell"),
         };
@@ -156,19 +174,17 @@ fn parseBoolText(text: []const u8) !bool {
     return error.InvalidBooleanValue;
 }
 
-/// Numeric-to-text compatibility buffers. The returned slices remain valid
-/// until the next conversion of the same numeric kind on the current thread.
-/// Callers that need ownership must copy the slice; typed consumers should use
-/// `getInt` / `getFloat` and avoid formatting entirely.
-threadlocal var int_text_buf: [24]u8 = undefined;
-threadlocal var float_text_buf: [32]u8 = undefined;
-
-fn intTextBuf(v: i64) []const u8 {
-    return std.fmt.bufPrint(&int_text_buf, "{d}", .{v}) catch "";
-}
-
-fn floatTextBuf(v: f64) []const u8 {
-    return std.fmt.bufPrint(&float_text_buf, "{d}", .{v}) catch "";
+/// Convert a finite **integral** float to i64.
+///
+/// Used by `getInt` / `queryScalar(i64)` so MySQL `SUM(varchar)` /
+/// `NEWDECIMAL` money values like `30.80` are not silently truncated to `30`.
+pub fn floatToI64Exact(v: f64) !i64 {
+    if (!std.math.isFinite(v)) return error.NotAnInteger;
+    if (v != @trunc(v)) return error.NotAnInteger;
+    const max_f: f64 = @floatFromInt(std.math.maxInt(i64));
+    const min_f: f64 = @floatFromInt(std.math.minInt(i64));
+    if (v > max_f or v < min_f) return error.Overflow;
+    return @intFromFloat(v);
 }
 
 /// Unified result set interface.
@@ -255,8 +271,16 @@ pub const ResultSet = struct {
         return false;
     }
 
-    /// Get current row
+    /// Get current row (immutable view — typed getters only).
     pub fn currentRow(self: *const ResultSet) ?*const Row {
+        if (self.current_index == 0 or self.current_index > self.rows.items.len) {
+            return null;
+        }
+        return &self.rows.items[self.current_index - 1];
+    }
+
+    /// Mutable current row — required for `getText` numeric materialization.
+    pub fn currentRowMut(self: *ResultSet) ?*Row {
         if (self.current_index == 0 or self.current_index > self.rows.items.len) {
             return null;
         }
@@ -275,8 +299,8 @@ pub const ResultSet = struct {
     }
 
     /// Convenience methods for current row
-    pub fn getText(self: *const ResultSet, index: usize) ?[]const u8 {
-        const row = self.currentRow() orelse return null;
+    pub fn getText(self: *ResultSet, index: usize) ?[]const u8 {
+        const row = self.currentRowMut() orelse return null;
         return row.getText(index);
     }
 
@@ -300,7 +324,7 @@ pub const ResultSet = struct {
     /// O(1) lookup. If the index wasn't built (e.g. OOM during init),
     /// falls back to a single linear scan over `columns`.
     pub const RowMap = struct {
-        row: *const Row,
+        row: *Row,
         result_set: *const ResultSet,
 
         pub fn get(self: *const RowMap, col_name: []const u8) ?[]const u8 {
@@ -326,8 +350,8 @@ pub const ResultSet = struct {
     };
 
     /// Get current row as RowMap for easy column access by name
-    pub fn getCurrentRowMap(self: *const ResultSet) ?RowMap {
-        const row = self.currentRow() orelse return null;
+    pub fn getCurrentRowMap(self: *ResultSet) ?RowMap {
+        const row = self.currentRowMut() orelse return null;
         return RowMap{
             .row = row,
             .result_set = self,
@@ -336,6 +360,82 @@ pub const ResultSet = struct {
 };
 
 // ─── Tests ───────────────────────────────────────────────────────────
+
+test "getText on float is row-stable until deinit (SUM/money)" {
+    const allocator = std.testing.allocator;
+
+    var columns = try allocator.alloc([]const u8, 1);
+    columns[0] = try allocator.dupe(u8, "total");
+
+    var result = ResultSet.init(allocator, columns);
+    defer result.deinit();
+
+    var cells = try allocator.alloc(Cell, 1);
+    // MySQL SUM / NEWDECIMAL → .float; CAST AS CHAR stays .text (owned dupe).
+    cells[0] = .{ .float = 21667.0 };
+    try result.addRow(cells);
+
+    _ = result.next();
+    const first = result.getText(0).?;
+    const second = result.getText(0).?;
+    // Each call materializes a new owned buffer; both stay valid until deinit.
+    try std.testing.expectEqualStrings("21667", first);
+    try std.testing.expectEqualStrings("21667", second);
+    try std.testing.expect(first.ptr != second.ptr);
+}
+
+test "Cell: getInt rejects fractional float (SUM/money)" {
+    const allocator = std.testing.allocator;
+
+    var columns = try allocator.alloc([]const u8, 3);
+    columns[0] = try allocator.dupe(u8, "sum_money");
+    columns[1] = try allocator.dupe(u8, "sum_whole");
+    columns[2] = try allocator.dupe(u8, "neg_frac");
+
+    var result = ResultSet.init(allocator, columns);
+    defer result.deinit();
+
+    var cells = try allocator.alloc(Cell, 3);
+    // MySQL SUM(varchar amount) / NEWDECIMAL typically lands as .float
+    cells[0] = .{ .float = 30.80 };
+    cells[1] = .{ .float = 30.0 };
+    cells[2] = .{ .float = -1.5 };
+    try result.addRow(cells);
+
+    _ = result.next();
+    const row = result.currentRow().?;
+    try std.testing.expectError(error.NotAnInteger, row.getInt(0));
+    try std.testing.expectEqual(@as(i64, 30), (try row.getInt(1)).?);
+    try std.testing.expectError(error.NotAnInteger, row.getInt(2));
+    try std.testing.expectApproxEqAbs(@as(f64, 30.80), (try row.getFloat(0)).?, 1e-9);
+}
+
+test "Cell: getInt on decimal text fails; getFloat works" {
+    const allocator = std.testing.allocator;
+
+    var columns = try allocator.alloc([]const u8, 1);
+    columns[0] = try allocator.dupe(u8, "sum_as_varchar");
+
+    var result = ResultSet.init(allocator, columns);
+    defer result.deinit();
+
+    var cells = try allocator.alloc(Cell, 1);
+    cells[0] = .{ .text = try allocator.dupe(u8, "1234.56") };
+    try result.addRow(cells);
+
+    _ = result.next();
+    const row = result.currentRow().?;
+    try std.testing.expectError(error.InvalidCharacter, row.getInt(0));
+    try std.testing.expectApproxEqAbs(@as(f64, 1234.56), (try row.getFloat(0)).?, 1e-9);
+}
+
+test "floatToI64Exact rejects fractional money" {
+    try std.testing.expectEqual(@as(i64, 30), try floatToI64Exact(30.0));
+    try std.testing.expectEqual(@as(i64, -7), try floatToI64Exact(-7.0));
+    try std.testing.expectError(error.NotAnInteger, floatToI64Exact(30.80));
+    try std.testing.expectError(error.NotAnInteger, floatToI64Exact(std.math.nan(f64)));
+    try std.testing.expectError(error.NotAnInteger, floatToI64Exact(std.math.inf(f64)));
+}
 
 test "Cell: getInt returns int directly without parseInt" {
     const allocator = std.testing.allocator;
@@ -388,7 +488,7 @@ test "Cell: getText on int cell formats to decimal" {
     try result.addRow(cells);
 
     _ = result.next();
-    try std.testing.expectEqualStrings("99", result.currentRow().?.getText(0).?);
+    try std.testing.expectEqualStrings("99", result.getText(0).?);
 }
 
 test "RowMap: cached name lookup preserves formatted numeric text" {
@@ -476,10 +576,9 @@ test "Cell: null cell returns null on every getter" {
     try result.addRow(cells);
 
     _ = result.next();
-    const row = result.currentRow().?;
-    try std.testing.expect(row.getText(0) == null);
-    try std.testing.expect((try row.getInt(0)) == null);
-    try std.testing.expect((try row.getBool(0)) == null);
+    try std.testing.expect(result.getText(0) == null);
+    try std.testing.expect((try result.getInt(0)) == null);
+    try std.testing.expect((try result.getBool(0)) == null);
 }
 
 test "Cell: blob payload freed by Row.deinit (no leak)" {
@@ -498,7 +597,7 @@ test "Cell: blob payload freed by Row.deinit (no leak)" {
     try result.addRow(cells);
 
     _ = result.next();
-    try std.testing.expectEqualStrings("raw bytes", result.currentRow().?.getText(0).?);
+    try std.testing.expectEqualStrings("raw bytes", result.getText(0).?);
 }
 
 test "Cell: intAt returns i64 directly without error-union overhead" {

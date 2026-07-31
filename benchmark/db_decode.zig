@@ -159,12 +159,11 @@ fn runLegacyPath(db: *DB) !BenchResult {
     var sum_c: i64 = 0;
     var n: usize = 0;
     while (result.next()) {
-        const row = result.currentRow().?;
         // Pre-v0.15.0 path simulation: every numeric read goes through
-        // text + parseInt. getText on an int cell formats via intTextBuf.
-        sum_a += try std.fmt.parseInt(i64, row.getText(0).?, 10);
-        sum_b += try std.fmt.parseInt(i64, row.getText(1).?, 10);
-        sum_c += try std.fmt.parseInt(i64, row.getText(2).?, 10);
+        // text + parseInt. getText on int/float materializes row-owned text.
+        sum_a += try std.fmt.parseInt(i64, result.getText(0).?, 10);
+        sum_b += try std.fmt.parseInt(i64, result.getText(1).?, 10);
+        sum_c += try std.fmt.parseInt(i64, result.getText(2).?, 10);
         n += 1;
     }
     const end = nowNs();
