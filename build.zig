@@ -10,7 +10,15 @@ comptime {
     }
 }
 
-fn addExample(b: *std.Build, zfinal_mod: *std.Build.Module, name: []const u8, root_file: []const u8, desc: []const u8) void {
+fn addExample(
+    b: *std.Build,
+    zfinal_mod: *std.Build.Module,
+    name: []const u8,
+    root_file: []const u8,
+    desc: []const u8,
+    driver_mysql: bool,
+    driver_pg: bool,
+) void {
     const example_mod = b.createModule(.{
         .root_source_file = b.path(root_file),
         .target = zfinal_mod.resolved_target orelse b.standardTargetOptions(.{}),
@@ -19,6 +27,7 @@ fn addExample(b: *std.Build, zfinal_mod: *std.Build.Module, name: []const u8, ro
     });
     example_mod.link_libc = true;
     example_mod.linkSystemLibrary("sqlite3", .{});
+    linkOptionalDbDrivers(example_mod, driver_mysql, driver_pg);
 
     const exe = b.addExecutable(.{
         .name = name,
@@ -31,6 +40,11 @@ fn addExample(b: *std.Build, zfinal_mod: *std.Build.Module, name: []const u8, ro
 
     const run_step = b.step(b.fmt("run-{s}", .{name}), desc);
     run_step.dependOn(&run_cmd.step);
+}
+
+fn linkOptionalDbDrivers(mod: *std.Build.Module, driver_mysql: bool, driver_pg: bool) void {
+    if (driver_mysql) mod.linkSystemLibrary("mysqlclient", .{});
+    if (driver_pg) mod.linkSystemLibrary("pq", .{});
 }
 
 pub fn build(b: *std.Build) void {
@@ -123,6 +137,7 @@ pub fn build(b: *std.Build) void {
     });
     zfinal_mod.link_libc = true;
     zfinal_mod.linkSystemLibrary("sqlite3", .{});
+    linkOptionalDbDrivers(zfinal_mod, driver_mysql, driver_pg);
     zfinal_mod.addImport("c_sqlite3", sqlite3_c_mod);
     if (mysql_c_mod) |m| zfinal_mod.addImport("c_mysql", m);
     if (pg_c_mod) |p| zfinal_mod.addImport("c_pg", p);
@@ -164,6 +179,7 @@ pub fn build(b: *std.Build) void {
     });
     int_mod.link_libc = true;
     int_mod.linkSystemLibrary("sqlite3", .{});
+    linkOptionalDbDrivers(int_mod, driver_mysql, driver_pg);
     const int_tests = b.addTest(.{ .root_module = int_mod });
     const run_int_tests = b.addRunArtifact(int_tests);
     const int_test_step = b.step("test-int", "Run integration tests (requires generated modules)");
@@ -174,22 +190,22 @@ pub fn build(b: *std.Build) void {
     db_int_test_step.dependOn(&run_lib_unit_tests.step);
 
     // Example runners
-    addExample(b, zfinal_mod, "hello", "examples/hello-world/main.zig", "Run hello-world demo");
-    addExample(b, zfinal_mod, "blog", "examples/blog-single/main.zig", "Run blog-single demo");
-    addExample(b, zfinal_mod, "ai-blog-5min", "examples/ai-blog-5min/main.zig", "Run 5-minute AI speedrun demo (blog CRUD scaffold)");
-    addExample(b, zfinal_mod, "htmx", "examples/htmx/main.zig", "Run HTMX demo");
-    addExample(b, zfinal_mod, "htmx-admin", "examples/htmx-admin/main.zig", "Run vben-style admin UI demo (run `zf admin` first)");
-    addExample(b, zfinal_mod, "htmx-admin-demo", "examples/htmx-admin-demo/main.zig", "Run full-stack multi-table admin demo (3 tables, search, multi-table sidebar)");
-    addExample(b, zfinal_mod, "standalone-admin", "examples/standalone-admin/main.zig", "Run standalone single-binary admin (all HTML @embedFile, zero deps)");
-    addExample(b, zfinal_mod, "ws", "examples/websocket/main.zig", "Run WebSocket demo");
-    addExample(b, zfinal_mod, "edge", "examples/edge/main.zig", "Run edge computing demo");
-    addExample(b, zfinal_mod, "auth", "examples/auth/main.zig", "Run auth demo");
-    addExample(b, zfinal_mod, "captcha", "examples/captcha/main.zig", "Run captcha demo");
-    addExample(b, zfinal_mod, "production", "examples/production/main.zig", "Run production example");
-    addExample(b, zfinal_mod, "ports-l2", "examples/ports-l2/main.zig", "Run L2 ports DI demo (store/cache/bus)");
-    addExample(b, zfinal_mod, "ports-l3", "examples/ports-l3/main.zig", "Run L3 ports DI demo (store/cache/bus/outbox + tenant)");
-    // RuoYi example — needs MySQL driver
-    {
+    addExample(b, zfinal_mod, "hello", "examples/hello-world/main.zig", "Run hello-world demo", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "blog", "examples/blog-single/main.zig", "Run blog-single demo", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "ai-blog-5min", "examples/ai-blog-5min/main.zig", "Run 5-minute AI speedrun demo (blog CRUD scaffold)", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "htmx", "examples/htmx/main.zig", "Run HTMX demo", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "htmx-admin", "examples/htmx-admin/main.zig", "Run vben-style admin UI demo (run `zf admin` first)", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "htmx-admin-demo", "examples/htmx-admin-demo/main.zig", "Run full-stack multi-table admin demo (3 tables, search, multi-table sidebar)", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "standalone-admin", "examples/standalone-admin/main.zig", "Run standalone single-binary admin (all HTML @embedFile, zero deps)", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "ws", "examples/websocket/main.zig", "Run WebSocket demo", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "edge", "examples/edge/main.zig", "Run edge computing demo", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "auth", "examples/auth/main.zig", "Run auth demo", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "captcha", "examples/captcha/main.zig", "Run captcha demo", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "production", "examples/production/main.zig", "Run production example", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "ports-l2", "examples/ports-l2/main.zig", "Run L2 ports DI demo (store/cache/bus)", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "ports-l3", "examples/ports-l3/main.zig", "Run L3 ports DI demo (store/cache/bus/outbox + tenant)", driver_mysql, driver_pg);
+    // RuoYi example — only when MySQL driver is enabled (needs libmysqlclient)
+    if (driver_mysql) {
         const ruoyi_mod = b.createModule(.{
             .root_source_file = b.path("examples/ruoyi-gen/main.zig"),
             .target = target,
@@ -197,7 +213,8 @@ pub fn build(b: *std.Build) void {
             .imports = &.{.{ .name = "zfinal", .module = zfinal_mod }},
         });
         ruoyi_mod.link_libc = true;
-        ruoyi_mod.linkSystemLibrary("mysqlclient", .{});
+        ruoyi_mod.linkSystemLibrary("sqlite3", .{});
+        linkOptionalDbDrivers(ruoyi_mod, driver_mysql, driver_pg);
         const ruoyi_exe = b.addExecutable(.{ .name = "ruoyi-gen", .root_module = ruoyi_mod });
         b.installArtifact(ruoyi_exe);
         const ruoyi_run = b.addRunArtifact(ruoyi_exe);
@@ -225,6 +242,7 @@ pub fn build(b: *std.Build) void {
     });
     pb_mod.link_libc = true;
     pb_mod.linkSystemLibrary("sqlite3", .{});
+    linkOptionalDbDrivers(pb_mod, driver_mysql, driver_pg);
     const pb_exe = b.addExecutable(.{
         .name = "pb",
         .root_module = pb_mod,
@@ -327,6 +345,7 @@ pub fn build(b: *std.Build) void {
     });
     bench_mod.link_libc = true;
     bench_mod.linkSystemLibrary("sqlite3", .{});
+    linkOptionalDbDrivers(bench_mod, driver_mysql, driver_pg);
     const bench_exe = b.addExecutable(.{
         .name = "zbench",
         .root_module = bench_mod,
@@ -347,6 +366,7 @@ pub fn build(b: *std.Build) void {
         });
         db_bench_mod.link_libc = true;
         db_bench_mod.linkSystemLibrary("sqlite3", .{});
+        linkOptionalDbDrivers(db_bench_mod, driver_mysql, driver_pg);
         const db_bench_exe = b.addExecutable(.{
             .name = "zbench-db",
             .root_module = db_bench_mod,

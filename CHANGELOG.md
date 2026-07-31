@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+### Fixed
+- **Optional DB drivers link into examples/tests**: `-Ddriver_pg` / `-Ddriver_mysql`
+  now propagate `-lpq` / `-lmysqlclient` to `zfinal` and example artifacts (CI
+  drivers jobs were failing with undefined `PQ*` / `mysql_*`).
+- **`ruoyi-gen` gated on `-Ddriver_mysql`**: default `zig build` no longer requires
+  `libmysqlclient` (macOS CI only installs SQLite).
+
 ## [0.20.11] - 2026-07-31
 
 ### Fixed
