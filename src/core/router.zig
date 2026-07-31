@@ -290,21 +290,24 @@ pub const Router = struct {
     pub fn addWithMethodAndInterceptors(self: *Router, path: []const u8, method: HttpMethod, handler: Handler, interceptors: InterceptorChain) !void {
         if (self.sealed) return error.RouterSealed;
 
-        const parsed = try parseRoute(path, self.allocator);
+        // Own the pattern first, then parse segments/param_names as sub-slices of
+        // owned_path. Callers (e.g. RouteGroup.register) may free the input `path`
+        // after we return; parsing before dupe left dangling Segment.value.
+        const owned_path = try self.allocator.dupe(u8, path);
+        errdefer self.allocator.free(owned_path);
+
+        // 同 METHOD + pattern → 失败（smart_routing：禁止静默覆盖）
+        for (self.routes.items) |*existing| {
+            if (existing.method == method and std.mem.eql(u8, existing.pattern, owned_path)) {
+                return error.DuplicateRoute; // errdefer frees owned_path
+            }
+        }
+
+        const parsed = try parseRoute(owned_path, self.allocator);
         errdefer {
             self.allocator.free(parsed.segments);
             self.allocator.free(parsed.param_names);
         }
-
-        // 同 METHOD + pattern → 失败（smart_routing：禁止静默覆盖）
-        for (self.routes.items) |*existing| {
-            if (existing.method == method and std.mem.eql(u8, existing.pattern, path)) {
-                return error.DuplicateRoute; // errdefer frees parsed.*
-            }
-        }
-
-        const owned_path = try self.allocator.dupe(u8, path);
-        errdefer self.allocator.free(owned_path);
 
         const route = Route{
             .pattern = owned_path,
@@ -649,6 +652,38 @@ test "route parameter matching" {
 
     // Extra path segments should not match
     try std.testing.expect(router.match("/users/42/extra", .GET) == null);
+}
+
+// RouteGroup.register allocPrints then frees the buffer after add — segments
+// must be sub-slices of the router's owned_path, not the caller's temporary.
+test "param route survives freed registration path" {
+    const allocator = std.testing.allocator;
+    var router = Router.init(allocator);
+    defer router.deinit();
+
+    const h = struct {
+        fn f(_: *Context) !void {}
+    }.f;
+
+    const full_path = try std.fmt.allocPrint(allocator, "{s}{s}", .{ "/api/workspaces", "/:id" });
+    try router.addWithMethod(full_path, .GET, h);
+    allocator.free(full_path); // same as RouteGroup.register defer
+
+    const route = router.match("/api/workspaces/42", .GET) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("/api/workspaces/:id", route.pattern);
+
+    var params = try route.extractParams("/api/workspaces/42", allocator);
+    defer params.deinit();
+    try std.testing.expectEqualStrings("42", params.get("id").?);
+
+    // Nested param + static suffix (invitations smoke shape)
+    const inv = try std.fmt.allocPrint(allocator, "{s}{s}", .{ "/api/workspaces", "/:id/invitations" });
+    try router.addWithMethod(inv, .POST, h);
+    try router.addWithMethod(inv, .GET, h);
+    allocator.free(inv);
+
+    try std.testing.expect(router.match("/api/workspaces/7/invitations", .POST) != null);
+    try std.testing.expect(router.match("/api/workspaces/7/invitations", .GET) != null);
 }
 
 test "route param extraction" {

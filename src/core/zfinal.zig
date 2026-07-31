@@ -247,3 +247,28 @@ pub const RouteGroup = struct {
         try self.register(.DELETE, path, handler);
     }
 };
+
+test "RouteGroup param routes match after register frees full_path" {
+    const allocator = std.testing.allocator;
+    var app = ZFinal.init(allocator);
+    defer app.deinit();
+
+    const h = struct {
+        fn f(_: *@import("context.zig").Context) !void {}
+    }.f;
+
+    var api = RouteGroup.init(&app, "/api/workspaces");
+    defer api.deinit();
+    try api.get("/:id", h);
+    try api.post("/:id/invitations", h);
+    try api.get("/:id/invitations", h);
+
+    try std.testing.expect(app.router.match("/api/workspaces/42", .GET) != null);
+    try std.testing.expect(app.router.match("/api/workspaces/42/invitations", .POST) != null);
+    try std.testing.expect(app.router.match("/api/workspaces/42/invitations", .GET) != null);
+
+    const route = app.router.match("/api/workspaces/42", .GET).?;
+    var params = try route.extractParams("/api/workspaces/42", allocator);
+    defer params.deinit();
+    try std.testing.expectEqualStrings("42", params.get("id").?);
+}

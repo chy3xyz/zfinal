@@ -4,6 +4,17 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+## 2026-07-31 — Fix RouteGroup param-route UAF
+
+**Session**: Smoke `:id` 404 root cause — parse before dupe left dangling segments
+**Changes**:
+1. `addWithMethodAndInterceptors`: dupe path first, then `parseRoute(owned_path)`
+2. Regression: heap path free-after-add + `RouteGroup` invitations/workspaces shape
+**Tests**: zig build test
+**Next**: —
+
+---
+
 ## 2026-07-31 — Best-practice docs refresh (timeline + hub)
 
 **Session**: Align BP docs with v0.20.9 features and current dates

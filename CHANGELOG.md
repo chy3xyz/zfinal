@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+### Fixed
+- **RouteGroup param-route UAF**: `addWithMethodAndInterceptors` now dupes the path
+  before `parseRoute`, so `Segment.value` / `param_names` point at owned memory.
+  Previously `RouteGroup.register` freed its `allocPrint` buffer after register and
+  every group-registered `:id` route 404'd while static group routes still matched.
+
 ### Docs
 - **Best-practice hub refresh (v0.20.9 / 2026-07-31)**: [`doc/best_practices.md`](doc/best_practices.md)
   (task index + capability timeline); aligned architecture / progressive / scale /
