@@ -58,7 +58,7 @@ new output goes to `<path>.gen.new` (use `--force` to overwrite everything).
 ```bash
 zf check               # scans for generated/edit boundary violations
 zig build gate-quick   # day-to-day; full: zig build gate / zf gate
-zf release-check       # before tagging vX.Y.Z — see doc/release_and_quality_gates.md
+zf release-check       # before tagging vX.Y.Z (default --strict) — see doc/release_and_quality_gates.md
 zf market search <q>   # local module catalog — see doc/module_marketplace.md
 ```
 

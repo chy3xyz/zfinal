@@ -1,8 +1,8 @@
 # ZFinal 最佳实践总索
 
-> **版本**：v0.20.9 · Zig `0.17.0-dev.1422+e863bf3be` · 修订 **2026-07-31**  
+> **版本**：v0.20.10 · Zig `0.17.0-dev.1422+e863bf3be` · 修订 **2026-07-31**  
 > **受众**：应用开发者、框架贡献者、AI agent  
-> **验证基线**：`zig build test` → **257 passed; 11 skipped; 0 failed** · `zig build test-zf` → **31 passed**
+> **验证基线**：`zig build gate`（或 `zig build test` → **263 passed; 11 skipped**）· `zig build test-zf`
 
 本文是**最佳实践文档的入口**：按任务选文档，按版本看能力何时可用。细节仍在各专题文中。
 
@@ -34,6 +34,7 @@
 
 | 时段 | 版本 | 写应用时默认采用 |
 |------|------|------------------|
+| 2026-07-31 | **0.20.10** | 产品化 `zig build gate` / `zf release-check --strict`；模块市场 phase 1（`zf market`） |
 | 2026-07-31 | **0.20.9** | Smart routing（`actions.zig`）；Axum 风格 State/extract/`failHttp`；拦截器 **caller-owned `*const Cfg`**；OpenAPI 实体 DTO；信封默认 HttpError（见 ADR-013） |
 | 2026-07-23 | 0.20.4–0.20.8 | `zf g port` + ports-l2/l3；zone merge regen；JWT RS256；RobustMQ rebalance；MQTT TLS；**保持** `force_connection_close=true`；idle/write timeout 真生效 |
 | 2026-07-22 | 0.20.2–0.20.3 | `zf new` 远程依赖；migrate/seed 多驱动；`queryCached`（PG/MySQL） |
@@ -49,7 +50,7 @@
 
 ---
 
-## 3. 绿场默认栈（2026-07 / v0.20.9）
+## 3. 绿场默认栈（2026-07 / v0.20.10）
 
 一条「今天新建项目」的推荐路径：
 
@@ -60,7 +61,7 @@ schema.sql | schema.zent
     → 只改 ai-edit-zone；错误用 return error.* / failHttp
     → main：Metrics + RequestId + SecurityHeaders + JWT/CORS（caller-owned cfg）
     → force_connection_close=true + 反代 TLS
-    → zf check [--prod] && zig build test
+    → zf check [--prod] && zig build gate-quick
 ```
 
 | 层 | 默认选择 |
@@ -106,4 +107,4 @@ zig build gate-quick     # 或完整：zig build gate / zf gate
 
 ## 6. 一句话
 
-**按 v0.20.9 能力写：生成器定骨架，三层定方向，路由用 actions，错误用 HttpError，拦截器 cfg 自持有，规模按 L0→L3 只换装配；keep-alive 与 zapi 默认不翻，用文档与 ADR 锁边界。**
+**按 v0.20.10 能力写：生成器定骨架，三层定方向，路由用 actions，错误用 HttpError，拦截器 cfg 自持有，规模按 L0→L3 只换装配；合并前走 `zig build gate`；keep-alive 与 zapi 默认不翻，用文档与 ADR 锁边界。**

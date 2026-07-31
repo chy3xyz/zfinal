@@ -23,4 +23,4 @@ jobs:
         sudo apt-get install -y sqlite3 libsqlite3-dev
 
     - name: Release quality gate
-      run: bash scripts/quality_gate.sh release
+      run: bash scripts/quality_gate.sh release --strict

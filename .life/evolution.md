@@ -4,6 +4,18 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+## 2026-07-31 — release v0.20.10 (gates + market phase 1)
+
+**Session**: Continue productizing release/quality gates; ship 0.20.10
+**Changes**:
+1. release-check: require `## [semver]`, tag collision check, `--strict` dirty fail
+2. CI converge: Ubuntu Quality gate = merge gatekeeper; slim macOS; drop dup lint/prod jobs
+3. SSoT `0.20.10` + CHANGELOG + docs
+**Tests**: zig build install-zf; gate covered by CI after push
+**Next**: Required status check in GitHub settings; market phase 2 later
+
+---
+
 ## 2026-07-31 — getText row-stable for SUM/float + no silent getInt trunc
 
 **Session**: Investigate reported MySQL SUM getText→UUUUUUUU; fix real hazard

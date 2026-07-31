@@ -6,6 +6,8 @@ on:
   pull_request:
     branches: [ main, develop ]
 
+# Productized gate (scripts/quality_gate.sh full) is the Ubuntu merge gatekeeper.
+# macOS + optional drivers remain for coverage; do not re-run the full gate there.
 jobs:
   quality-gate:
     name: Quality gate (productized)
@@ -23,60 +25,22 @@ jobs:
     - name: Full quality gate
       run: bash scripts/quality_gate.sh full
 
-  test:
-    name: Test on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        # Must match minimum_zig_version in build.zig.zon.
-        zig-version: ['0.17.0-dev.1422+e863bf3be']
-
+  test-macos:
+    name: Test on macOS
+    runs-on: macos-latest
     steps:
     - uses: actions/checkout@v4
-
     - name: Setup Zig
       uses: mlugg/setup-zig@v2
       with:
-        version: ${{ matrix.zig-version }}
-
-    - name: Install SQLite (Ubuntu)
-      if: matrix.os == 'ubuntu-latest'
+        version: '0.17.0-dev.1422+e863bf3be'
+    - name: Install SQLite
+      run: brew install sqlite3
+    - name: Build + unit + codegen
       run: |
-        sudo apt-get update
-        sudo apt-get install -y sqlite3 libsqlite3-dev
-
-    - name: Install SQLite (macOS)
-      if: matrix.os == 'macos-latest'
-      run: |
-        brew install sqlite3
-
-    - name: Build
-      run: zig build
-
-    - name: Run tests
-      run: zig build test
-
-    - name: Run codegen regression tests
-      run: zig build test-zf
-
-    - name: Release-mode smoke build
-      run: zig build -Doptimize=ReleaseSafe
-
-    - name: Build CLI tool
-      run: zig build install
-
-    - name: Test CLI
-      run: |
-        export PATH="$PATH:$(pwd)/zig-out/bin"
-        zf version
-        zf help
-
-    - name: Smart routing check
-      run: |
-        export PATH="$PATH:$(pwd)/zig-out/bin"
-        zf routes --check --root examples/smart-routing/src/modules
-        zf routes --check --root examples/production/src/modules
+        zig build
+        zig build test
+        zig build test-zf
 
   drivers-compile:
     name: Compile with PG + MySQL + zent
@@ -150,42 +114,3 @@ jobs:
         ZF_MY_PASSWORD: zfinal
         ZF_MY_DATABASE: zfinal_test
       run: zig build test -Ddriver_pg=true -Ddriver_mysql=true
-
-  production-example:
-    name: Production example build
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - name: Setup Zig
-      uses: mlugg/setup-zig@v2
-      with:
-        version: '0.17.0-dev.1422+e863bf3be'
-    - name: Install SQLite
-      run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
-    - name: Build and install (includes production binary)
-      run: zig build -Doptimize=ReleaseSafe
-    - name: Assert production example binary
-      run: test -x zig-out/bin/production
-
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Setup Zig
-      uses: mlugg/setup-zig@v2
-      with:
-        version: '0.17.0-dev.1422+e863bf3be'
-
-    - name: Check formatting
-      run: zig fmt --check src/ tools/ examples/ benchmark/ build.zig
-
-    - name: Build CLI tool
-      run: zig build install
-
-    - name: Production contract scan
-      run: |
-        export PATH="$PATH:$(pwd)/zig-out/bin"
-        zf check --prod

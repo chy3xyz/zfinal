@@ -445,8 +445,8 @@ fn printHelp(exe_name: []const u8) void {
     std.debug.print("  openapi [--out <file>]  Generate minimal OpenAPI 3.0.3 spec from project routes\n", .{});
     std.debug.print("  routes [--json] [--check] [--root DIR]\n", .{});
     std.debug.print("                            Generate routes.zig from modules/**/actions.zig\n", .{});
-    std.debug.print("  gate [--quick|--full|--release]  Productized quality gate (scripts/quality_gate.sh)\n", .{});
-    std.debug.print("  release-check           Pre-tag gate (alias: gate --release)\n", .{});
+    std.debug.print("  gate [--quick|--full|--release] [--strict]  Productized quality gate\n", .{});
+    std.debug.print("  release-check [--no-strict]  Pre-tag gate (default --strict)\n", .{});
     std.debug.print("  market <list|search|info>  Local module marketplace catalog\n", .{});
     std.debug.print("  help, h                 Show this help message\n", .{});
     std.debug.print("\n", .{});

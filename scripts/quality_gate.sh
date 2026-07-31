@@ -2,13 +2,26 @@
 # ZFinal quality / release gate — single entry for local + CI.
 # Usage:
 #   scripts/quality_gate.sh              # full (default)
-#   scripts/quality_gate.sh quick        # fmt + version + build + test (+ test-zf)
-#   scripts/quality_gate.sh release      # full + CHANGELOG + prod contract
+#   scripts/quality_gate.sh quick
+#   scripts/quality_gate.sh release [--strict]
+#   scripts/quality_gate.sh full --strict   # --strict only affects release extras
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-MODE="${1:-full}"
+
+MODE="full"
+STRICT=0
+for arg in "$@"; do
+  case "$arg" in
+    quick|full|release) MODE="$arg" ;;
+    --strict) STRICT=1 ;;
+    -h|--help)
+      printf 'Usage: %s [quick|full|release] [--strict]\n' "$0"
+      exit 0
+      ;;
+  esac
+done
 
 pass() { printf '  OK  %s\n' "$1"; }
 fail() { printf ' FAIL %s\n' "$1" >&2; exit 1; }
@@ -76,19 +89,41 @@ if [[ "$MODE" != "release" ]]; then
 fi
 
 # --- release extras ---
-section "CHANGELOG mentions $VER_ZIG or Unreleased"
-if ! grep -qE "^## \[($VER_ZIG|Unreleased)\]" CHANGELOG.md; then
-  fail "CHANGELOG.md missing ## [$VER_ZIG] or ## [Unreleased]"
-fi
-pass "CHANGELOG"
+TAG="v${VER_ZIG}"
 
-section "git working tree (warn only)"
+section "CHANGELOG has ## [$VER_ZIG]"
+if ! grep -qE "^## \[${VER_ZIG}\]" CHANGELOG.md; then
+  fail "CHANGELOG.md missing ## [$VER_ZIG] (Unreleased alone is not enough for release)"
+fi
+pass "CHANGELOG ## [$VER_ZIG]"
+
+section "git tag $TAG"
+if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null 2>&1; then
+    HEAD_SHA="$(git rev-parse HEAD)"
+    TAG_SHA="$(git rev-list -n 1 "refs/tags/${TAG}")"
+    if [[ "$HEAD_SHA" == "$TAG_SHA" ]]; then
+      pass "tag $TAG points at HEAD (retag/CI on tag)"
+    else
+      fail "tag $TAG already exists at $TAG_SHA (HEAD=$HEAD_SHA) — bump semver before release"
+    fi
+  else
+    pass "tag $TAG does not exist yet"
+  fi
+else
+  printf ' WARN git unavailable — skip tag check\n' >&2
+fi
+
+section "git working tree"
 if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   if [[ -n "$(git status --porcelain 2>/dev/null || true)" ]]; then
-    printf ' WARN dirty working tree — commit before tagging v%s\n' "$VER_ZIG" >&2
+    if [[ "$STRICT" -eq 1 ]]; then
+      fail "dirty working tree (pass without --strict to warn only)"
+    fi
+    printf ' WARN dirty working tree — commit before tagging %s\n' "$TAG" >&2
   else
     pass "clean working tree"
   fi
 fi
 
-printf '\n[gate] release PASSED (semver %s) — ready to tag v%s\n' "$VER_ZIG" "$VER_ZIG"
+printf '\n[gate] release PASSED (semver %s) — ready to tag %s\n' "$VER_ZIG" "$TAG"

@@ -1,10 +1,14 @@
 ## [Unreleased]
 
+## [0.20.10] - 2026-07-31
+
 ### Added
 - **Productized quality / release gates** (ADR-014): `scripts/quality_gate.sh`
   (`quick`|`full`|`release`), `zig build gate` / `gate-quick` / `release-gate`,
-  `zf gate` / `zf release-check [--json]`, CI job + tag `release.yml`.
-  See [`doc/release_and_quality_gates.md`](doc/release_and_quality_gates.md).
+  `zf gate` / `zf release-check [--json]`. Release mode requires `## [semver]` in
+  CHANGELOG, checks `v$semver` tag collision, and supports `--strict` dirty-tree fail.
+  CI: Ubuntu **Quality gate** is the merge gatekeeper; macOS is slim coverage;
+  tag pushes run `release --strict`. See [`doc/release_and_quality_gates.md`](doc/release_and_quality_gates.md).
 - **Module marketplace phase 1** (ADR-015): `marketplace/catalog.json` +
   `zf market list|search|info [--json]`. Discoverability only; no remote install.
   See [`doc/module_marketplace.md`](doc/module_marketplace.md).
@@ -23,13 +27,12 @@
   before `parseRoute`, so `Segment.value` / `param_names` point at owned memory.
   Previously `RouteGroup.register` freed its `allocPrint` buffer after register and
   every group-registered `:id` route 404'd while static group routes still matched.
+- **`zf routes` fmt alignment**: interceptor slices emit `&.{ic.x}` / `&.{ a, b }`
+  to match `zig fmt`, so `--check` stays green after format.
 
 ### Docs
-- **Best-practice hub refresh (v0.20.9 / 2026-07-31)**: [`doc/best_practices.md`](doc/best_practices.md)
-  (task index + capability timeline); aligned architecture / progressive / scale /
-  index / core_concepts / advanced; test baseline **257p/11s**.
-- **JSON envelope best practices**: [`doc/api_envelope.md`](doc/api_envelope.md) (REST/HttpError vs zapi);
-  linked from architecture best practices, HTTP ergonomics, `doc/index.md`; ADR-013.
+- Best-practice hub + envelope docs remain under 0.20.9 narrative; this release
+  adds gate/marketplace product docs (ADR-014/015).
 
 ## [0.20.9] - 2026-07-31
 
@@ -50,6 +53,7 @@
 
 ### Docs
 - `doc/http_ergonomics.md`, `doc/session.md`, `doc/reverse_proxy.md` §9, `PRODUCTION_AUDIT.md`, `.life/evolution.md`.
+- **Best-practice hub** [`doc/best_practices.md`](doc/best_practices.md); [`doc/api_envelope.md`](doc/api_envelope.md) + ADR-013.
 
 ## [0.20.8] - 2026-07-23
 

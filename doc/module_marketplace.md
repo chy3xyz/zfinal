@@ -1,6 +1,6 @@
 # 模块市场（phase 1：本地目录）
 
-> **版本**：对齐 v0.20.9+ · ADR-015  
+> **版本**：对齐 v0.20.10+ · ADR-015  
 > Related: [release_and_quality_gates.md](release_and_quality_gates.md) · [progressive_architecture.md](progressive_architecture.md) · [zent.md](zent.md)
 
 先有可发现的**本地目录**，再谈远程安装。质量门（ADR-014）优先于市场扩张。

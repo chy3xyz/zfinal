@@ -313,8 +313,8 @@ pub fn build(b: *std.Build) void {
         const gate_quick_step = b.step("gate-quick", "Run quick quality gate (fmt/version/build/test/test-zf)");
         gate_quick_step.dependOn(&gate_quick.step);
 
-        const gate_release = b.addSystemCommand(&.{ "bash", "scripts/quality_gate.sh", "release" });
-        const release_gate_step = b.step("release-gate", "Run release gate (full + CHANGELOG; pre-tag)");
+        const gate_release = b.addSystemCommand(&.{ "bash", "scripts/quality_gate.sh", "release", "--strict" });
+        const release_gate_step = b.step("release-gate", "Run release gate (full + CHANGELOG + tag check; --strict)");
         release_gate_step.dependOn(&gate_release.step);
     }
 
