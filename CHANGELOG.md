@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Added
+- **Productized quality / release gates** (ADR-014): `scripts/quality_gate.sh`
+  (`quick`|`full`|`release`), `zig build gate` / `gate-quick` / `release-gate`,
+  `zf gate` / `zf release-check [--json]`, CI job + tag `release.yml`.
+  See [`doc/release_and_quality_gates.md`](doc/release_and_quality_gates.md).
+- **Module marketplace phase 1** (ADR-015): `marketplace/catalog.json` +
+  `zf market list|search|info [--json]`. Discoverability only; no remote install.
+  See [`doc/module_marketplace.md`](doc/module_marketplace.md).
+
 ### Fixed
 - **`getText` on SUM/DECIMAL floats**: numeric cells no longer format into a
   threadlocal scratch buffer (ephemeral; easy to misread as ResultSet-owned and

@@ -117,7 +117,7 @@ pub const PostgresDB = struct {
             for (cache.items) |entry| {
                 const name_z = std.fmt.allocPrint(self.allocator, "{s}\x00", .{entry.name}) catch continue;
                 defer self.allocator.free(name_z);
-                self.releaseCached(name_z[0..name_z.len - 1 :0]) catch {};
+                self.releaseCached(name_z[0 .. name_z.len - 1 :0]) catch {};
                 self.allocator.free(entry.name);
                 self.allocator.free(entry.sql);
             }
@@ -864,8 +864,8 @@ fn formatTimestamp(allocator: std.mem.Allocator, raw: []const u8, suffix: []cons
     var buf: [64]u8 = undefined;
     var len = try writeYear(&buf, civil.year);
     const rest = try std.fmt.bufPrint(buf[len..], "-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}", .{
-        civil.month,  civil.day,
-        sod / 3600,   (sod % 3600) / 60,
+        civil.month, civil.day,
+        sod / 3600,  (sod % 3600) / 60,
         sod % 60,
     });
     len = appendFraction(&buf, len + rest.len, frac);

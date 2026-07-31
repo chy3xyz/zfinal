@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "description": "ZFinal local module marketplace catalog (phase 1). Browse with: zf market list|search|info. No remote install yet — see doc/module_marketplace.md and ADR-015.",
+  "modules": [
+    {
+      "id": "example/hello-world",
+      "name": "Hello World",
+      "kind": "example",
+      "path": "examples/hello-world",
+      "summary": "Minimal HTTP binary — size/startup baseline",
+      "tags": ["starter", "http"],
+      "min_zfinal": "0.20.0",
+      "doc": "examples/README.md"
+    },
+    {
+      "id": "example/production",
+      "name": "Production",
+      "kind": "example",
+      "path": "examples/production",
+      "summary": "Logging, metrics, CSRF, security headers — prod contract reference",
+      "tags": ["production", "security", "metrics"],
+      "min_zfinal": "0.20.0",
+      "doc": "PRODUCTION_AUDIT.md"
+    },
+    {
+      "id": "example/smart-routing",
+      "name": "Smart Routing",
+      "kind": "example",
+      "path": "examples/smart-routing",
+      "summary": "actions.zig true source + zf routes codegen",
+      "tags": ["routing", "actions", "codegen"],
+      "min_zfinal": "0.20.9",
+      "doc": "doc/smart_routing.md"
+    },
+    {
+      "id": "example/zent-shop",
+      "name": "zent Shop",
+      "kind": "example",
+      "path": "examples/zent-shop",
+      "summary": "E-commerce graph via zfinal.zent peer data layer",
+      "tags": ["zent", "ecommerce", "graph"],
+      "min_zfinal": "0.20.0",
+      "doc": "doc/zent.md"
+    },
+    {
+      "id": "example/htmx-admin",
+      "name": "HTMX Admin",
+      "kind": "example",
+      "path": "examples/htmx-admin",
+      "summary": "Admin UI with htmx + alpine patterns",
+      "tags": ["htmx", "admin", "ui"],
+      "min_zfinal": "0.20.0",
+      "doc": "examples/README.md"
+    },
+    {
+      "id": "example/auth",
+      "name": "Auth",
+      "kind": "example",
+      "path": "examples/auth",
+      "summary": "JWT / session auth starter patterns",
+      "tags": ["auth", "jwt"],
+      "min_zfinal": "0.20.0",
+      "doc": "examples/README.md"
+    },
+    {
+      "id": "example/ports-l2",
+      "name": "Ports L2",
+      "kind": "example",
+      "path": "examples/ports-l2",
+      "summary": "Progressive architecture L2 — ports + adapters",
+      "tags": ["ports", "architecture", "l2"],
+      "min_zfinal": "0.20.4",
+      "doc": "doc/progressive_architecture.md"
+    },
+    {
+      "id": "example/ports-l3",
+      "name": "Ports L3",
+      "kind": "example",
+      "path": "examples/ports-l3",
+      "summary": "Progressive architecture L3 — multi-adapter wiring",
+      "tags": ["ports", "architecture", "l3"],
+      "min_zfinal": "0.20.4",
+      "doc": "doc/progressive_architecture.md"
+    },
+    {
+      "id": "plugin/metrics",
+      "name": "Metrics Exporter",
+      "kind": "plugin",
+      "path": "src/plugin/metrics_exporter.zig",
+      "summary": "Prometheus-compatible metrics route plugin",
+      "tags": ["plugin", "metrics", "ops"],
+      "min_zfinal": "0.19.0",
+      "doc": "doc/architecture_best_practices.md"
+    }
+  ]
+}

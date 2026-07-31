@@ -16,6 +16,8 @@ const cmd_crud = @import("cmd_crud.zig");
 const cmd_fixture = @import("cmd_fixture.zig");
 const cmd_bench = @import("cmd_bench.zig");
 const cmd_port = @import("cmd_port.zig");
+const cmd_gate = @import("cmd_gate.zig");
+const cmd_market = @import("cmd_market.zig");
 
 const handleMigrate = cmd_migrate.handleMigrate;
 const handleSeed = cmd_migrate.handleSeed;
@@ -62,6 +64,9 @@ const Command = enum {
     ai,
     openapi,
     routes,
+    gate,
+    release_check,
+    market,
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -365,6 +370,15 @@ pub fn main(init: std.process.Init) !void {
         .routes => {
             try cmd_routes.handleRoutes(allocator, args);
         },
+        .gate => {
+            try cmd_gate.handleGate(allocator, args);
+        },
+        .release_check => {
+            try cmd_gate.handleReleaseCheck(allocator, args);
+        },
+        .market => {
+            try cmd_market.handleMarket(allocator, args);
+        },
     }
 }
 
@@ -395,6 +409,9 @@ fn parseCommand(cmd: []const u8) ?Command {
     if (std.mem.eql(u8, cmd, "ai")) return .ai;
     if (std.mem.eql(u8, cmd, "openapi")) return .openapi;
     if (std.mem.eql(u8, cmd, "routes")) return .routes;
+    if (std.mem.eql(u8, cmd, "gate")) return .gate;
+    if (std.mem.eql(u8, cmd, "release-check")) return .release_check;
+    if (std.mem.eql(u8, cmd, "market")) return .market;
     return null;
 }
 
@@ -428,6 +445,9 @@ fn printHelp(exe_name: []const u8) void {
     std.debug.print("  openapi [--out <file>]  Generate minimal OpenAPI 3.0.3 spec from project routes\n", .{});
     std.debug.print("  routes [--json] [--check] [--root DIR]\n", .{});
     std.debug.print("                            Generate routes.zig from modules/**/actions.zig\n", .{});
+    std.debug.print("  gate [--quick|--full|--release]  Productized quality gate (scripts/quality_gate.sh)\n", .{});
+    std.debug.print("  release-check           Pre-tag gate (alias: gate --release)\n", .{});
+    std.debug.print("  market <list|search|info>  Local module marketplace catalog\n", .{});
     std.debug.print("  help, h                 Show this help message\n", .{});
     std.debug.print("\n", .{});
     std.debug.print("Examples:\n", .{});

@@ -707,7 +707,27 @@ fn relativeInterceptImport(allocator: std.mem.Allocator, module_dir: []const u8)
 }
 
 fn emitMergedInterceptorRefs(w: *std.Io.Writer, mod_ics: [][]const u8, act_ics: [][]const u8) !void {
-    try w.writeAll("&.{ ");
+    // Match `zig fmt`: empty `&.{}`, one `&.{ic.x}`, many `&.{ ic.a, ic.b }`.
+    var count: usize = mod_ics.len;
+    for (act_ics) |name| {
+        var dup = false;
+        for (mod_ics) |m| {
+            if (std.mem.eql(u8, m, name)) {
+                dup = true;
+                break;
+            }
+        }
+        if (!dup) count += 1;
+    }
+
+    try w.writeAll("&.{");
+    if (count == 0) {
+        try w.writeAll("}");
+        return;
+    }
+    const pad = count > 1;
+    if (pad) try w.writeAll(" ");
+
     var first = true;
     for (mod_ics) |name| {
         if (!first) try w.writeAll(", ");
@@ -715,7 +735,6 @@ fn emitMergedInterceptorRefs(w: *std.Io.Writer, mod_ics: [][]const u8, act_ics: 
         try w.print("ic.{s}", .{name});
     }
     for (act_ics) |name| {
-        // skip dup names already in module list
         var dup = false;
         for (mod_ics) |m| {
             if (std.mem.eql(u8, m, name)) {
@@ -728,7 +747,8 @@ fn emitMergedInterceptorRefs(w: *std.Io.Writer, mod_ics: [][]const u8, act_ics: 
         first = false;
         try w.print("ic.{s}", .{name});
     }
-    try w.writeAll(" }");
+    if (pad) try w.writeAll(" ");
+    try w.writeAll("}");
 }
 
 fn emitRoutesZig(allocator: std.mem.Allocator, pm: *ParsedModule) ![]const u8 {

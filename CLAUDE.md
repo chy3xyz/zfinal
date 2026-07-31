@@ -30,12 +30,17 @@ supports sub-agents, dispatching that is equivalent to invoking
 
 ## Health Stack
 
+Prefer the productized gate (see `doc/release_and_quality_gates.md`):
+
+- day-to-day: `zig build gate-quick` / `zf gate --quick`
+- merge / CI: `zig build gate` / `bash scripts/quality_gate.sh full`
+- pre-tag: `zf release-check` / `zig build release-gate`
 - typecheck: zig build
 - lint: zig fmt --check src/ test/ benchmark/ tools/ examples/ build.zig
 - test: zig build test
 - codegen-regression: zig build test-zf
 - deadcode: (none available for Zig)
-- shell: (none available)
+- shell: scripts/quality_gate.sh (productized)
 
 ## ZFinal Development Notes
 

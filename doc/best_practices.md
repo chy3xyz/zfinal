@@ -18,6 +18,8 @@
 | `actions.zig` / `zf routes` / 嵌套 / 尾通配 | [smart_routing.md](smart_routing.md) |
 | State / Extension / extract / HttpError / stock | [http_ergonomics.md](http_ergonomics.md) |
 | JSON 信封 REST vs zapi | [api_envelope.md](api_envelope.md) |
+| 发布 / 质量门（`zig build gate`） | [release_and_quality_gates.md](release_and_quality_gates.md) |
+| 模块市场（本地目录 phase 1） | [module_marketplace.md](module_marketplace.md) |
 | 反代 + `force_connection_close` | [reverse_proxy.md](reverse_proxy.md) |
 | 数据层 A `DB` / 数据层 B `zent` | [database.md](database.md) · [zent.md](zent.md) |
 | 生产契约打分与清单 | [`PRODUCTION_AUDIT.md`](../PRODUCTION_AUDIT.md) |
@@ -81,6 +83,8 @@ schema.sql | schema.zent
 | 011 | Smart routing |
 | 012 | Axum-style HTTP ergonomics |
 | 013 | JSON 信封默认保持 HttpError |
+| 014 | 产品化质量 / 发布门 |
+| 015 | 模块市场：本地目录优先 |
 
 目录：[`.life/decisions/`](../.life/decisions/)。
 
@@ -90,11 +94,11 @@ schema.sql | schema.zent
 
 ```bash
 zf check                 # 应用仓；生产示例加 --prod
-zig build
-zig build test           # 257p / 11s
-zig build test-zf        # 改过 tools/zf 时必跑
-zig fmt --check src/ test/ tools/ examples/ benchmark/ build.zig
+zig build gate-quick     # 或完整：zig build gate / zf gate
+# 等价拆分：zig build && zig build test && zig build test-zf && zig fmt --check …
 ```
+
+打 tag 前：`zf release-check`（见 [release_and_quality_gates.md](release_and_quality_gates.md)）。
 
 生产额外：[`PRODUCTION_AUDIT.md`](../PRODUCTION_AUDIT.md) 部署契约 15 条 + [`benchmark/BASELINE.md`](../benchmark/BASELINE.md)。
 

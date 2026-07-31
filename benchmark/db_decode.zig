@@ -218,4 +218,3 @@ pub fn main() !void {
     }
     std.debug.print("\nchecksum OK (all paths agree)\n", .{});
 }
-

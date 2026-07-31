@@ -303,6 +303,21 @@ pub fn build(b: *std.Build) void {
     const install_zf_step = b.step("install-zf", "Install zf CLI tool");
     install_zf_step.dependOn(b.getInstallStep());
 
+    // Productized quality / release gates (scripts/quality_gate.sh)
+    {
+        const gate_full = b.addSystemCommand(&.{ "bash", "scripts/quality_gate.sh", "full" });
+        const gate_step = b.step("gate", "Run full quality gate (fmt/version/test/test-zf/ReleaseSafe/zf check)");
+        gate_step.dependOn(&gate_full.step);
+
+        const gate_quick = b.addSystemCommand(&.{ "bash", "scripts/quality_gate.sh", "quick" });
+        const gate_quick_step = b.step("gate-quick", "Run quick quality gate (fmt/version/build/test/test-zf)");
+        gate_quick_step.dependOn(&gate_quick.step);
+
+        const gate_release = b.addSystemCommand(&.{ "bash", "scripts/quality_gate.sh", "release" });
+        const release_gate_step = b.step("release-gate", "Run release gate (full + CHANGELOG; pre-tag)");
+        release_gate_step.dependOn(&gate_release.step);
+    }
+
     // Benchmark tool
     const bench_mod = b.createModule(.{
         .root_source_file = b.path("benchmark/main.zig"),

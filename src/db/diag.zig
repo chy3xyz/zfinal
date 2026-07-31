@@ -175,7 +175,7 @@ pub const DbError = error{
 /// owned by the caller (do NOT free them).
 pub fn parseSqliteTableColumn(message: []const u8) struct { table: ?[]const u8, column: ?[]const u8 } {
     const colon = std.mem.indexOfScalar(u8, message, ':') orelse return .{ .table = null, .column = null };
-    var rest = std.mem.trim(u8, message[colon + 1..], " ");
+    var rest = std.mem.trim(u8, message[colon + 1 ..], " ");
     // For FK errors SQLite uses "FOREIGN KEY constraint failed: table.column"
     // or just "FOREIGN KEY constraint failed" without target.
     const dot = std.mem.indexOfScalar(u8, rest, '.');

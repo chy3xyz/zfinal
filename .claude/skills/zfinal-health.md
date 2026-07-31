@@ -9,15 +9,23 @@ Run the project's own tools and score the result. Never substitute manual analys
 
 ## Health Stack
 
-Configured in `CLAUDE.md`:
+Configured in `CLAUDE.md`. Prefer the **productized gate** over ad-hoc command lists:
 
-| Category | Command |
+| Mode | Command |
+|------|---------|
+| Day-to-day | `zig build gate-quick` / `zf gate --quick` |
+| Merge / CI | `zig build gate` / `zf gate` / `bash scripts/quality_gate.sh full` |
+| Pre-tag | `zf release-check` / `zig build release-gate` |
+
+| Category | Command (gate covers these) |
 |----------|---------|
 | Type check | `zig build` |
 | Lint | `zig fmt --check src/ test/ benchmark/ tools/ examples/ build.zig` |
-| Tests | `zig build test` |
+| Tests | `zig build test` + `zig build test-zf` |
+| Prod contract | `zf check --prod` (full/release) |
 | Dead code | (no Zig tool available) |
-| Shell lint | (no shellcheck / no .sh files) |
+
+Docs: `doc/release_and_quality_gates.md` (ADR-014). Marketplace discover: `zf market list` (ADR-015).
 
 ## Known Zig 0.17-dev Quirk
 
@@ -39,8 +47,9 @@ zig fmt .
 # Delete generated migration artifacts if lint flags them
 rm -f zfinal_migration.zig test_final/zfinal_migration.zig
 
-# Run full verification
-zig build && zig fmt --check src/ test/ benchmark/ tools/ examples/ build.zig && zig build test
+# Run full verification (prefer productized gate)
+zig build gate
+# or: zig build && zig fmt --check src/ test/ benchmark/ tools/ examples/ build.zig && zig build test
 ```
 
 ## Scoring

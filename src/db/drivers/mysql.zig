@@ -850,7 +850,7 @@ pub const MySQLDB = struct {
         const start = std.mem.indexOf(u8, message, needle) orelse return null;
         const key_start = start + needle.len;
         const end = std.mem.indexOfScalar(u8, message[key_start..], '\'') orelse return null;
-        return message[key_start..key_start + end];
+        return message[key_start .. key_start + end];
     }
 
     /// Per-column output buffer for the binary-result fetch loop.

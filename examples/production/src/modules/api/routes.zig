@@ -5,7 +5,7 @@ const ic = @import("../../interceptors.zig");
 
 pub fn register(app: anytype) !void {
     try app.get("/api/form", handler.form);
-    try app.postWithInterceptors("/api/submit", handler.submit, &.{ ic.csrf });
-    try app.getWithInterceptors("/api/me", handler.me, &.{ ic.jwt });
+    try app.postWithInterceptors("/api/submit", handler.submit, &.{ic.csrf});
+    try app.getWithInterceptors("/api/me", handler.me, &.{ic.jwt});
     try app.post("/api/token", handler.issueToken);
 }

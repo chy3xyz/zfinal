@@ -51,11 +51,15 @@ new output goes to `<path>.gen.new` (use `--force` to overwrite everything).
 
 - Write model/handler/service code from scratch — use `zf` tools
 - Skip `zf check` before committing
+- Skip the productized gate on framework PRs: `zig build gate` (or `zf gate`)
 
 ## 🔍 Self-audit
 
 ```bash
-zf check    # scans for generated/edit boundary violations
+zf check               # scans for generated/edit boundary violations
+zig build gate-quick   # day-to-day; full: zig build gate / zf gate
+zf release-check       # before tagging vX.Y.Z — see doc/release_and_quality_gates.md
+zf market search <q>   # local module catalog — see doc/module_marketplace.md
 ```
 
 ## 🏗️ Architecture (3 layers)

@@ -7,6 +7,22 @@ on:
     branches: [ main, develop ]
 
 jobs:
+  quality-gate:
+    name: Quality gate (productized)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Zig
+      uses: mlugg/setup-zig@v2
+      with:
+        version: '0.17.0-dev.1422+e863bf3be'
+    - name: Install SQLite
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y sqlite3 libsqlite3-dev
+    - name: Full quality gate
+      run: bash scripts/quality_gate.sh full
+
   test:
     name: Test on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
