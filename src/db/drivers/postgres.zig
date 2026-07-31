@@ -717,14 +717,361 @@ pub const PostgresDB = struct {
                 const len: usize = @intCast(c.PQgetlength(res, row, col));
                 return .{ .blob = try allocator.dupe(u8, v[0..len]) };
             },
+            c.ZF_OIDOID => {
+                const v = c.PQgetvalue(res, row, col);
+                return .{ .int = std.mem.readInt(u32, v[0..4], .big) };
+            },
             else => {
-                // text, varchar, char, date, time, timestamp, json, uuid, numeric, ...
-                // Either true binary (uuid=16 bytes, numeric=variable) or already
-                // text-encoded. For correctness over speed, use text for these.
                 const v = c.PQgetvalue(res, row, col);
                 const len: usize = @intCast(c.PQgetlength(res, row, col));
-                return .{ .text = try allocator.dupe(u8, v[0..len]) };
+                const raw = v[0..len];
+
+                // Types below have a binary form that differs from their text
+                // form. Decoding is best-effort: a malformed/unexpected length
+                // falls through to the generic path rather than erroring out.
+                const decoded: ?[]const u8 = switch (oid) {
+                    c.ZF_UUIDOID => formatUuid(allocator, raw) catch null,
+                    c.ZF_TIMESTAMPTZOID => formatTimestamp(allocator, raw, "Z") catch null,
+                    // `timestamp` carries no zone; emit it bare so callers do
+                    // not mistake a local wall-clock reading for UTC.
+                    c.ZF_TIMESTAMPOID => formatTimestamp(allocator, raw, "") catch null,
+                    c.ZF_DATEOID => formatDate(allocator, raw) catch null,
+                    c.ZF_TIMEOID => formatTime(allocator, raw) catch null,
+                    c.ZF_TIMETZOID => formatTimeTz(allocator, raw) catch null,
+                    c.ZF_JSONBOID => formatJsonb(allocator, raw) catch null,
+                    c.ZF_NUMERICOID => formatNumeric(allocator, raw) catch null,
+                    c.ZF_INETOID, c.ZF_CIDROID => formatInet(allocator, raw) catch null,
+                    else => null,
+                };
+                if (decoded) |d| return .{ .text = d };
+
+                // Generic path: text, varchar, bpchar, name, json, xml and
+                // user-defined enums all encode as their UTF-8 text. Anything
+                // that is not valid UTF-8 is some binary type we have no
+                // decoder for — surface it as a blob instead of fabricating a
+                // `.text` cell full of bytes that would poison JSON output and
+                // trip `22021 invalid byte sequence` if echoed back to PG.
+                if (std.unicode.utf8ValidateSlice(raw)) {
+                    return .{ .text = try allocator.dupe(u8, raw) };
+                }
+                return .{ .blob = try allocator.dupe(u8, raw) };
             },
         }
     }
 };
+
+// --- PostgreSQL binary wire-format decoders ---------------------------------
+//
+// `queryParams` requests `result_format = 1`, so libpq returns each value in
+// its native binary representation rather than as text. The helpers below turn
+// the handful of types zserver-style apps actually store — uuid, timestamps,
+// jsonb, numeric, inet — back into the same strings PostgreSQL would have
+// produced in text mode, with one deliberate exception: timestamps are
+// rendered as RFC 3339 UTC (`2026-07-31T06:40:40.5149Z`) rather than
+// PostgreSQL's session-dependent `2026-07-31 14:40:40.5149+08`. RFC 3339 is
+// what every JSON client expects, sorts correctly as a plain string, and
+// matches what a Go `time.Time` marshals to.
+
+/// Seconds between the Unix epoch (1970-01-01) and the PostgreSQL epoch
+/// (2000-01-01), both UTC.
+const pg_epoch_unix_secs: i64 = 946_684_800;
+/// Days between the Unix epoch and the PostgreSQL epoch.
+const pg_epoch_unix_days: i64 = pg_epoch_unix_secs / std.time.s_per_day;
+
+const CivilDate = struct { year: i64, month: u32, day: u32 };
+
+/// Days-since-1970-01-01 → calendar date, via Howard Hinnant's `civil_from_days`.
+/// Valid across the whole proleptic Gregorian range, negative days included.
+fn civilFromDays(days: i64) CivilDate {
+    const z = days + 719468;
+    const era = @divFloor(z, 146097);
+    const doe = z - era * 146097; // [0, 146096]
+    const yoe = @divTrunc(doe - @divTrunc(doe, 1460) + @divTrunc(doe, 36524) - @divTrunc(doe, 146096), 365); // [0, 399]
+    const y = yoe + era * 400;
+    const doy = doe - (365 * yoe + @divTrunc(yoe, 4) - @divTrunc(yoe, 100)); // [0, 365]
+    const mp = @divTrunc(5 * doy + 2, 153); // [0, 11]
+    const d = doy - @divTrunc(153 * mp + 2, 5) + 1; // [1, 31]
+    const m = if (mp < 10) mp + 3 else mp - 9; // [1, 12]
+    return .{
+        .year = if (m <= 2) y + 1 else y,
+        .month = @intCast(m),
+        .day = @intCast(d),
+    };
+}
+
+/// Zig's `{d:0>4}` emits an explicit `+` for signed integers, so the year has
+/// to be formatted through an unsigned value. Years at or below zero use ISO
+/// 8601 expanded form (astronomical numbering, where year 0 is 1 BC) rather
+/// than PostgreSQL's `BC` suffix.
+fn writeYear(buf: []u8, year: i64) !usize {
+    if (year < 0) {
+        const s = try std.fmt.bufPrint(buf, "-{d:0>4}", .{@as(u64, @intCast(-year))});
+        return s.len;
+    }
+    const s = try std.fmt.bufPrint(buf, "{d:0>4}", .{@as(u64, @intCast(year))});
+    return s.len;
+}
+
+/// Append `.ffffff` with trailing zeros trimmed, matching Go's RFC3339Nano
+/// and PostgreSQL's own text output (both omit a zero fraction entirely).
+fn appendFraction(buf: []u8, at: usize, micros: u32) usize {
+    if (micros == 0) return at;
+    var digits: [6]u8 = undefined;
+    _ = std.fmt.bufPrint(&digits, "{d:0>6}", .{micros}) catch return at;
+    var end: usize = 6;
+    while (end > 0 and digits[end - 1] == '0') end -= 1;
+    buf[at] = '.';
+    @memcpy(buf[at + 1 ..][0..end], digits[0..end]);
+    return at + 1 + end;
+}
+
+/// 16 raw bytes → canonical lowercase 8-4-4-4-12 hyphenated form.
+fn formatUuid(allocator: std.mem.Allocator, raw: []const u8) ![]const u8 {
+    if (raw.len != 16) return error.InvalidUuid;
+    const hex = "0123456789abcdef";
+    var out: [36]u8 = undefined;
+    var o: usize = 0;
+    for (raw, 0..) |byte, i| {
+        if (i == 4 or i == 6 or i == 8 or i == 10) {
+            out[o] = '-';
+            o += 1;
+        }
+        out[o] = hex[byte >> 4];
+        out[o + 1] = hex[byte & 0x0f];
+        o += 2;
+    }
+    return allocator.dupe(u8, &out);
+}
+
+/// int64 microseconds since 2000-01-01 → `YYYY-MM-DDTHH:MM:SS[.ffffff]<suffix>`.
+fn formatTimestamp(allocator: std.mem.Allocator, raw: []const u8, suffix: []const u8) ![]const u8 {
+    if (raw.len != 8) return error.InvalidTimestamp;
+    const micros = std.mem.readInt(i64, raw[0..8], .big);
+    // PostgreSQL encodes the special values `infinity` / `-infinity` as the
+    // int64 extremes.
+    if (micros == std.math.maxInt(i64)) return allocator.dupe(u8, "infinity");
+    if (micros == std.math.minInt(i64)) return allocator.dupe(u8, "-infinity");
+
+    // i128 keeps the epoch shift from overflowing at the extremes of the
+    // representable timestamp range (year 294276).
+    const unix_us: i128 = @as(i128, micros) + @as(i128, pg_epoch_unix_secs) * std.time.us_per_s;
+    const secs: i64 = @intCast(@divFloor(unix_us, std.time.us_per_s));
+    const frac: u32 = @intCast(unix_us - @as(i128, secs) * std.time.us_per_s);
+    const days = @divFloor(secs, std.time.s_per_day);
+    const sod: u32 = @intCast(secs - days * std.time.s_per_day);
+    const civil = civilFromDays(days);
+
+    var buf: [64]u8 = undefined;
+    var len = try writeYear(&buf, civil.year);
+    const rest = try std.fmt.bufPrint(buf[len..], "-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}", .{
+        civil.month,  civil.day,
+        sod / 3600,   (sod % 3600) / 60,
+        sod % 60,
+    });
+    len = appendFraction(&buf, len + rest.len, frac);
+    if (len + suffix.len > buf.len) return error.InvalidTimestamp;
+    @memcpy(buf[len..][0..suffix.len], suffix);
+    len += suffix.len;
+    return allocator.dupe(u8, buf[0..len]);
+}
+
+/// int32 days since 2000-01-01 → `YYYY-MM-DD`.
+fn formatDate(allocator: std.mem.Allocator, raw: []const u8) ![]const u8 {
+    if (raw.len != 4) return error.InvalidDate;
+    const days = std.mem.readInt(i32, raw[0..4], .big);
+    if (days == std.math.maxInt(i32)) return allocator.dupe(u8, "infinity");
+    if (days == std.math.minInt(i32)) return allocator.dupe(u8, "-infinity");
+
+    const civil = civilFromDays(@as(i64, days) + pg_epoch_unix_days);
+    var buf: [32]u8 = undefined;
+    var len = try writeYear(&buf, civil.year);
+    const rest = try std.fmt.bufPrint(buf[len..], "-{d:0>2}-{d:0>2}", .{ civil.month, civil.day });
+    len += rest.len;
+    return allocator.dupe(u8, buf[0..len]);
+}
+
+fn writeTimeOfDay(buf: []u8, micros: i64) !usize {
+    if (micros < 0) return error.InvalidTime;
+    const secs: u64 = @intCast(@divFloor(micros, std.time.us_per_s));
+    const frac: u32 = @intCast(micros - @as(i64, @intCast(secs)) * std.time.us_per_s);
+    const head = try std.fmt.bufPrint(buf, "{d:0>2}:{d:0>2}:{d:0>2}", .{ secs / 3600, (secs % 3600) / 60, secs % 60 });
+    return appendFraction(buf, head.len, frac);
+}
+
+/// int64 microseconds since midnight → `HH:MM:SS[.ffffff]`.
+fn formatTime(allocator: std.mem.Allocator, raw: []const u8) ![]const u8 {
+    if (raw.len != 8) return error.InvalidTime;
+    var buf: [32]u8 = undefined;
+    const len = try writeTimeOfDay(&buf, std.mem.readInt(i64, raw[0..8], .big));
+    return allocator.dupe(u8, buf[0..len]);
+}
+
+/// int64 microseconds since midnight + int32 zone → `HH:MM:SS[.ffffff]±HH[:MM]`.
+fn formatTimeTz(allocator: std.mem.Allocator, raw: []const u8) ![]const u8 {
+    if (raw.len != 12) return error.InvalidTime;
+    var buf: [48]u8 = undefined;
+    var len = try writeTimeOfDay(&buf, std.mem.readInt(i64, raw[0..8], .big));
+
+    // PostgreSQL stores the zone as seconds *west* of UTC, so the sign of the
+    // displayed offset is inverted.
+    const zone = -std.mem.readInt(i32, raw[8..12], .big);
+    const abs: u32 = @intCast(if (zone < 0) -zone else zone);
+    const hh = abs / 3600;
+    const mm = (abs % 3600) / 60;
+    const tail = if (mm == 0)
+        try std.fmt.bufPrint(buf[len..], "{c}{d:0>2}", .{ @as(u8, if (zone < 0) '-' else '+'), hh })
+    else
+        try std.fmt.bufPrint(buf[len..], "{c}{d:0>2}:{d:0>2}", .{ @as(u8, if (zone < 0) '-' else '+'), hh, mm });
+    len += tail.len;
+    return allocator.dupe(u8, buf[0..len]);
+}
+
+/// jsonb is a single version byte followed by the JSON text.
+fn formatJsonb(allocator: std.mem.Allocator, raw: []const u8) ![]const u8 {
+    if (raw.len < 1 or raw[0] != 1) return error.InvalidJsonb;
+    return allocator.dupe(u8, raw[1..]);
+}
+
+/// Binary numeric: `int16 ndigits, int16 weight, uint16 sign, int16 dscale`
+/// followed by `ndigits` base-10000 groups. Rendered exactly as PostgreSQL
+/// would in text mode, including trailing zeros implied by `dscale`.
+fn formatNumeric(allocator: std.mem.Allocator, raw: []const u8) ![]const u8 {
+    if (raw.len < 8) return error.InvalidNumeric;
+    const ndigits = std.mem.readInt(i16, raw[0..2], .big);
+    const weight = std.mem.readInt(i16, raw[2..4], .big);
+    const sign = std.mem.readInt(u16, raw[4..6], .big);
+    const dscale = std.mem.readInt(i16, raw[6..8], .big);
+
+    switch (sign) {
+        0xC000 => return allocator.dupe(u8, "NaN"),
+        0xD000 => return allocator.dupe(u8, "Infinity"),
+        0xF000 => return allocator.dupe(u8, "-Infinity"),
+        0x0000, 0x4000 => {},
+        else => return error.InvalidNumeric,
+    }
+    if (ndigits < 0 or dscale < 0) return error.InvalidNumeric;
+    const n: i32 = ndigits;
+    if (raw.len < 8 + @as(usize, @intCast(n)) * 2) return error.InvalidNumeric;
+
+    const group = struct {
+        fn at(bytes: []const u8, count: i32, idx: i32) u16 {
+            if (idx < 0 or idx >= count) return 0;
+            const off = 8 + @as(usize, @intCast(idx)) * 2;
+            return std.mem.readInt(u16, bytes[off..][0..2], .big);
+        }
+    };
+
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(allocator);
+    if (sign == 0x4000) try out.append(allocator, '-');
+
+    var scratch: [8]u8 = undefined;
+    if (weight < 0) {
+        try out.append(allocator, '0');
+    } else {
+        var i: i32 = 0;
+        while (i <= weight) : (i += 1) {
+            const g = group.at(raw, n, i);
+            // Only the most significant group is printed unpadded.
+            const s = if (i == 0)
+                try std.fmt.bufPrint(&scratch, "{d}", .{g})
+            else
+                try std.fmt.bufPrint(&scratch, "{d:0>4}", .{g});
+            try out.appendSlice(allocator, s);
+        }
+    }
+
+    if (dscale > 0) {
+        try out.append(allocator, '.');
+        var produced: i32 = 0;
+        // Group index i holds the digits for 10000^(weight - i), so the first
+        // fractional group is at weight + 1 regardless of weight's sign.
+        var i: i32 = weight + 1;
+        while (produced < dscale) : ({
+            i += 1;
+            produced += 4;
+        }) {
+            const s = try std.fmt.bufPrint(&scratch, "{d:0>4}", .{group.at(raw, n, i)});
+            const take: usize = @intCast(@min(@as(i32, 4), dscale - produced));
+            try out.appendSlice(allocator, s[0..take]);
+        }
+    }
+    return out.toOwnedSlice(allocator);
+}
+
+/// Binary inet/cidr: `family, bits, is_cidr, addr_len` then the address bytes.
+fn formatInet(allocator: std.mem.Allocator, raw: []const u8) ![]const u8 {
+    if (raw.len < 4) return error.InvalidInet;
+    const family = raw[0];
+    const bits = raw[1];
+    const is_cidr = raw[2] != 0;
+    const nb: usize = raw[3];
+    if (raw.len < 4 + nb) return error.InvalidInet;
+    const addr = raw[4 .. 4 + nb];
+
+    // libpq uses its own address family constants, not the host's AF_INET.
+    const pgsql_af_inet = 2;
+    const pgsql_af_inet6 = 3;
+
+    var buf: [64]u8 = undefined;
+    var len: usize = 0;
+    if (family == pgsql_af_inet and nb == 4) {
+        const s = try std.fmt.bufPrint(&buf, "{d}.{d}.{d}.{d}", .{ addr[0], addr[1], addr[2], addr[3] });
+        len = s.len;
+    } else if (family == pgsql_af_inet6 and nb == 16) {
+        len = try writeIpv6(&buf, addr);
+    } else return error.InvalidInet;
+
+    // `inet` hides the prefix when it covers the whole address; `cidr` always
+    // shows it. This matches PostgreSQL's own text output.
+    const full_bits: u8 = if (nb == 4) 32 else 128;
+    if (is_cidr or bits != full_bits) {
+        const s = try std.fmt.bufPrint(buf[len..], "/{d}", .{bits});
+        len += s.len;
+    }
+    return allocator.dupe(u8, buf[0..len]);
+}
+
+/// RFC 5952 IPv6 text: lowercase hex, longest run of zero groups (length >= 2)
+/// collapsed to `::`.
+fn writeIpv6(buf: []u8, addr: []const u8) !usize {
+    var groups: [8]u16 = undefined;
+    for (0..8) |i| groups[i] = std.mem.readInt(u16, addr[i * 2 ..][0..2], .big);
+
+    var best_start: usize = 0;
+    var best_len: usize = 0;
+    var i: usize = 0;
+    while (i < 8) {
+        if (groups[i] != 0) {
+            i += 1;
+            continue;
+        }
+        var j = i;
+        while (j < 8 and groups[j] == 0) j += 1;
+        if (j - i > best_len) {
+            best_start = i;
+            best_len = j - i;
+        }
+        i = j;
+    }
+    if (best_len < 2) best_len = 0;
+
+    var len: usize = 0;
+    var g: usize = 0;
+    while (g < 8) {
+        if (best_len > 0 and g == best_start) {
+            @memcpy(buf[len..][0..2], "::");
+            len += 2;
+            g += best_len;
+            continue;
+        }
+        if (g > 0 and !(best_len > 0 and g == best_start + best_len)) {
+            buf[len] = ':';
+            len += 1;
+        }
+        const s = try std.fmt.bufPrint(buf[len..], "{x}", .{groups[g]});
+        len += s.len;
+        g += 1;
+    }
+    return len;
+}
