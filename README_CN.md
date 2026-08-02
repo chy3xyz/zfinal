@@ -86,8 +86,8 @@ fn index(ctx: *zfinal.Context) !void {
 git clone https://github.com/chy3xyz/zfinal.git
 cd zfinal
 zig build                  # 构建框架 + 所有示例
-zig build test             # 跑 145 个单元 + 集成测试
-zig build test-zf          # 跑 6 个 codegen 回归测试
+zig build test             # 基线：369 passed; 17 skipped; 0 failed
+zig build test-zf          # codegen 回归（zig build test-zf）
 ```
 
 ### 跑示例
@@ -203,7 +203,7 @@ pub fn isUsernameTaken(db: *zfinal.DB, username: []const u8) !bool {
 
 ```bash
 zf check           # AI 边界审计
-zig build test     # 145+ 个测试
+zig build test     # 369 passed; 17 skipped; 0 failed
 ```
 
 ### 第 5 步 — 跑
@@ -350,7 +350,7 @@ ZFinal 自带 6 个 skill + 1 个 sub-agent：
 | ✅ | 代码质量 | 85% |
 | 🟡 | 文档 | **85%**（原 60%，AI 化重写） |
 | 🟡 | 示例 | 82% |
-| **→** | **总体** | **92%** |
+| **→** | **总体** | **~9.2/10（契约 9.8）** |
 
 详见 [PRODUCTION_AUDIT.md](PRODUCTION_AUDIT.md)。
 
@@ -360,6 +360,12 @@ ZFinal 自带 6 个 skill + 1 个 sub-agent：
 千万级支撑与 L0→L3 渐进代码架构：
 [doc/scale_to_millions.md](doc/scale_to_millions.md) ·
 [doc/progressive_architecture.md](doc/progressive_architecture.md)。
+
+L3 异步（同 TX Outbox → Bus）与消息连接器：
+[doc/outbox.md](doc/outbox.md) · [doc/bus.md](doc/bus.md) ·
+[doc/nats.md](doc/nats.md) · [doc/robustmq.md](doc/robustmq.md)。
+
+文档索引：[doc/index.md](doc/index.md) · 最佳实践中枢：[doc/best_practices.md](doc/best_practices.md)。
 
 电商 / 社交图关系用 **zent**（与 `zf` Model 正交）：
 [doc/zent.md](doc/zent.md) · [`examples/zent-shop`](examples/zent-shop/)。

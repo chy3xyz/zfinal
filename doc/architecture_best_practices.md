@@ -186,7 +186,7 @@ ADR：[003-experimental-plugins.md](../.life/decisions/003-experimental-plugins.
 
 ```bash
 zig build
-zig build test          # 期望：~257 passed; 11 skipped; 0 failed
+zig build test          # 期望：369 passed; 17 skipped; 0 failed
 zig build test-zf
 zig fmt --check src/ test/ tools/ examples/ benchmark/ build.zig
 zf check                # 应用仓库
@@ -203,7 +203,7 @@ zf check                # 应用仓库
 | 新横切逻辑 | Interceptor（caller-owned cfg）或 Handler 包装，不塞进 Model |
 | JSON 信封选型 | [api_envelope.md](api_envelope.md)：默认 A；zapi 成败统一 |
 | L2/L3 端口 | `zf g port store\|cache\|bus`；抄 `examples/ports-l2` / `ports-l3` |
-| 新定时 / 缓存 / MQ | Plugin + Manager；跨机用 `QueueNatsClient` / `QueueRobustMQClient` |
+| 新定时 / 缓存 / MQ | Plugin + Manager；跨机用 Outbox→Bus（[outbox.md](outbox.md)·[bus.md](bus.md)）或 `QueueNatsClient` / `QueueRobustMQClient` |
 | 新字符串 / 时间工具 | `kit/*`，不依赖 Server |
 | 半成品能力 | `experimental` + ADR，测够再升 stable |
 | 改框架公开 API | `main.zig` + 测试 + CHANGELOG / `.life` |

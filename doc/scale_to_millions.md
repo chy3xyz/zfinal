@@ -1,7 +1,7 @@
 # 千万级用户支撑方案
 
-> **版本**：对齐 v0.20.9+ · 修订 **2026-07-31**  
-> **相关**：[progressive_architecture.md](progressive_architecture.md) · [architecture_best_practices.md](architecture_best_practices.md) · [best_practices.md](best_practices.md) · [`PRODUCTION_AUDIT.md`](../PRODUCTION_AUDIT.md) · [reverse_proxy.md](reverse_proxy.md)
+> **版本**：对齐 v0.20.12+ · 修订 **2026-08-02**  
+> **相关**：[progressive_architecture.md](progressive_architecture.md) · [outbox.md](outbox.md) · [bus.md](bus.md) · [architecture_best_practices.md](architecture_best_practices.md) · [best_practices.md](best_practices.md) · [`PRODUCTION_AUDIT.md`](../PRODUCTION_AUDIT.md) · [reverse_proxy.md](reverse_proxy.md)
 
 **结论：**「千万级用户」通常指注册量 / 月活，不是单机千万并发。  
 ZFinal 适合做 **无状态 API / BFF 节点**；要靠 **水平扩展 + 外部数据面** 撑住。  
@@ -46,9 +46,9 @@ ZFinal 无状态实例 × N（ReleaseSafe，钉死 Zig）
 1. **应用无状态**：Session 进 Redis；本地 `CachePlugin` 只做短 TTL，不当全站真相源。
 2. **SQLite 不进多节点写路径**：千万级用 PostgreSQL / MySQL；SQLite 仅单机 / 边车 / 开发。
 3. **读写分离**：列表走从库；写走主库；热点走 Redis。
-4. **异步削峰**：下单、推送、报表 → 跨机 MQ。**RobustMQ（`QueueRobustMQClient`）** 或 **NATS（`QueueNatsClient`）**；进程内 `QueueClient` 仅单进程。
+4. **异步削峰**：下单、推送、报表 → **同 TX 写 Outbox**（[`DbOutbox`](outbox.md)）再 `drainOnce` → **Bus**（[bus.md](bus.md)）到 **RobustMQ** / **NATS**；进程内 `MemoryBus`/`QueueClient` 仅单进程/单测。不要用 Bus 替代持久投递意图。
 5. **保护下游**：`CircuitBreaker` + 反代/应用双层限流；严格控制「实例数 × 连接池」。
-6. **观测**：Metrics / Prometheus + `/health`；按延迟与错误率扩缩容。
+6. **观测**：Metrics / Prometheus + `/health`；Outbox 可用 `toPrometheusFormat`；按延迟与错误率扩缩容。
 
 部署契约见 [`PRODUCTION_AUDIT.md`](../PRODUCTION_AUDIT.md)。
 

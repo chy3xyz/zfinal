@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## [0.20.12] - 2026-08-02
+
+### Docs
+- Hub refresh: `doc/index.md` / `README` / `README_CN` / `AGENTS.md` /
+  `best_practices` / `scale_to_millions` / `database` /
+  `architecture_best_practices` — test baseline **369/17**, Outbox→Bus links,
+  production score ~9.2.
+
 ### Added
 - **DbOutbox live PG/MySQL** `drainOnce` roundtrip (env-gated; runs in `drivers-live`).
 - **messaging-live CI**: TCP wait on :9092, fail if Redpanda down, pre-create soak topics.

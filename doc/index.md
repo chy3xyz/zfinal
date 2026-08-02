@@ -5,7 +5,7 @@
 
 ZFinal is a high-performance Zig web framework **designed for AI-driven development**.
 Generated files mark `// ── ai-edit-zone: …`; `zf` emits JSON manifests; `zfinal.ZfTool`
-can invoke generators in-process. Current release: **v0.20.11** (Zig `0.17.0-dev.1422`).
+can invoke generators in-process. Current release: **v0.20.12** (Zig `0.17.0-dev.1422`).
 
 ## Why ZFinal
 
@@ -15,8 +15,8 @@ can invoke generators in-process. Current release: **v0.20.11** (Zig `0.17.0-dev
 | `ai-edit-zone` + zone **merge** | Regen keeps matching zone bodies |
 | `zf routes` + `actions.zig` | One routing source of truth (v0.20.9+) |
 | `zfinal.ZfTool` | In-process generator, no shell required |
-| `zf check` / `--heal` / `--prod` | Boundary + HttpError + production contract |
-| `zig build test` | **257 passed; 11 skipped; 0 failed** (baseline) |
+| `zf check` / `--heal` / `--prod` | Boundary + HttpError + production contract + L3 heuristics |
+| `zig build test` | **369 passed; 17 skipped; 0 failed** (baseline; live env adds more) |
 
 ## The 5-minute AI speedrun
 
@@ -40,8 +40,9 @@ Walkthrough: [ai-quickstart.md](ai-quickstart.md) · Demo: `examples/ai-blog-5mi
 | Health / CI | [`.claude/skills/zfinal-health.md`](../.claude/skills/zfinal-health.md) |
 | Architecture layers | [architecture_best_practices.md](architecture_best_practices.md) |
 | Envelopes / smart routing / HTTP | [api_envelope.md](api_envelope.md) · [smart_routing.md](smart_routing.md) · [http_ergonomics.md](http_ergonomics.md) |
-| L0→L3 / millions | [progressive_architecture.md](progressive_architecture.md) · [scale_to_millions.md](scale_to_millions.md) |
+| L0→L3 / Outbox→Bus / millions | [progressive_architecture.md](progressive_architecture.md) · [outbox.md](outbox.md) · [bus.md](bus.md) · [scale_to_millions.md](scale_to_millions.md) |
 | Keep-alive / reverse proxy | [reverse_proxy.md](reverse_proxy.md) |
+| Business AI runtime | [ai.md](ai.md) |
 
 ## For humans
 
@@ -50,9 +51,12 @@ Walkthrough: [ai-quickstart.md](ai-quickstart.md) · Demo: `examples/ai-blog-5mi
 | Best practices index + timeline | [best_practices.md](best_practices.md) |
 | Architecture / progressive / scale | [architecture_best_practices.md](architecture_best_practices.md) · [progressive_architecture.md](progressive_architecture.md) · [scale_to_millions.md](scale_to_millions.md) |
 | Data: `DB` **or** `zent` | [zent.md](zent.md) · [database.md](database.md) |
-| Messaging | [nats.md](nats.md) · [robustmq.md](robustmq.md) |
+| L3 async: Outbox + Bus | [outbox.md](outbox.md) · [bus.md](bus.md) |
+| Messaging connectors | [nats.md](nats.md) · [robustmq.md](robustmq.md) |
+| WebSocket / OAuth2 | [websocket.md](websocket.md) · [oauth2.md](oauth2.md) |
 | Getting started / CLI | [getting_started.md](getting_started.md) · [zf_cli.md](zf_cli.md) |
 | Production contract | [`PRODUCTION_AUDIT.md`](../PRODUCTION_AUDIT.md) |
+| Quality / release gates | [release_and_quality_gates.md](release_and_quality_gates.md) |
 
 ## What you get out of the box
 
@@ -60,9 +64,11 @@ Walkthrough: [ai-quickstart.md](ai-quickstart.md) · Demo: `examples/ai-blog-5mi
 - Axum-inspired State / Extension / extract / HttpError / stock layers
 - SQLite (default) + opt-in PostgreSQL / MySQL; Active Record + **zent** graph ORM
 - CSRF, captcha, i18n, validators, JWT HS256/RS256
-- WebSocket, templates, metrics (6 route classes), plugins (Cache / Cron / Redis / MQTT / …)
-- Stable `QueueNatsClient` / `QueueRobustMQClient`; L2/L3 ports codegen
-- **257** unit tests (+ skips for live DB) · `test-zf` codegen suite · 0 leak target
+- WebSocket (`addWebSocket` + idle tick), templates, metrics (6 route classes)
+- Plugins: Cache / Cron / Redis / MQTT / OAuth2 / P2P (HMAC) / …
+- L3 ports: `Store` / `Cache` / `Outbox` (`DbOutbox.drainOnce`) + `Bus` (Memory / NATS / RobustMQ)
+- Stable `QueueNatsClient` / `QueueRobustMQClient`; CI `messaging-live` + `drivers-live`
+- **369** unit tests (+ skips for live DB/MQ/OAuth2) · `test-zf` codegen · 0 leak target
 - Cross-platform: macOS, Linux, Windows
 
 ## Project structure (for AI agents)
@@ -80,8 +86,9 @@ zfinal/
 
 ## Versioning
 
-Semantic versioning. Current: **v0.20.11** (`src/version.zig` ≡ `build.zig.zon`).  
-Tagged releases on GitHub; manifests use the same `semver`.
+Semantic versioning. Current: **v0.20.12** (`src/version.zig` ≡ `build.zig.zon`).  
+Tagged releases on GitHub; manifests use the same `semver`. Unreleased L3/messaging
+hardening is tracked in [CHANGELOG.md](../CHANGELOG.md) `[Unreleased]`.
 
 ## License
 

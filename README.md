@@ -8,10 +8,10 @@
 
 [![Zig](https://img.shields.io/badge/Zig-0.17.0-orange.svg)](https://ziglang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v0.20.11-blue.svg)](CHANGELOG.md)
-[![Tests](https://img.shields.io/badge/tests-215%20passed%20%C2%B7%2019%20codegen%20%C2%B7%200%20failed-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/version-v0.20.12-blue.svg)](CHANGELOG.md)
+[![Tests](https://img.shields.io/badge/tests-369%20passed%20%C2%B7%2017%20skipped%20%C2%B7%200%20failed-brightgreen.svg)]()
 [![Drivers](https://img.shields.io/badge/drivers-SQLite%20%C2%B7%20PostgreSQL%20%C2%B7%20MySQL-blue.svg)]()
-[![Production](https://img.shields.io/badge/production--score-9.8%2F10%20(contractual)%20%C2%B7%20~9.1%20honest-brightgreen.svg)](PRODUCTION_AUDIT.md)
+[![Production](https://img.shields.io/badge/production--score-9.8%2F10%20(contractual)%20%C2%B7%20~9.2%20honest-brightgreen.svg)](PRODUCTION_AUDIT.md)
 
 **English** | [中文文档](README_CN.md)
 
@@ -108,7 +108,7 @@ zig build run-standalone-admin   # Single-binary admin (all HTML @embedFile'd)
 ### Add ZFinal to your project
 
 ```bash
-zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.11.tar.gz
+zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.12.tar.gz
 ```
 
 In your `build.zig.zon`:
@@ -116,7 +116,7 @@ In your `build.zig.zon`:
 ```zon
 .dependencies = .{
     .zfinal = .{
-        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.11.tar.gz",
+        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.12.tar.gz",
         .hash = "...",  // auto-filled by `zig fetch`
     },
 },
@@ -449,9 +449,9 @@ context from day one.
 | ✅ | Plugin Maturity | 93% |
 | ✅ | Documentation | 94% |
 | ✅ | Examples | 90% |
-| **→** | **Overall** | **~9.1/10 (contractual 9.8)** |
+| **→** | **Overall** | **~9.2/10 (contractual 9.8)** |
 
-The honest, independently-assessed score is **~9.1/10** (controlled
+The honest, independently-assessed score is **~9.2/10** (controlled
 deploy ~9.5–9.7). The **9.8/10** figure is the contractual target
 we design toward and hold ourselves accountable to; the residual gap
 is mostly the Zig 0.17-dev pin and the forced-connection-close
@@ -495,14 +495,17 @@ Scale-out (millions of users) and progressive L0→L3 code layout:
 | ConfigClient | ✅ Stable | Env / JSON file / env_then_file lookup |
 | BeanValidator | ✅ Stable | Fluent wrapper over `Validator` |
 | TaskScheduler | ✅ Stable | Cron + fixed-rate / fixed-delay via `tick()` |
-| OAuth2Client | ✅ Stable | Authorize URL + code/credentials/refresh token helpers |
+| OAuth2Client | ✅ Stable | Authorize URL + PKCE + code/credentials/refresh; `OAUTH2_LIVE` smoke |
 | PostgreSQL | ✅ Stable | libpq driver — `-Ddriver_pg=true` |
 | MySQL | ✅ Stable | mysqlclient driver — `-Ddriver_mysql=true` |
+| Bus / Outbox | ✅ Stable | `MemoryBus`/`NatsBus`/`RobustMQBus` + `DbOutbox.drainOnce` ([doc/bus.md](doc/bus.md) · [doc/outbox.md](doc/outbox.md)) |
 | WeChat | ✅ Stable | Unified wrapper for [zwechat](https://github.com/chy3xyz/zwechat.git) |
 | Admin (Static) | ✅ Stable | `zfinal.StaticAdmin` — `@embedFile` |
 
-Messaging connectors: [doc/nats.md](doc/nats.md) · [doc/robustmq.md](doc/robustmq.md).
-Business AI runtime: [doc/ai.md](doc/ai.md) · codegen / ZfTool: [doc/aichat.md](doc/aichat.md).
+Messaging: [doc/bus.md](doc/bus.md) · [doc/outbox.md](doc/outbox.md) · [doc/nats.md](doc/nats.md) · [doc/robustmq.md](doc/robustmq.md).  
+WebSocket / OAuth2: [doc/websocket.md](doc/websocket.md) · [doc/oauth2.md](doc/oauth2.md).  
+Business AI runtime: [doc/ai.md](doc/ai.md) · codegen / ZfTool: [doc/aichat.md](doc/aichat.md).  
+Doc index: [doc/index.md](doc/index.md) · best-practice hub: [doc/best_practices.md](doc/best_practices.md).
 
 ---
 
@@ -666,6 +669,6 @@ MIT — see [LICENSE](LICENSE) for details.
 
 Made with ❤️ by the ZFinal Team
 
-**ZFinal v0.20.11** — Zig 的 AI 极速开发框架
+**ZFinal v0.20.12** — Zig 的 AI 极速开发框架
 
 </div>

@@ -2,6 +2,8 @@
 
 ZFinal 内置了轻量级的 Active Record 模式 ORM，支持 SQLite, MySQL, PostgreSQL。
 
+> **L3 异步**：领域写与投递意图应**同一事务** — 业务表 + [`DbOutbox.append`](outbox.md)，再由 worker `drainOnce` → [`Bus`](bus.md)。不要在事务外单独 `publish` 当持久投递。
+
 ## 1. 配置数据库
 
 在 `src/config/config.zig` 中配置：
