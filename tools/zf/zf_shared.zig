@@ -44,6 +44,34 @@ pub fn hasFlag(args: []const []const u8, flag: []const u8) bool {
     return false;
 }
 
+/// Process exit codes for machine-readable CLI (AI/CI).
+pub const Exit = struct {
+    pub const ok: u8 = 0;
+    pub const fail: u8 = 1;
+    /// Warnings only / advisory issues (doctor, check warn-only).
+    pub const warn: u8 = 2;
+};
+
+/// Escape `s` as a JSON string literal body (no surrounding quotes) to stdout.
+pub fn printJsonStringEscaped(s: []const u8) void {
+    for (s) |c| {
+        switch (c) {
+            '"' => std.debug.print("\\\"", .{}),
+            '\\' => std.debug.print("\\\\", .{}),
+            '\n' => std.debug.print("\\n", .{}),
+            '\r' => std.debug.print("\\r", .{}),
+            '\t' => std.debug.print("\\t", .{}),
+            else => {
+                if (c < 0x20) {
+                    std.debug.print("\\u{x:0>4}", .{c});
+                } else {
+                    std.debug.print("{c}", .{c});
+                }
+            },
+        }
+    }
+}
+
 pub fn ensureDir(allocator: std.mem.Allocator, path: []const u8) !void {
     std.Io.Dir.cwd().createDirPath(io, path) catch |err| {
         if (err != error.PathAlreadyExists) {

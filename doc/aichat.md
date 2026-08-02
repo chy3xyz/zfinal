@@ -307,6 +307,31 @@ pub fn chatSync(...) !ChatResult {
 
 ---
 
+## ZfTool ↔ CLI manifest schema
+
+进程内 `zfinal.aichat.ZfTool` 与 CLI `zf crud:sql|zent --json` 共用同一套 JSON 契约：
+
+| 字段 | 含义 |
+|------|------|
+| `$schema` | `https://zfinal.dev/schemas/manifest-1.json` |
+| `version` | 框架 semver（与 `build.zig.zon` / `zf version` 对齐） |
+| `generator` | `ZfTool.manifestFromSql` / `zf crud:sql` / `zf crud:zent` / `zf new` … |
+| `tables[]` / zent entities | `name`、`pascal_name`、`files`、`ai_edit_zones`、`fields` |
+| `files` | `model` / `service` / `handler` / `actions` / `routes`（相对模块目录） |
+
+AI 解析逻辑应只认这套键；不要假设「CLI 能、库不能」。CLI 侧另有 `zf doctor --json`、`zf routes --json`、`zf g … --json`、`zf new … --json` 供编排。
+
+```zig
+const aichat = zfinal.aichat;
+const tool = aichat.ZfTool.init(allocator);
+const manifest = try tool.manifestFromSql(sql); // 形状 ≈ zf crud:sql --json
+defer allocator.free(manifest);
+```
+
+详见 `src/aichat/zf_tool.zig` 与 [`zf_cli.md`](zf_cli.md)。
+
+---
+
 ## API 速查
 
 | 导出 | 所在文件 | 说明 |
@@ -314,6 +339,7 @@ pub fn chatSync(...) !ChatResult {
 | `ChatMessage`, `ChatResult` | `types.zig` | 核心数据结构 |
 | `SYSTEM_PROMPT_TEMPLATE`, `DEFAULT_SYSTEM_PROMPT` | `types.zig` | 预定义提示词 |
 | `AiClient`, `CurlAiClient`, `chatSync`, `chatStream`, `deinitClient` | `client.zig` | 客户端 trait + curl 实现 |
+| `ZfTool` | `zf_tool.zig` | 进程内 codegen manifest（与 `zf crud:* --json` 同 schema） |
 | `chatSync`, `buildSyncRequestBody`, `buildStreamingRequestBody` | `service.zig` | 服务工具（直接 HTTP 调用） |
 | `formatSSE`, `formatSSERaw`, `countTokensEst` | `service.zig` | SSE 格式化 + token 估算 |
 | `ChatPersistence` | `service.zig` | 持久化 trait |

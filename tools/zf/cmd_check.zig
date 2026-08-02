@@ -33,6 +33,9 @@ pub fn handleCheck(
     prod_root: []const u8,
     deadcode: bool,
     deadcode_opts: DeadcodeOpts,
+    practice: bool,
+    practice_strict: bool,
+    practice_root: []const u8,
 ) !void {
     if (ai_zones) {
         try printAiZones(allocator);
@@ -102,6 +105,10 @@ pub fn handleCheck(
         try checkProdContract(allocator, prod_root, &pass, &warn, &fail);
     }
 
+    if (practice) {
+        try checkPracticeRules(allocator, practice_root, practice_strict, &pass, &warn, &fail);
+    }
+
     if (deadcode) {
         try runDeadcodeCheck(allocator, deadcode_opts, &pass, &warn, &fail);
     }
@@ -110,6 +117,7 @@ pub fn handleCheck(
     std.debug.print("Results: {d} pass  {d} warn  {d} fail\n", .{ pass, warn, fail });
     if (fail > 0) {
         std.debug.print("\n❌ FAIL: Fix {d} issue(s) before committing.\n", .{fail});
+        std.process.exit(zf_shared.Exit.fail);
     } else if (warn > 0) {
         std.debug.print("\n⚠️  PASS with {d} warning(s). Review before committing.\n", .{warn});
     } else {
@@ -349,6 +357,176 @@ fn checkProdL3Heuristics(allocator: std.mem.Allocator, root: []const u8, warn: *
 
 fn containsIgnoreCase(hay: []const u8, needle: []const u8) bool {
     return std.ascii.findIgnoreCasePos(hay, 0, needle) != null;
+}
+
+const PracticeIgnore = struct {
+    patterns: []const []const u8 = &.{},
+
+    fn ignores(self: PracticeIgnore, path: []const u8) bool {
+        for (self.patterns) |p| {
+            if (std.mem.indexOf(u8, path, p) != null) return true;
+        }
+        return false;
+    }
+};
+
+fn loadPracticeIgnore(allocator: std.mem.Allocator) PracticeIgnore {
+    const data = zf_shared.readFileAlloc(allocator, ".zfinal-check.json") catch return .{};
+    defer allocator.free(data);
+    const key = "\"ignore\"";
+    const idx = std.mem.indexOf(u8, data, key) orelse return .{};
+    const bracket = std.mem.indexOfScalar(u8, data[idx..], '[') orelse return .{};
+    const start = idx + bracket + 1;
+    const end = std.mem.indexOfScalar(u8, data[start..], ']') orelse return .{};
+    const body = data[start .. start + end];
+    var list = std.ArrayList([]const u8).empty;
+    var it = std.mem.splitScalar(u8, body, ',');
+    while (it.next()) |raw| {
+        const s = std.mem.trim(u8, raw, " \t\n\r\"");
+        if (s.len == 0) continue;
+        const dup = allocator.dupe(u8, s) catch continue;
+        list.append(allocator, dup) catch {
+            allocator.free(dup);
+            continue;
+        };
+    }
+    return .{ .patterns = list.toOwnedSlice(allocator) catch &.{} };
+}
+
+/// Business best-practice heuristics (`zf check --practice`).
+fn checkPracticeRules(
+    allocator: std.mem.Allocator,
+    root: []const u8,
+    strict: bool,
+    pass: *u32,
+    warn: *u32,
+    fail: *u32,
+) !void {
+    std.debug.print("\n--- Business practice (--practice) root={s} ---\n", .{root});
+    const ignore = loadPracticeIgnore(allocator);
+    defer {
+        for (ignore.patterns) |p| allocator.free(p);
+        if (ignore.patterns.len > 0) allocator.free(ignore.patterns);
+    }
+
+    var dir = std.Io.Dir.cwd().openDir(zf_shared.io, root, .{ .iterate = true }) catch {
+        std.debug.print("⚠️  WARN: cannot open practice root {s}\n", .{root});
+        warn.* += 1;
+        return;
+    };
+    defer dir.close(zf_shared.io);
+
+    var findings: u32 = 0;
+    try walkPractice(&dir, root, allocator, ignore, strict, warn, fail, &findings);
+    if (findings == 0) {
+        std.debug.print("✅ PASS: no practice findings under {s}\n", .{root});
+        pass.* += 1;
+    }
+}
+
+fn emitPractice(strict: bool, warn: *u32, fail: *u32, findings: *u32, comptime fmt: []const u8, args: anytype) void {
+    findings.* += 1;
+    if (strict) {
+        fail.* += 1;
+        std.debug.print("❌ FAIL: " ++ fmt ++ "\n", args);
+    } else {
+        warn.* += 1;
+        std.debug.print("⚠️  WARN: " ++ fmt ++ "\n", args);
+    }
+}
+
+fn walkPractice(
+    dir: *std.Io.Dir,
+    rel: []const u8,
+    allocator: std.mem.Allocator,
+    ignore: PracticeIgnore,
+    strict: bool,
+    warn: *u32,
+    fail: *u32,
+    findings: *u32,
+) !void {
+    var it = dir.iterate();
+    while (it.next(zf_shared.io) catch null) |entry| {
+        if (entry.kind == .directory) {
+            if (std.mem.eql(u8, entry.name, ".git") or
+                std.mem.eql(u8, entry.name, "zig-cache") or
+                std.mem.eql(u8, entry.name, ".zig-cache") or
+                std.mem.eql(u8, entry.name, "zig-out") or
+                std.mem.eql(u8, entry.name, "node_modules")) continue;
+            const sub_rel = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ rel, entry.name });
+            defer allocator.free(sub_rel);
+            var sub = dir.openDir(zf_shared.io, entry.name, .{ .iterate = true }) catch continue;
+            defer sub.close(zf_shared.io);
+            try walkPractice(&sub, sub_rel, allocator, ignore, strict, warn, fail, findings);
+            continue;
+        }
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".zig")) continue;
+        const full = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ rel, entry.name });
+        defer allocator.free(full);
+        if (ignore.ignores(full)) continue;
+
+        const content = blk: {
+            var f = dir.openFile(zf_shared.io, entry.name, .{}) catch continue;
+            defer f.close(zf_shared.io);
+            const st = f.stat(zf_shared.io) catch continue;
+            const buf = allocator.alloc(u8, @intCast(st.size)) catch continue;
+            const chunks = [_][]u8{buf};
+            _ = f.readStreaming(zf_shared.io, &chunks) catch {
+                allocator.free(buf);
+                continue;
+            };
+            break :blk buf;
+        };
+        defer allocator.free(content);
+
+        const is_handler = std.mem.indexOf(u8, full, "/handler") != null or std.mem.endsWith(u8, full, "handler.zig");
+        if (is_handler) {
+            if (std.mem.indexOf(u8, content, "exec(\"") != null or std.mem.indexOf(u8, content, "exec('") != null) {
+                emitPractice(strict, warn, fail, findings, "{s} handler uses exec(\"…\") — prefer parameterized queries in service/model", .{full});
+            }
+            // Layering: handler should not talk to DB drivers directly.
+            if (std.mem.indexOf(u8, content, "@import(\"c_sqlite3\")") != null or
+                std.mem.indexOf(u8, content, "@import(\"sqlite\")") != null or
+                std.mem.indexOf(u8, content, "libpq") != null or
+                std.mem.indexOf(u8, content, "mysql.h") != null)
+            {
+                emitPractice(strict, warn, fail, findings, "{s} handler imports DB driver — sink SQL to service/model", .{full});
+            }
+            if (std.mem.indexOf(u8, content, "SELECT ") != null and std.mem.indexOf(u8, content, " ++ ") != null) {
+                emitPractice(true, warn, fail, findings, "{s} handler builds SQL with ++ — use parameterized queries (SQL injection risk)", .{full});
+            }
+        }
+
+        if (std.mem.indexOf(u8, content, "force_connection_close = false") != null) {
+            emitPractice(strict, warn, fail, findings, "{s} sets force_connection_close=false — keep true in production (zig#25017)", .{full});
+        }
+
+        const has_err_envelope = std.mem.indexOf(u8, content, "renderJson(.{ .err") != null;
+        const has_zapi = std.mem.indexOf(u8, content, ".code =") != null and std.mem.indexOf(u8, content, ".msg =") != null;
+        if (has_err_envelope and has_zapi) {
+            emitPractice(strict, warn, fail, findings, "{s} mixes HttpError .err and zapi code/msg — pick one (doc/api_envelope.md)", .{full});
+        }
+
+        // Password / secret zeroization heuristic (warn unless --strict).
+        if ((std.mem.indexOf(u8, content, "password") != null or std.mem.indexOf(u8, content, "passwd") != null) and
+            std.mem.indexOf(u8, content, "@memset") == null and
+            std.mem.indexOf(u8, content, "secureZero") == null and
+            std.mem.indexOf(u8, content, "zeroize") == null and
+            (std.mem.indexOf(u8, content, "hashPassword") != null or std.mem.indexOf(u8, content, "verifyPassword") != null))
+        {
+            emitPractice(strict, warn, fail, findings, "{s} handles password without zeroize/@memset — clear buffers after hash/verify", .{full});
+        }
+
+        const has_publish = std.mem.indexOf(u8, content, ".publish(") != null;
+        const has_db_write = std.mem.indexOf(u8, content, ".insert(") != null or std.mem.indexOf(u8, content, "INSERT INTO") != null;
+        const has_outbox = std.mem.indexOf(u8, content, "Outbox") != null or
+            std.mem.indexOf(u8, content, "drainOnce") != null or
+            std.mem.indexOf(u8, content, "DbOutbox") != null;
+        if (has_publish and has_db_write and !has_outbox) {
+            emitPractice(strict, warn, fail, findings, "{s} has DB write + .publish( without Outbox — same-TX DbOutbox (doc/outbox.md)", .{full});
+        }
+    }
 }
 
 fn resolveAppMain(allocator: std.mem.Allocator, root: []const u8) ![]u8 {

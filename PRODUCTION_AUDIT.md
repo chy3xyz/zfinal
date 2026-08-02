@@ -1,6 +1,6 @@
 # ZFinal Framework — Production Readiness Audit
 
-**Date:** 2026-08-02 (CHANGELOG / package **0.20.13**; L3/messaging + AI tools JSON fix)  
+**Date:** 2026-08-02 (CHANGELOG / package **0.20.14**; L3/messaging + AI tools JSON fix)  
 **Zig:** `0.17.0-dev.1422+e863bf3be` (pinned in CI; `minimum_zig_version` in `build.zig.zon`)  
 **Status:** **Production-ready under the deployment contract below.**  
 **Headline score (contractual):** **9.8 / 10**  

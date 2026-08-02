@@ -1,5 +1,27 @@
 ## [Unreleased]
 
+## [0.20.14] - 2026-08-02
+
+### Added
+- **`zf doctor [--json]`**: diagnose PATH/`zig-out` binary, semver vs `build.zig.zon`,
+  modules/actions wiring; exit 2 on advisory issues.
+- **`zf check --practice [--strict]`**: business best-practice heuristics (handler SQL/
+  layering, keep-alive, envelope mix, password zeroize, DB write+Bus without Outbox);
+  optional `.zfinal-check.json` `ignore` list.
+- **`cmd_catalog.zig`**: single table for command parse + help (prevents missing subcommands).
+- **`zf new … --json`**: machine-readable project scaffold manifest.
+- **Release workflow**: upload `zf` Linux/macOS ReleaseSafe artifacts after gate.
+- **`zf routes` incremental cache**: skip rewrite when `routes.zig` mtime ≥ `actions.zig`
+  (bypass with `--force`).
+
+### Changed
+- **`main.zig` thinned**: scaffold/new/generate/ai/upgrade/life → `cmd_scaffold.zig`.
+- **`doc/zf_cli.md`**: rewritten for v0.20.x (`routes` / `check --prod|--practice` / `doctor` / `gate`).
+- **`doc/aichat.md`**: ZfTool ↔ `zf crud:* --json` manifest schema alignment.
+- **Quality gate**: pin `$ROOT/zig-out/bin/zf`, assert help lists `doctor`, run `zf doctor`.
+- **Exit codes**: `zf_shared.Exit` — 0 ok / 1 fail / 2 warn (`doctor`, check fail).
+- **CRUD/ZfTool manifests**: shared `$schema` + semver `version` + `actions` file key.
+
 ### Fixed
 - **Memory leaks (request path)**: `compressBody` no longer heap-allocates a
   never-freed flate window; performance/access-log interceptors and
@@ -8,6 +30,7 @@
   `setAttr`/`setHeader` overwrite frees prior values; `setCookieFull` /
   `ensureQueryParams` / `parseQueryIntoAllocator` / `SkillRegistry.register`
   errdefer ownership tightened.
+- **`zig fmt` drift** on bus/outbox/ai/deadcode (Release CI).
 
 ## [0.20.13] - 2026-08-02
 

@@ -72,15 +72,32 @@ pass "production binary"
 # --- CLI + prod contract ---
 section "install-zf + zf check --prod"
 zig build install-zf
+ZF_BIN="$ROOT/zig-out/bin/zf"
+test -x "$ZF_BIN" || fail "missing $ZF_BIN after install-zf"
 export PATH="$ROOT/zig-out/bin:$PATH"
-zf version >/dev/null
-zf check --prod
+
+# Pin to the just-built binary so a stale PATH zf (e.g. ~/.local/bin v0.7) cannot mask.
+"$ZF_BIN" version >/dev/null
+
+# Required subcommands must be present in help (guards against regressions / wrong binary).
+HELP_OUT="$("$ZF_BIN" help 2>&1 || true)"
+for req in routes openapi gate market release-check crud:sql check doctor; do
+  if ! printf '%s\n' "$HELP_OUT" | grep -qE "(^|[[:space:]])${req}([[:space:]]|$)"; then
+    fail "zf help missing required command: ${req} (binary=$ZF_BIN)"
+  fi
+done
+pass "zf CLI commands (routes/openapi/gate/doctor/…)"
+
+"$ZF_BIN" doctor >/dev/null || true
+pass "zf doctor"
+
+"$ZF_BIN" check --prod
 pass "zf check --prod"
 
 # --- smart routing samples ---
 section "zf routes --check (samples)"
-zf routes --check --root examples/smart-routing/src/modules
-zf routes --check --root examples/production/src/modules
+"$ZF_BIN" routes --check --root examples/smart-routing/src/modules
+"$ZF_BIN" routes --check --root examples/production/src/modules
 pass "routes --check"
 
 if [[ "$MODE" != "release" ]]; then

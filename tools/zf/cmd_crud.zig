@@ -467,7 +467,10 @@ fn emitJsonManifest(allocator: std.mem.Allocator, sql_path: []const u8, tables: 
 
     try buf.appendSlice(allocator, "{\n");
     try buf.appendSlice(allocator, "  \"$schema\": \"https://zfinal.dev/schemas/manifest-1.json\",\n");
-    try buf.appendSlice(allocator, "  \"version\": \"0.9.0\",\n");
+    try buf.appendSlice(allocator, "  \"version\": \"");
+    try buf.appendSlice(allocator, zf_cfg.semver);
+    try buf.appendSlice(allocator, "\",\n");
+    try buf.appendSlice(allocator, "  \"generator\": \"zf crud:sql\",\n");
 
     // sql_path
     try buf.appendSlice(allocator, "  \"sql_path\": \"");

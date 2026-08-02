@@ -1,6 +1,6 @@
 //! Light HTTP surface for human approval queues.
 //!
-//! `GET /approvals/pending` — list pending runs  
+//! `GET /approvals/pending` — list pending runs
 //! `POST /approvals/:id/approve` / `POST /approvals/:id/reject` — resolve
 //!
 //! Production defaults: `require_tenant=true`. Bind with `bindWith` and mount JWT/CSRF

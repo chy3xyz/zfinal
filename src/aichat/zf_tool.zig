@@ -125,13 +125,17 @@ pub const ZfTool = struct {
             try buf.appendSlice(self.allocator, "\n        \"handler\": \"");
             try appendJsonString(self.allocator, &buf, table.name);
             try buf.appendSlice(self.allocator, "/handler.zig\",");
+            try buf.appendSlice(self.allocator, "\n        \"actions\": \"");
+            try appendJsonString(self.allocator, &buf, table.name);
+            try buf.appendSlice(self.allocator, "/actions.zig\",");
             try buf.appendSlice(self.allocator, "\n        \"routes\": \"");
             try appendJsonString(self.allocator, &buf, table.name);
             try buf.appendSlice(self.allocator, "/routes.zig\"");
             try buf.appendSlice(self.allocator, "\n      },");
             try buf.appendSlice(self.allocator, "\n      \"ai_edit_zones\": [");
             try buf.appendSlice(self.allocator, "\n        { \"file\": \"service.zig\", \"purpose\": \"business rules beyond CRUD\" },");
-            try buf.appendSlice(self.allocator, "\n        { \"file\": \"handler.zig\", \"purpose\": \"auth + response shaping\" }");
+            try buf.appendSlice(self.allocator, "\n        { \"file\": \"handler.zig\", \"purpose\": \"auth + response shaping\" },");
+            try buf.appendSlice(self.allocator, "\n        { \"file\": \"actions.zig\", \"purpose\": \"add custom routes; run zf routes\" }");
             try buf.appendSlice(self.allocator, "\n      ],");
             try buf.appendSlice(self.allocator, "\n      \"fields\": [");
             for (table.fields, 0..) |f, fi| {

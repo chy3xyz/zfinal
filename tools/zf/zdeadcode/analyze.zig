@@ -841,28 +841,25 @@ fn isRoot(an: *Analyzer, i: usize) bool {
 // ---------------------------------------------------------------------------
 
 const test_files = [_]File{
-    .{
-        .path = "/proj/main.zig",
-        .display_path = "main.zig",
-        .source =
-        \\const std = @import("std");
-        \\
-        \\fn unused_fn() void {}
-        \\
-        \\fn used_helper() i32 {
-        \\    return 42;
-        \\}
-        \\
-        \\fn dead_calls_dead() void {
-        \\    dead_helper();
-        \\}
-        \\
-        \\fn dead_helper() void {}
-        \\
-        \\pub fn main() void {
-        \\    _ = used_helper();
-        \\}
-        \\
+    .{ .path = "/proj/main.zig", .display_path = "main.zig", .source =
+    \\const std = @import("std");
+    \\
+    \\fn unused_fn() void {}
+    \\
+    \\fn used_helper() i32 {
+    \\    return 42;
+    \\}
+    \\
+    \\fn dead_calls_dead() void {
+    \\    dead_helper();
+    \\}
+    \\
+    \\fn dead_helper() void {}
+    \\
+    \\pub fn main() void {
+    \\    _ = used_helper();
+    \\}
+    \\
     },
 };
 
@@ -879,30 +876,27 @@ test "single file: unused declarations and transitive dead code" {
 
 test "containers: unused fields, variants, methods" {
     const files = [_]File{
-        .{
-            .path = "/proj/c.zig",
-            .display_path = "c.zig",
-            .source =
-            \\const S = struct {
-            \\    used: i32,
-            \\    unused_field: i32,
-            \\    fn methodUsed() void {}
-            \\    fn methodDead() void {}
-            \\};
-            \\
-            \\const E = enum {
-            \\    Red,
-            \\    Green,
-            \\    Blue,
-            \\};
-            \\
-            \\pub fn main() void {
-            \\    const s = S{ .used = 1 };
-            \\    _ = s;
-            \\    S.methodUsed();
-            \\    _ = E.Red;
-            \\}
-            \\
+        .{ .path = "/proj/c.zig", .display_path = "c.zig", .source =
+        \\const S = struct {
+        \\    used: i32,
+        \\    unused_field: i32,
+        \\    fn methodUsed() void {}
+        \\    fn methodDead() void {}
+        \\};
+        \\
+        \\const E = enum {
+        \\    Red,
+        \\    Green,
+        \\    Blue,
+        \\};
+        \\
+        \\pub fn main() void {
+        \\    const s = S{ .used = 1 };
+        \\    _ = s;
+        \\    S.methodUsed();
+        \\    _ = E.Red;
+        \\}
+        \\
         },
     };
     var result = try analyze(std.testing.allocator, &files, .{});
@@ -929,23 +923,17 @@ test "containers: unused fields, variants, methods" {
 
 test "cross-file: alias-qualified references" {
     const files = [_]File{
-        .{
-            .path = "/proj/lib.zig",
-            .display_path = "lib.zig",
-            .source =
-            \\pub fn used_from_alias() void {}
-            \\fn unused_in_lib() void {}
-            \\
+        .{ .path = "/proj/lib.zig", .display_path = "lib.zig", .source =
+        \\pub fn used_from_alias() void {}
+        \\fn unused_in_lib() void {}
+        \\
         },
-        .{
-            .path = "/proj/main.zig",
-            .display_path = "main.zig",
-            .source =
-            \\const lib = @import("lib.zig");
-            \\pub fn main() void {
-            \\    lib.used_from_alias();
-            \\}
-            \\
+        .{ .path = "/proj/main.zig", .display_path = "main.zig", .source =
+        \\const lib = @import("lib.zig");
+        \\pub fn main() void {
+        \\    lib.used_from_alias();
+        \\}
+        \\
         },
     };
     var result = try analyze(std.testing.allocator, &files, .{});
@@ -957,23 +945,17 @@ test "cross-file: alias-qualified references" {
 
 test "cross-file: inline @import member access" {
     const files = [_]File{
-        .{
-            .path = "/proj/lib.zig",
-            .display_path = "lib.zig",
-            .source =
-            \\pub const helper = struct {
-            \\    pub const value: i32 = 7;
-            \\};
-            \\
+        .{ .path = "/proj/lib.zig", .display_path = "lib.zig", .source =
+        \\pub const helper = struct {
+        \\    pub const value: i32 = 7;
+        \\};
+        \\
         },
-        .{
-            .path = "/proj/main.zig",
-            .display_path = "main.zig",
-            .source =
-            \\pub fn main() void {
-            \\    _ = @import("lib.zig").helper.value;
-            \\}
-            \\
+        .{ .path = "/proj/main.zig", .display_path = "main.zig", .source =
+        \\pub fn main() void {
+        \\    _ = @import("lib.zig").helper.value;
+        \\}
+        \\
         },
     };
     var result = try analyze(std.testing.allocator, &files, .{});
@@ -985,13 +967,10 @@ test "cross-file: inline @import member access" {
 
 test "binary mode: main is the only entry point" {
     const files = [_]File{
-        .{
-            .path = "/proj/main.zig",
-            .display_path = "main.zig",
-            .source =
-            \\pub fn helper() void {}
-            \\fn main() void {}
-            \\
+        .{ .path = "/proj/main.zig", .display_path = "main.zig", .source =
+        \\pub fn helper() void {}
+        \\fn main() void {}
+        \\
         },
     };
     // Library mode: helper is pub => live, main is private and unused => dead.
@@ -1014,19 +993,16 @@ test "binary mode: main is the only entry point" {
 
 test "error set members" {
     const files = [_]File{
-        .{
-            .path = "/proj/e.zig",
-            .display_path = "e.zig",
-            .source =
-            \\const Errors = error {
-            \\    UsedError,
-            \\    UnusedError,
-            \\};
-            \\
-            \\pub fn main() void {
-            \\    _ = Errors.UsedError;
-            \\}
-            \\
+        .{ .path = "/proj/e.zig", .display_path = "e.zig", .source =
+        \\const Errors = error {
+        \\    UsedError,
+        \\    UnusedError,
+        \\};
+        \\
+        \\pub fn main() void {
+        \\    _ = Errors.UsedError;
+        \\}
+        \\
         },
     };
     var result = try analyze(std.testing.allocator, &files, .{});
@@ -1038,29 +1014,20 @@ test "error set members" {
 
 test "unused files reported in binary mode" {
     const files = [_]File{
-        .{
-            .path = "/proj/main.zig",
-            .display_path = "main.zig",
-            .source =
-            \\const helper = @import("helper.zig");
-            \\pub fn main() void {
-            \\    helper.foo();
-            \\}
-            \\
+        .{ .path = "/proj/main.zig", .display_path = "main.zig", .source =
+        \\const helper = @import("helper.zig");
+        \\pub fn main() void {
+        \\    helper.foo();
+        \\}
+        \\
         },
-        .{
-            .path = "/proj/helper.zig",
-            .display_path = "helper.zig",
-            .source =
-            \\pub fn foo() void {}
-            \\
+        .{ .path = "/proj/helper.zig", .display_path = "helper.zig", .source =
+        \\pub fn foo() void {}
+        \\
         },
-        .{
-            .path = "/proj/orphan.zig",
-            .display_path = "orphan.zig",
-            .source =
-            \\pub fn bar() void {}
-            \\
+        .{ .path = "/proj/orphan.zig", .display_path = "orphan.zig", .source =
+        \\pub fn bar() void {}
+        \\
         },
     };
     var result = try analyze(std.testing.allocator, &files, .{ .binary = true });
@@ -1072,18 +1039,15 @@ test "unused files reported in binary mode" {
 
 test "test blocks are entry points" {
     const files = [_]File{
-        .{
-            .path = "/proj/t.zig",
-            .display_path = "t.zig",
-            .source =
-            \\fn helper() void {}
-            \\
-            \\test "calls helper" {
-            \\    helper();
-            \\}
-            \\
-            \\fn unused() void {}
-            \\
+        .{ .path = "/proj/t.zig", .display_path = "t.zig", .source =
+        \\fn helper() void {}
+        \\
+        \\test "calls helper" {
+        \\    helper();
+        \\}
+        \\
+        \\fn unused() void {}
+        \\
         },
     };
     var result = try analyze(std.testing.allocator, &files, .{});
@@ -1095,22 +1059,19 @@ test "test blocks are entry points" {
 
 test "file-as-container (@This) member references" {
     const files = [_]File{
-        .{
-            .path = "/proj/mod.zig",
-            .display_path = "mod.zig",
-            .source =
-            \\const Mod = @This();
-            \\
-            \\counter: i32 = 0,
-            \\
-            \\fn usedMethod() void {}
-            \\fn deadFn() void {}
-            \\
-            \\pub fn main() void {
-            \\    var m: Mod = .{ .counter = 1 };
-            \\    m.usedMethod();
-            \\}
-            \\
+        .{ .path = "/proj/mod.zig", .display_path = "mod.zig", .source =
+        \\const Mod = @This();
+        \\
+        \\counter: i32 = 0,
+        \\
+        \\fn usedMethod() void {}
+        \\fn deadFn() void {}
+        \\
+        \\pub fn main() void {
+        \\    var m: Mod = .{ .counter = 1 };
+        \\    m.usedMethod();
+        \\}
+        \\
         },
     };
     var result = try analyze(std.testing.allocator, &files, .{});

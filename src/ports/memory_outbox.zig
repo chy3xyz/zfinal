@@ -116,4 +116,3 @@ test "MemoryOutbox drainOnce to MemoryBus" {
     defer msg.deinit(a);
     try std.testing.expectEqualStrings("{\"n\":1}", msg.data);
 }
-

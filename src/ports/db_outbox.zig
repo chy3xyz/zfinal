@@ -505,4 +505,3 @@ test "DbOutbox live drainOnce on MySQL" {
     defer db.destroy();
     try liveDrainRoundtrip(a, db, .mysql);
 }
-

@@ -120,7 +120,7 @@ pub fn collectFlatRoutes(allocator: std.mem.Allocator, root: []const u8) ![]Flat
     return try out.toOwnedSlice(allocator);
 }
 
-/// Entry: `zf routes [--json] [--check] [--root src/modules]`
+/// Entry: `zf routes [--json] [--check] [--root src/modules] [--force]`
 pub fn handleRoutes(allocator: std.mem.Allocator, args: []const []const u8) !void {
     const json_mode = zf_shared.hasFlag(args, "--json");
     const check_only = zf_shared.hasFlag(args, "--check");
@@ -134,7 +134,8 @@ pub fn handleRoutes(allocator: std.mem.Allocator, args: []const []const u8) !voi
 
     if (modules.items.len == 0) {
         std.debug.print("zf routes: no actions.zig under {s}\n", .{root});
-        if (json_mode) std.debug.print("{{\"routes\":[],\"modules\":0}}\n", .{});
+        std.debug.print("hint: generate modules first — zf crud:sql <file> --json  or  zf crud:zent <file> --json\n", .{});
+        if (json_mode) std.debug.print("{{\"routes\":[],\"modules\":0,\"hint\":\"zf crud:sql|zent\"}}\n", .{});
         return;
     }
 
@@ -176,8 +177,13 @@ pub fn handleRoutes(allocator: std.mem.Allocator, args: []const []const u8) !voi
                 fail += 1;
             }
         } else {
-            try std.Io.Dir.cwd().writeFile(zf_shared.io, .{ .sub_path = out_path, .data = code });
-            std.debug.print("wrote {s} ({d} actions)\n", .{ out_path, pm.actions.len });
+            // Incremental: skip rewrite when routes.zig is newer than actions.zig (use --force to bypass).
+            if (!zf_shared.hasFlag(args, "--force") and try fileNewerThan(out_path, pm.module.path)) {
+                std.debug.print("cached {s} (actions unchanged)\n", .{out_path});
+            } else {
+                try std.Io.Dir.cwd().writeFile(zf_shared.io, .{ .sub_path = out_path, .data = code });
+                std.debug.print("wrote {s} ({d} actions)\n", .{ out_path, pm.actions.len });
+            }
         }
     }
 
@@ -187,6 +193,17 @@ pub fn handleRoutes(allocator: std.mem.Allocator, args: []const []const u8) !voi
         std.debug.print("zf routes --check: {d} file(s) need regeneration\n", .{fail});
         std.process.exit(1);
     }
+}
+
+/// True if `path` exists and its mtime is >= `other`'s mtime.
+fn fileNewerThan(path: []const u8, other: []const u8) !bool {
+    var f = std.Io.Dir.cwd().openFile(zf_shared.io, path, .{}) catch return false;
+    defer f.close(zf_shared.io);
+    var o = std.Io.Dir.cwd().openFile(zf_shared.io, other, .{}) catch return false;
+    defer o.close(zf_shared.io);
+    const st = try f.stat(zf_shared.io);
+    const ot = try o.stat(zf_shared.io);
+    return st.mtime.nanoseconds >= ot.mtime.nanoseconds;
 }
 
 fn collectActionsFiles(allocator: std.mem.Allocator, root: []const u8) !std.ArrayList([]const u8) {

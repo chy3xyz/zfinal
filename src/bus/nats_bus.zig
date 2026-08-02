@@ -96,4 +96,3 @@ test "NatsBus live publish and subscribe soak" {
     }
     try std.testing.expect(g_nats_bus_hits.load(.monotonic) >= 1);
 }
-
