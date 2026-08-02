@@ -52,7 +52,8 @@ NATS_URL=127.0.0.1 zig build test
 # or: NATS_URL=nats://127.0.0.1:4222 zig build test
 ```
 
-Skipped when `NATS_URL` is unset.
+Skipped when `NATS_URL` is unset. CI: `messaging-live` (`nats:2.10`) runs pub/sub soak
+with delivery asserts.
 
 ## Migration
 

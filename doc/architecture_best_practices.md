@@ -113,6 +113,7 @@ SQL schema  ──zf──►  生成物 + JSON manifest
 - Fiber 返回值约束：`acceptLoop` 包一层 → `Cancelable!void`；真错误用 ErrorHandle 隔离，避免拖垮 accept 循环。
 - 连接路径目标：**每连接尽量零堆**；业务分配用 `ctx.allocator`，请求结束释放（不要臆造 per-request Arena，除非框架已提供）。
 - 跨线程与测试 IO：慎用依赖 futex 的 `std.Io.Mutex`；P2P 等场景用 `atomic.Mutex` + spin 是有意选择。
+  生产 mesh 建议 `setHmacKey`（帧级 HMAC-SHA256），否则任意能连上端口的对端可注入 inbox。
 - 池 / Session：`lockUncancelable`、**先 unlock 再 destroy**；禁止用 `@panic` 当错误处理。
 
 ADR：[001-fiber-server.md](../.life/decisions/001-fiber-server.md)。

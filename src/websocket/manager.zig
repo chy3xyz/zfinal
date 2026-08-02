@@ -124,6 +124,24 @@ pub const WebSocketManager = struct {
         }
         return n;
     }
+
+    pub const IdleTickResult = struct {
+        reaped: usize = 0,
+    };
+
+    /// Periodic hook: reap idle sockets, then ping survivors.
+    /// Wire from `CronPlugin.scheduleWith` / task scheduler, e.g. `*/30 * * * * *`.
+    pub fn tickIdle(self: *WebSocketManager, ping_payload: []const u8) IdleTickResult {
+        const reaped = self.reapIdle();
+        self.pingAll(ping_payload);
+        return .{ .reaped = reaped };
+    }
+
+    /// Cron/`scheduleWith` callback: `context` must be `*WebSocketManager`.
+    pub fn cronTickIdle(ctx: *anyopaque) void {
+        const self: *WebSocketManager = @ptrCast(@alignCast(ctx));
+        _ = self.tickIdle("zfinal-ws-idle");
+    }
 };
 test "WebSocketManager route lookup" {
     const a = std.testing.allocator;

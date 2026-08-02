@@ -6,8 +6,9 @@ L3 异步投递：业务写库与「待发布事件」同事务提交，worker �
 |------|------|
 | `zfinal.Outbox` | 端口（`append` + 幂等键） |
 | `zfinal.MemoryOutbox` | 单测 / 进程内 |
-| `zfinal.DbOutbox` | SQLite 表 `zfinal_outbox`（`UNIQUE(idempotency_key)`） |
+| `zfinal.DbOutbox` | 持久表 `zfinal_outbox`（SQLite / PG / MySQL DDL） |
 | `zfinal.OutboxRow` | `fetchUnpublished` 行 |
+| `drainOnce` | poll → publish → mark；失败重试 / 死信 |
 
 ## 推荐写路径
 
@@ -20,16 +21,16 @@ try db.exec("INSERT INTO orders …");
 try box.port().append(allocator, "order.placed", payload, idempotency_key);
 try db.commit();
 
-// worker（可另进程）
-const batch = try box.fetchUnpublished(allocator, 100);
-defer zfinal.DbOutbox.freeBatch(allocator, batch);
-for (batch) |row| {
-    try bus.publish(row.event_type, row.payload);
-    try box.markPublished(row.id);
-}
+// worker tick（Cron / 独立进程）
+const st = try box.drainOnce(allocator, bus, .{ .batch_limit = 100, .max_attempts = 8 });
+_ = st; // published / failed / dead
 ```
 
-`INSERT OR IGNORE`：同一 `idempotency_key` 不产生重复行。
+幂等：`UNIQUE(idempotency_key)` + 方言插入（SQLite `OR IGNORE` / PG `ON CONFLICT DO NOTHING` / MySQL `INSERT IGNORE`）。
+
+失败：`markFailed` 递增 `attempts`，达到 `max_attempts` 写 `dead_at_ms`（死信，不再投递）。
+
+观测：`box.toPrometheusFormat(allocator)` → `zfinal_outbox_unpublished` / `zfinal_outbox_dead`。
 
 ## 与 Bus 的关系
 

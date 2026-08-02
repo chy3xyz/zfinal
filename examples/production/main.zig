@@ -128,10 +128,34 @@ pub fn main(init: std.process.Init) !void {
     try app.addGlobalInterceptor(zfinal.createCorsAllowlistInterceptor(&cors_cfg));
     try app.addGlobalInterceptor(rate_mw);
 
+    // L3 demo wiring: MemoryOutbox + MemoryBus (see doc/outbox.md). Swap DbOutbox + NatsBus in deploy.
+    var bus_impl = zfinal.MemoryBus.init(allocator);
+    defer bus_impl.deinit();
+    var outbox_impl = zfinal.MemoryOutbox.init(allocator);
+    defer outbox_impl.deinit();
+    app_state.outbox = &outbox_impl;
+    app_state.bus = bus_impl.port();
+
     try api_routes.register(&app);
+    try app.postWithInterceptors("/internal/outbox/drain", api_handler.drainOutbox, &.{interceptors.jwt});
+
+    // Optional WS echo with idle timeout (probe via WebSocketManager.tickIdle / Cron).
+    try app.addWebSocket("/ws", struct {
+        fn echo(ws: *zfinal.WebSocket) !void {
+            ws.idle_timeout_ms = 60_000;
+            while (true) {
+                var frame = ws.receive() catch |err| {
+                    if (err == error.ConnectionClosed) break;
+                    return err;
+                };
+                defer frame.deinit();
+                if (frame.opcode == .text) try ws.sendText(frame.payload);
+            }
+        }
+    }.echo);
 
     zfinal.getLogger().infoFmt("Listening on http://0.0.0.0:8080 (drain=15s idle=30s)", .{});
-    zfinal.getLogger().infoFmt("Health: /health | Form: /api/form | POST /api/submit | JWT /api/me", .{});
+    zfinal.getLogger().infoFmt("Health: /health | Form: /api/form | POST /api/submit | JWT /api/me | WS /ws | drain /internal/outbox/drain", .{});
 
     try app.start();
 }

@@ -184,6 +184,9 @@ pub const Outbox = ports.Outbox;
 pub const MemoryOutbox = ports.MemoryOutbox;
 pub const DbOutbox = ports.DbOutbox;
 pub const OutboxRow = ports.OutboxRow;
+pub const OutboxDialect = ports.OutboxDialect;
+pub const DrainOpts = ports.DrainOpts;
+pub const DrainStats = ports.DrainStats;
 pub const OutboxEvent = @import("ports/memory_outbox.zig").OutboxEvent;
 // WeChat plugin — requires zwechat dependency in build.zig.zon:
 //   .zwechat = .{ .path = "../zwechat" }

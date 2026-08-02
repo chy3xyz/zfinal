@@ -54,6 +54,7 @@ git push origin HEAD --tags
 | **Quality gate (productized)** | Ubuntu 合并放行真源 = `scripts/quality_gate.sh full` |
 | Test on macOS | OS 覆盖：build + test + test-zf（不重复 full gate） |
 | drivers-compile / drivers-live | 可选驱动旁路，**不在** full gate 内 |
+| messaging-live | NATS + Redpanda consume soak（env 门控单测） |
 | tag `v*` → `release.yml` | `scripts/quality_gate.sh release --strict` |
 
 仓库设置建议将 **Quality gate (productized)** 设为 Required status check。

@@ -253,8 +253,8 @@ pub fn placeOrder(self: *OrdersService, …, idempotency_key: []const u8) !Order
 - Handler 解析并传入租户键（JWT / 头），**禁止** service 默认 `tenant_id=0` / `app_id=0` 扫全表。
 - **字段名 comptime 配置**：默认 `zfinal.tenant.tenant_id`；ZigShop 用 `zfinal.tenant.app_id`
   （`app_id` + `X-App-Id`）。`extract.requireTenant(ctx, comptime cfg)`。见 [http_ergonomics.md](http_ergonomics.md)。
-- 跨机异步：领域写 + **`zfinal.DbOutbox`** 同 TX（见 [outbox.md](outbox.md)），worker 再
-  `Bus.publish`。`QueueClient` / `MemoryBus` 便于单测；L3 用 `NatsBus` /
+- 跨机异步：领域写 + **`zfinal.DbOutbox`** 同 TX（见 [outbox.md](outbox.md)），worker
+  `drainOnce` → `Bus.publish`。`QueueClient` / `MemoryBus` 便于单测；L3 用 `NatsBus` /
   `RobustMQBus`（[bus.md](bus.md)）。另有 `Store` / `Cache` / `Outbox` Memory
   适配器；`zf g port bus` 生成 re-export。
 - 分片：先在 SQL / 缓存 key 带上分片键；物理分库可后置，避免提前拆模块。

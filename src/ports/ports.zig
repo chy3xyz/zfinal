@@ -10,6 +10,9 @@ pub const Outbox = @import("outbox.zig").Outbox;
 pub const MemoryOutbox = @import("memory_outbox.zig").MemoryOutbox;
 pub const DbOutbox = @import("db_outbox.zig").DbOutbox;
 pub const OutboxRow = @import("db_outbox.zig").OutboxRow;
+pub const OutboxDialect = @import("db_outbox.zig").OutboxDialect;
+pub const DrainOpts = @import("db_outbox.zig").DrainOpts;
+pub const DrainStats = @import("db_outbox.zig").DrainStats;
 
 test {
     _ = @import("memory_store.zig");

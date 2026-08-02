@@ -2479,6 +2479,57 @@ test "RobustMQ live produce" {
     try std.testing.expectEqual(@as(u64, 1), producer.getTopicStats("zfinal.robustmq.smoke").?.produced);
 }
 
+var g_rmq_soak_hits: std.atomic.Value(usize) = .init(0);
+
+test "RobustMQ live produce and consume soak" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const url = if (std.c.getenv("ROBUSTMQ_URL")) |p| std.mem.span(p) else if (std.c.getenv("KAFKA_BOOTSTRAP")) |p| std.mem.span(p) else null;
+    if (url == null or url.?.len == 0) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    const topic = "zfinal.robustmq.consume.soak";
+    const payload = "rmq-consume-soak";
+
+    var producer = KafkaProducer.initWithIo(allocator, std.testing.io, .{
+        .bootstrap_servers = url.?,
+        .client_id = "zfinal-test-prod",
+    });
+    defer producer.deinit();
+    try producer.send(.{
+        .topic = topic,
+        .key = "soak",
+        .value = payload,
+        .headers = &.{},
+        .timestamp = nowSeconds(),
+    });
+
+    g_rmq_soak_hits.store(0, .monotonic);
+    var consumer = KafkaConsumer.initWithIo(allocator, std.testing.io, .{
+        .bootstrap_servers = url.?,
+        .group_id = "zfinal-soak-group",
+        .client_id = "zfinal-test-cons",
+        .auto_offset_reset = "earliest",
+        .enable_auto_commit = false,
+    });
+    defer consumer.deinit();
+    try consumer.subscribe(topic, struct {
+        fn handler(msg: KafkaMessage) void {
+            if (std.mem.eql(u8, msg.value, payload)) {
+                _ = g_rmq_soak_hits.fetchAdd(1, .monotonic);
+            }
+        }
+    }.handler);
+    consumer.start();
+    defer consumer.stop();
+
+    var waited: usize = 0;
+    while (g_rmq_soak_hits.load(.monotonic) == 0 and waited < 60) : (waited += 1) {
+        _ = consumer.poll() catch {};
+        std.Io.sleep(std.testing.io, std.Io.Duration.fromMilliseconds(50), .real) catch {};
+    }
+    try std.testing.expect(g_rmq_soak_hits.load(.monotonic) >= 1);
+}
+
 /// Queue-shaped façade over RobustMQ / Kafka (subject → topic), symmetric to
 /// `QueueClient` (memory) and `QueueNatsClient` (NATS).
 pub const QueueRobustMQClient = struct {

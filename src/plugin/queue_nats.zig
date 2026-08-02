@@ -152,14 +152,42 @@ test "QueueNatsClient live publish" {
     if (env == null or env.?.len == 0) return error.SkipZigTest;
 
     const a = std.testing.allocator;
-    // Accept host or nats://host:port
-    const url = if (std.mem.indexOfScalar(u8, env.?, ':') != null or std.mem.startsWith(u8, env.?, "nats://"))
-        env.?
-    else
-        env.?;
+    const url = env.?;
 
     var q = try QueueNatsClient.connectWithIo(a, std.testing.io, url);
     defer q.deinit();
     try q.publish("zfinal.test.queue_nats", "hello");
     try q.ping();
+}
+
+var g_queue_nats_hits: std.atomic.Value(usize) = .init(0);
+
+test "QueueNatsClient live publish and subscribe soak" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const env = if (std.c.getenv("NATS_URL")) |p| std.mem.span(p) else null;
+    if (env == null or env.?.len == 0) return error.SkipZigTest;
+
+    const a = std.testing.allocator;
+    var q = try QueueNatsClient.connectWithIo(a, std.testing.io, env.?);
+    defer q.deinit();
+
+    g_queue_nats_hits.store(0, .monotonic);
+    const sid = try q.subscribe("zfinal.test.queue_nats.soak", struct {
+        fn cb(msg: QueueNatsClient.Message) void {
+            if (std.mem.eql(u8, msg.payload, "queue-soak")) {
+                _ = g_queue_nats_hits.fetchAdd(1, .monotonic);
+            }
+        }
+    }.cb);
+    defer q.unsubscribe(sid) catch {};
+
+    try q.publish("zfinal.test.queue_nats.soak", "queue-soak");
+    try q.flush();
+
+    var waited: usize = 0;
+    while (g_queue_nats_hits.load(.monotonic) == 0 and waited < 40) : (waited += 1) {
+        _ = try q.poll();
+        std.Io.sleep(std.testing.io, std.Io.Duration.fromMilliseconds(25), .real) catch {};
+    }
+    try std.testing.expect(g_queue_nats_hits.load(.monotonic) >= 1);
 }

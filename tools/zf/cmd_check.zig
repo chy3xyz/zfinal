@@ -267,12 +267,88 @@ fn checkProdContract(allocator: std.mem.Allocator, root: []const u8, pass: *u32,
     fail.* += prod_fail;
     warn.* += prod_warn;
 
+    // Soft L3 heuristics (always WARN): tenant SQL predicates + Outbox-before-Bus.
+    try checkProdL3Heuristics(allocator, root, warn);
+
     if (banned_auth == 0 and banned_cors_star == 0 and experimental == 0 and force_ka_off == 0 and prod_fail == 0 and prod_warn == 0) {
         std.debug.print("✅ PASS: {s} meets deployment contract\n", .{root});
         pass.* += 1;
     } else if (prod_fail == 0) {
         warn.* += banned_auth + banned_cors_star + experimental + force_ka_off;
     }
+}
+
+/// WARN-only: SQL without tenant_id/app_id; bus.publish without Outbox in same file.
+fn checkProdL3Heuristics(allocator: std.mem.Allocator, root: []const u8, warn: *u32) !void {
+    var dir = std.Io.Dir.cwd().openDir(zf_shared.io, root, .{ .iterate = true }) catch return;
+    defer dir.close(zf_shared.io);
+    var walker = dir.walk(allocator) catch return;
+    defer walker.deinit();
+
+    var tenant_sql_warns: u32 = 0;
+    var bus_no_outbox_warns: u32 = 0;
+
+    while (walker.next(zf_shared.io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.basename, ".zig")) continue;
+        const rel = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ root, entry.path });
+        defer allocator.free(rel);
+        const content = readFileAlloc(allocator, rel) catch continue;
+        defer allocator.free(content);
+
+        // Skip generated noise and this checker's own docs.
+        if (std.mem.indexOf(u8, content, "// @generated") != null) continue;
+
+        const has_bus_publish = std.mem.indexOf(u8, content, ".publish(") != null and
+            (std.mem.indexOf(u8, content, "Bus") != null or std.mem.indexOf(u8, content, "bus") != null);
+        const has_outbox = std.mem.indexOf(u8, content, "Outbox") != null or
+            std.mem.indexOf(u8, content, "outbox") != null or
+            std.mem.indexOf(u8, content, "drainOnce") != null;
+        if (has_bus_publish and !has_outbox) {
+            bus_no_outbox_warns += 1;
+            if (bus_no_outbox_warns <= 8) {
+                std.debug.print("⚠️  WARN: {s} calls .publish( with Bus but no Outbox/drainOnce — prefer same-TX outbox (doc/outbox.md)\n", .{rel});
+            }
+        }
+
+        // Line heuristic: SQL-ish lines missing tenant_id / app_id.
+        var lines = std.mem.splitScalar(u8, content, '\n');
+        var line_no: u32 = 0;
+        while (lines.next()) |line| {
+            line_no += 1;
+            const trimmed = std.mem.trim(u8, line, " \t");
+            if (trimmed.len == 0 or trimmed[0] == '/') continue;
+            const upper_has_select = containsIgnoreCase(trimmed, "SELECT ");
+            const upper_has_update = containsIgnoreCase(trimmed, "UPDATE ");
+            const upper_has_delete = containsIgnoreCase(trimmed, "DELETE FROM");
+            if (!upper_has_select and !upper_has_update and !upper_has_delete) continue;
+            if (!containsIgnoreCase(trimmed, "FROM ") and !upper_has_update and !upper_has_delete) continue;
+            if (containsIgnoreCase(trimmed, "tenant_id") or containsIgnoreCase(trimmed, "app_id")) continue;
+            // Ignore framework/schema DDL and obvious non-tenant tables.
+            if (containsIgnoreCase(trimmed, "CREATE TABLE")) continue;
+            if (containsIgnoreCase(trimmed, "zfinal_")) continue;
+            if (containsIgnoreCase(trimmed, "ai_")) continue;
+            tenant_sql_warns += 1;
+            if (tenant_sql_warns <= 8) {
+                std.debug.print("⚠️  WARN: {s}:{d} SQL-like line without tenant_id/app_id — verify tenant predicate\n", .{ rel, line_no });
+            }
+        }
+    }
+
+    if (tenant_sql_warns > 8) {
+        std.debug.print("⚠️  WARN: …and {d} more SQL lines without tenant_id/app_id\n", .{tenant_sql_warns - 8});
+    }
+    if (bus_no_outbox_warns > 8) {
+        std.debug.print("⚠️  WARN: …and {d} more Bus.publish without Outbox\n", .{bus_no_outbox_warns - 8});
+    }
+    warn.* += tenant_sql_warns + bus_no_outbox_warns;
+    if (tenant_sql_warns == 0 and bus_no_outbox_warns == 0) {
+        std.debug.print("✅ PASS: no tenant-SQL / Outbox heuristics flagged under {s}\n", .{root});
+    }
+}
+
+fn containsIgnoreCase(hay: []const u8, needle: []const u8) bool {
+    return std.ascii.findIgnoreCasePos(hay, 0, needle) != null;
 }
 
 fn resolveAppMain(allocator: std.mem.Allocator, root: []const u8) ![]u8 {

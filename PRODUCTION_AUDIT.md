@@ -25,8 +25,8 @@
 | Observability | **9.9 / 10** | Auto Metrics + latency histogram + **6 route classes** (health/metrics/api/admin/static/other) + `routeTemplate`; `/metrics` |
 | Ops / deployability | **9.8 / 10** | CI + drivers + live PG/MySQL + production + **`zf check --prod`** + [`doc/reverse_proxy.md`](doc/reverse_proxy.md) + [`benchmark/BASELINE.md`](benchmark/BASELINE.md) |
 | Docs / AI tooling | **9.9 / 10** | zone merge; ports-l2/**ports-l3**; reverse-proxy KA; deeper `zf openapi`; **[best_practices.md](doc/best_practices.md)** hub + envelope ADR-013 |
-| Optional (PG/MySQL/zent/messaging) | **9.6 / 10** | RobustMQ Metadata + range/sticky + Offset*; **MQTT native TLS**; Redis; live CI |
-| WebSocket / OAuth2 / P2P / AI (2026-08) | **~8.8–9.3** | `addWebSocket`; `DbOutbox`; WS idle/ping; Quota `attachDb`; PKCE; P2P; AI audit/trigger/SLA |
+| Optional (PG/MySQL/zent/messaging) | **9.7 / 10** | RobustMQ + NATS live consume soak (`messaging-live`); MQTT TLS; Redis |
+| WebSocket / OAuth2 / P2P / AI (2026-08) | **~9.0–9.4** | `DbOutbox.drainOnce`+方言; WS `tickIdle`; OAuth2 mock exchange; P2P HMAC; Quota/AI audit |
 | **Overall (contractual)** | **9.8 / 10** | Internet-facing BFF behind proxy: ready |
 | Absolute (toolchain) | **~9.2 / 10** | Zig-dev + keep-alive still default-forced |
 
@@ -45,8 +45,11 @@
 11. Call `app.setMetrics(&metrics)`; expose `/health` + `/metrics`.
 12. Keep `force_connection_close=true` until zig#25017 + soak tests (verified still asserts on `0.17.0-dev.1422`).
 13. Set `JWT_SECRET` / `JWT_SECRET_PREVIOUS` / `JWT_ISS` / `JWT_AUD` / `CORS_ORIGIN` from the environment.
-14. Run **`zf check --prod`** before release.
+14. Run **`zf check --prod`** before release (includes WARN heuristics for tenant SQL /
+    Outbox-before-Bus).
 15. Handlers free via `ctx.allocator`.
+16. L3 async: prefer `DbOutbox`/`MemoryOutbox` + `drainOnce` → `Bus` (see `examples/production`
+    `/internal/outbox/drain` demo and [doc/outbox.md](doc/outbox.md)).
 
 **Reference:** [`examples/production/main.zig`](examples/production/main.zig)
 

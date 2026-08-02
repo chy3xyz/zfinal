@@ -114,3 +114,43 @@ jobs:
         ZF_MY_PASSWORD: zfinal
         ZF_MY_DATABASE: zfinal_test
       run: zig build test -Ddriver_pg=true -Ddriver_mysql=true
+
+  messaging-live:
+    name: Live NATS + Kafka consume soak
+    runs-on: ubuntu-latest
+    services:
+      nats:
+        image: nats:2.10
+        ports:
+          - 4222:4222
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Zig
+      uses: mlugg/setup-zig@v2
+      with:
+        version: '0.17.0-dev.1422+e863bf3be'
+    - name: Install SQLite
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libsqlite3-dev
+    - name: Start Redpanda (Kafka-compatible)
+      run: |
+        docker run -d --name zf-redpanda -p 9092:9092 \
+          docker.redpanda.com/redpandadata/redpanda:v24.2.4 \
+          redpanda start --mode dev-container --smp 1 --memory 512M \
+            --overprovisioned --check=false \
+            --kafka-addr 0.0.0.0:9092 \
+            --advertise-kafka-addr 127.0.0.1:9092
+        for i in $(seq 1 40); do
+          if docker exec zf-redpanda rpk cluster health 2>/dev/null | grep -qi healthy; then
+            echo "redpanda ready"; exit 0
+          fi
+          sleep 2
+        done
+        echo "redpanda not healthy yet; continuing (produce may create topic)"
+    - name: Messaging live soak
+      env:
+        NATS_URL: nats://127.0.0.1:4222
+        KAFKA_BOOTSTRAP: 127.0.0.1:9092
+        ROBUSTMQ_URL: 127.0.0.1:9092
+      run: zig build test

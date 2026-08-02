@@ -15,7 +15,8 @@ RFC 6455 frame codec + connection helpers + `WebSocketManager`.
 2. Keep `force_connection_close=true` on HTTP; WS connections are one-shot takeovers (no HTTP keep-alive reuse after 101).
 3. Put JWT/cookie checks in the handler (or reverse-proxy auth) before business logic.
 4. Server skips double-close after Upgrade; `WebSocket.deinit` owns the TCP socket.
-5. **Idle / ping**：设 `ws.idle_timeout_ms`；读写会刷新 `last_activity_ms`。`WebSocketManager.pingAll` / `reapIdle` 用于探活与回收空闲连接。
+5. **Idle / ping**：设 `ws.idle_timeout_ms`；读写会刷新 `last_activity_ms`。
+   `WebSocketManager.tickIdle` / `pingAll` / `reapIdle`（或 `cronTickIdle` + `CronPlugin.scheduleWith`）做探活与回收。
 
 ## Minimal app
 

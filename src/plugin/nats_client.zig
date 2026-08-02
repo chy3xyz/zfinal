@@ -544,6 +544,8 @@ test "NATS connect and ping" {
     try client.ping();
 }
 
+var g_nats_soak_hits: std.atomic.Value(usize) = .init(0);
+
 test "NATS publish and subscribe" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const nats_url = if (std.c.getenv("NATS_URL")) |ptr| std.mem.span(ptr) else null;
@@ -555,19 +557,25 @@ test "NATS publish and subscribe" {
 
     _ = try client.connect();
 
-    // Subscribe to test subject
+    g_nats_soak_hits.store(0, .monotonic);
     const sid = try client.subscribe("zfinal.test.pubsub", struct {
         fn handler(msg: NatsClient.Message) void {
-            _ = msg;
+            if (std.mem.eql(u8, msg.payload, "hello-nats-soak")) {
+                _ = g_nats_soak_hits.fetchAdd(1, .monotonic);
+            }
         }
     }.handler);
     defer client.unsubscribe(sid) catch {};
 
-    try client.publish("zfinal.test.pubsub", "hello-nats");
+    try client.publish("zfinal.test.pubsub", "hello-nats-soak");
     try client.flush();
 
-    // Poll to receive the message
-    _ = try client.poll();
+    var waited: usize = 0;
+    while (g_nats_soak_hits.load(.monotonic) == 0 and waited < 40) : (waited += 1) {
+        _ = try client.poll();
+        std.Io.sleep(std.testing.io, std.Io.Duration.fromMilliseconds(25), .real) catch {};
+    }
+    try std.testing.expect(g_nats_soak_hits.load(.monotonic) >= 1);
 }
 
 test "NATS request-reply" {

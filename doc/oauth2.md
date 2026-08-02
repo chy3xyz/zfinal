@@ -23,6 +23,9 @@ var tok = try oauth.exchangeCodePkce(code, verifier);
 defer tok.deinit();
 ```
 
+**Offline / unit tests:** set `oauth.mock_token_json` (+ optional `mock_token_status`) to skip HTTP
+and exercise `exchangeCode` / `exchangeCodePkce` / error paths without a live IdP.
+
 Token JSON non-string fields → `error.InvalidTokenJson` (no panic).  
 Non-2xx token responses → `error.TokenEndpointError` after parsing `error` / `error_description`.
 

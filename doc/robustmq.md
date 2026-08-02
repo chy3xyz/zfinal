@@ -53,7 +53,8 @@ ROBUSTMQ_URL=127.0.0.1:9092 zig build test
 # or: KAFKA_BOOTSTRAP=127.0.0.1:9092 zig build test
 ```
 
-Skipped automatically when env is unset.
+Skipped automatically when env is unset. CI job `messaging-live` starts Redpanda and
+runs produce + `KafkaConsumer.poll` soak.
 
 ## Scope / limits
 

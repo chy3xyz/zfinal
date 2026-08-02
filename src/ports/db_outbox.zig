@@ -1,26 +1,25 @@
-//! Durable outbox over `zfinal.DB` (SQLite-compatible DDL).
-//! Use inside `db.transaction` with domain writes for at-least-once delivery.
+//! Durable outbox over `zfinal.DB` (SQLite / PostgreSQL / MySQL DDL).
+//! Use inside the same transaction as domain writes for at-least-once delivery.
 //!
 //! ```zig
 //! var box = try zfinal.DbOutbox.init(allocator, db);
 //! defer box.deinit();
-//! try db.transaction(null, struct {
-//!     fn body(d: *zfinal.DB) !void {
-//!         try d.exec("INSERT INTO orders …");
-//!         try box.port().append(a, "order.placed", payload, idem);
-//!     }
-//! }.body);
-//! // worker:
-//! const batch = try box.fetchUnpublished(a, 100);
-//! defer box.freeBatch(a, batch);
-//! for (batch) |row| { try bus.publish(row.event_type, row.payload); try box.markPublished(row.id); }
+//! try db.begin();
+//! try d.exec("INSERT INTO orders …");
+//! try box.port().append(a, "order.placed", payload, idem);
+//! try db.commit();
+//! // worker tick:
+//! const st = try box.drainOnce(a, bus, .{});
 //! ```
 
 const std = @import("std");
 const DB = @import("../db/db.zig").DB;
 const SqlParam = @import("../db/sql_param.zig").SqlParam;
 const Outbox = @import("outbox.zig").Outbox;
+const Bus = @import("../bus/bus.zig").Bus;
 const TimeKit = @import("../kit/time_kit.zig").TimeKit;
+
+pub const OutboxDialect = enum { sqlite, postgres, mysql };
 
 pub const OutboxRow = struct {
     id: i64,
@@ -28,6 +27,7 @@ pub const OutboxRow = struct {
     payload: []const u8,
     idempotency_key: []const u8,
     created_at_ms: i64,
+    attempts: i64 = 0,
 
     pub fn deinit(self: OutboxRow, allocator: std.mem.Allocator) void {
         allocator.free(self.event_type);
@@ -36,26 +36,112 @@ pub const OutboxRow = struct {
     }
 };
 
+pub const DrainOpts = struct {
+    batch_limit: usize = 100,
+    max_attempts: u32 = 8,
+};
+
+pub const DrainStats = struct {
+    published: usize = 0,
+    failed: usize = 0,
+    dead: usize = 0,
+};
+
 pub const DbOutbox = struct {
     allocator: std.mem.Allocator,
     db: *DB,
+    dialect: OutboxDialect,
 
     pub fn init(allocator: std.mem.Allocator, db: *DB) !DbOutbox {
-        try db.exec(
+        const d = dialectOf(db);
+        try db.exec(ddlCreate(d));
+        try migrateColumns(db, d);
+        return .{ .allocator = allocator, .db = db, .dialect = d };
+    }
+
+    pub fn deinit(self: *DbOutbox) void {
+        self.* = undefined;
+    }
+
+    pub fn dialectOf(db: *DB) OutboxDialect {
+        return switch (db.driver) {
+            .sqlite => .sqlite,
+            .postgres => .postgres,
+            .mysql => .mysql,
+        };
+    }
+
+    /// CREATE TABLE DDL for the active dialect (exported for unit tests).
+    pub fn ddlCreate(d: OutboxDialect) [:0]const u8 {
+        return switch (d) {
+            .sqlite =>
             \\CREATE TABLE IF NOT EXISTS zfinal_outbox (
             \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
             \\  event_type TEXT NOT NULL,
             \\  payload TEXT NOT NULL,
             \\  idempotency_key TEXT NOT NULL UNIQUE,
             \\  created_at_ms INTEGER NOT NULL,
-            \\  published_at_ms INTEGER
+            \\  published_at_ms INTEGER,
+            \\  attempts INTEGER NOT NULL DEFAULT 0,
+            \\  last_error TEXT,
+            \\  dead_at_ms INTEGER
             \\)
-        );
-        return .{ .allocator = allocator, .db = db };
+            ,
+            .postgres =>
+            \\CREATE TABLE IF NOT EXISTS zfinal_outbox (
+            \\  id BIGSERIAL PRIMARY KEY,
+            \\  event_type TEXT NOT NULL,
+            \\  payload TEXT NOT NULL,
+            \\  idempotency_key TEXT NOT NULL UNIQUE,
+            \\  created_at_ms BIGINT NOT NULL,
+            \\  published_at_ms BIGINT,
+            \\  attempts INTEGER NOT NULL DEFAULT 0,
+            \\  last_error TEXT,
+            \\  dead_at_ms BIGINT
+            \\)
+            ,
+            .mysql =>
+            \\CREATE TABLE IF NOT EXISTS zfinal_outbox (
+            \\  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            \\  event_type TEXT NOT NULL,
+            \\  payload TEXT NOT NULL,
+            \\  idempotency_key VARCHAR(255) NOT NULL UNIQUE,
+            \\  created_at_ms BIGINT NOT NULL,
+            \\  published_at_ms BIGINT NULL,
+            \\  attempts INT NOT NULL DEFAULT 0,
+            \\  last_error TEXT,
+            \\  dead_at_ms BIGINT NULL
+            \\) ENGINE=InnoDB
+            ,
+        };
     }
 
-    pub fn deinit(self: *DbOutbox) void {
-        self.* = undefined;
+    pub fn insertSql(d: OutboxDialect) [:0]const u8 {
+        return switch (d) {
+            .sqlite => "INSERT OR IGNORE INTO zfinal_outbox (event_type, payload, idempotency_key, created_at_ms) VALUES (?, ?, ?, ?)",
+            .postgres => "INSERT INTO zfinal_outbox (event_type, payload, idempotency_key, created_at_ms) VALUES (?, ?, ?, ?) ON CONFLICT (idempotency_key) DO NOTHING",
+            .mysql => "INSERT IGNORE INTO zfinal_outbox (event_type, payload, idempotency_key, created_at_ms) VALUES (?, ?, ?, ?)",
+        };
+    }
+
+    fn migrateColumns(db: *DB, d: OutboxDialect) !void {
+        // Fresh CREATE already has columns; ALTER is for older installs only.
+        if (d != .sqlite) return;
+        var rs = db.query("PRAGMA table_info(zfinal_outbox)") catch return;
+        defer rs.deinit();
+        var has_attempts = false;
+        var has_last_error = false;
+        var has_dead = false;
+        while (rs.next()) {
+            const row = rs.currentRowMut() orelse continue;
+            const name = row.getText(1) orelse continue;
+            if (std.mem.eql(u8, name, "attempts")) has_attempts = true;
+            if (std.mem.eql(u8, name, "last_error")) has_last_error = true;
+            if (std.mem.eql(u8, name, "dead_at_ms")) has_dead = true;
+        }
+        if (!has_attempts) db.exec("ALTER TABLE zfinal_outbox ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0") catch {};
+        if (!has_last_error) db.exec("ALTER TABLE zfinal_outbox ADD COLUMN last_error TEXT") catch {};
+        if (!has_dead) db.exec("ALTER TABLE zfinal_outbox ADD COLUMN dead_at_ms INTEGER") catch {};
     }
 
     pub fn port(self: *DbOutbox) Outbox {
@@ -72,27 +158,23 @@ pub const DbOutbox = struct {
         _ = allocator;
         const self: *DbOutbox = @ptrCast(@alignCast(ptr));
         const now = TimeKit.nowMillis();
-        // INSERT OR IGNORE → idempotent under UNIQUE(idempotency_key)
         const params = [_]SqlParam{
             .{ .text = event_type },
             .{ .text = payload },
             .{ .text = idempotency_key },
             .{ .int = now },
         };
-        try self.db.execParams(
-            "INSERT OR IGNORE INTO zfinal_outbox (event_type, payload, idempotency_key, created_at_ms) VALUES (?, ?, ?, ?)",
-            &params,
-        );
+        try self.db.execParams(insertSql(self.dialect), &params);
     }
 
     const vtable = Outbox.VTable{ .append = appendImpl };
 
-    /// Unpublished rows oldest-first. Caller frees via `freeBatch`.
+    /// Unpublished, non-dead rows oldest-first. Caller frees via `freeBatch`.
     pub fn fetchUnpublished(self: *DbOutbox, allocator: std.mem.Allocator, limit: usize) ![]OutboxRow {
-        var sql_buf: [192]u8 = undefined;
+        var sql_buf: [256]u8 = undefined;
         const sql = try std.fmt.bufPrint(
             &sql_buf,
-            "SELECT id, event_type, payload, idempotency_key, created_at_ms FROM zfinal_outbox WHERE published_at_ms IS NULL ORDER BY id ASC LIMIT {d}",
+            "SELECT id, event_type, payload, idempotency_key, created_at_ms, attempts FROM zfinal_outbox WHERE published_at_ms IS NULL AND dead_at_ms IS NULL ORDER BY id ASC LIMIT {d}",
             .{limit},
         );
         const sql_z = try allocator.allocSentinel(u8, sql.len, 0);
@@ -114,12 +196,14 @@ pub const DbOutbox = struct {
             const pl = row.getText(2) orelse "";
             const ik = row.getText(3) orelse "";
             const created = (try row.getInt(4)) orelse 0;
+            const attempts = (try row.getInt(5)) orelse 0;
             try list.append(allocator, .{
                 .id = id,
                 .event_type = try allocator.dupe(u8, et),
                 .payload = try allocator.dupe(u8, pl),
                 .idempotency_key = try allocator.dupe(u8, ik),
                 .created_at_ms = created,
+                .attempts = attempts,
             });
         }
         return try list.toOwnedSlice(allocator);
@@ -139,14 +223,92 @@ pub const DbOutbox = struct {
         );
     }
 
+    /// Increment attempts; mark dead when `attempts >= max_attempts`.
+    pub fn markFailed(self: *DbOutbox, id: i64, err_msg: []const u8, max_attempts: u32) !bool {
+        const now = TimeKit.nowMillis();
+        const params = [_]SqlParam{
+            .{ .text = err_msg },
+            .{ .int = id },
+        };
+        try self.db.execParams(
+            "UPDATE zfinal_outbox SET attempts = attempts + 1, last_error = ? WHERE id = ? AND published_at_ms IS NULL AND dead_at_ms IS NULL",
+            &params,
+        );
+        var rs = try self.db.queryParams(
+            "SELECT attempts FROM zfinal_outbox WHERE id = ?",
+            &.{.{ .int = id }},
+        );
+        defer rs.deinit();
+        if (!rs.next()) return false;
+        const attempts: u32 = @intCast((try rs.currentRowMut().?.getInt(0)) orelse 0);
+        if (attempts >= max_attempts) {
+            try self.db.execParams(
+                "UPDATE zfinal_outbox SET dead_at_ms = ? WHERE id = ? AND dead_at_ms IS NULL",
+                &.{ .{ .int = now }, .{ .int = id } },
+            );
+            return true;
+        }
+        return false;
+    }
+
     pub fn unpublishedCount(self: *DbOutbox) !usize {
-        var rs = try self.db.query("SELECT COUNT(*) FROM zfinal_outbox WHERE published_at_ms IS NULL");
+        var rs = try self.db.query("SELECT COUNT(*) FROM zfinal_outbox WHERE published_at_ms IS NULL AND dead_at_ms IS NULL");
         defer rs.deinit();
         if (!rs.next()) return 0;
         const n = try rs.currentRowMut().?.getInt(0);
         return @intCast(n orelse 0);
     }
+
+    pub fn deadCount(self: *DbOutbox) !usize {
+        var rs = try self.db.query("SELECT COUNT(*) FROM zfinal_outbox WHERE dead_at_ms IS NOT NULL");
+        defer rs.deinit();
+        if (!rs.next()) return 0;
+        const n = try rs.currentRowMut().?.getInt(0);
+        return @intCast(n orelse 0);
+    }
+
+    /// Poll → `bus.publish` → markPublished; on error markFailed / dead-letter.
+    pub fn drainOnce(self: *DbOutbox, allocator: std.mem.Allocator, bus: Bus, opts: DrainOpts) !DrainStats {
+        const batch = try self.fetchUnpublished(allocator, opts.batch_limit);
+        defer freeBatch(allocator, batch);
+        var st: DrainStats = .{};
+        for (batch) |row| {
+            bus.publish(row.event_type, row.payload) catch |err| {
+                var msg_buf: [128]u8 = undefined;
+                const msg = std.fmt.bufPrint(&msg_buf, "{t}", .{err}) catch "publish failed";
+                const dead = try self.markFailed(row.id, msg, opts.max_attempts);
+                st.failed += 1;
+                if (dead) st.dead += 1;
+                continue;
+            };
+            try self.markPublished(row.id);
+            st.published += 1;
+        }
+        return st;
+    }
+
+    pub fn toPrometheusFormat(self: *DbOutbox, allocator: std.mem.Allocator) ![]u8 {
+        const open_n = try self.unpublishedCount();
+        const dead_n = try self.deadCount();
+        return try std.fmt.allocPrint(allocator,
+            \\# HELP zfinal_outbox_unpublished Pending outbox rows.
+            \\# TYPE zfinal_outbox_unpublished gauge
+            \\zfinal_outbox_unpublished {d}
+            \\# HELP zfinal_outbox_dead Dead-lettered outbox rows.
+            \\# TYPE zfinal_outbox_dead gauge
+            \\zfinal_outbox_dead {d}
+            \\
+        , .{ open_n, dead_n });
+    }
 };
+
+test "DbOutbox dialect DDL and insert SQL" {
+    try std.testing.expect(std.mem.indexOf(u8, DbOutbox.ddlCreate(.sqlite), "AUTOINCREMENT") != null);
+    try std.testing.expect(std.mem.indexOf(u8, DbOutbox.ddlCreate(.postgres), "BIGSERIAL") != null);
+    try std.testing.expect(std.mem.indexOf(u8, DbOutbox.ddlCreate(.mysql), "AUTO_INCREMENT") != null);
+    try std.testing.expect(std.mem.indexOf(u8, DbOutbox.insertSql(.postgres), "ON CONFLICT") != null);
+    try std.testing.expect(std.mem.indexOf(u8, DbOutbox.insertSql(.mysql), "INSERT IGNORE") != null);
+}
 
 test "DbOutbox append idempotent and fetch/mark" {
     const a = std.testing.allocator;
@@ -194,4 +356,53 @@ test "DbOutbox works inside transaction with domain write" {
     defer rs.deinit();
     try std.testing.expect(rs.next());
     try std.testing.expectEqual(@as(i64, 1), (try rs.currentRowMut().?.getInt(0)).?);
+}
+
+test "DbOutbox drainOnce publishes via MemoryBus" {
+    const a = std.testing.allocator;
+    const DBConfig = @import("../db/config.zig").DBConfig;
+    const MemoryBus = @import("../bus/memory_bus.zig").MemoryBus;
+
+    var db = try DB.init(a, DBConfig.sqliteMemory());
+    defer db.destroy();
+    var box = try DbOutbox.init(a, db);
+    defer box.deinit();
+    var bus_impl = MemoryBus.init(a);
+    defer bus_impl.deinit();
+    const mb = try bus_impl.queue.subscribe("order.placed");
+    defer {
+        mb.deinit();
+        a.destroy(mb);
+    }
+
+    try box.port().append(a, "order.placed", "{\"ok\":1}", "d1");
+    const st = try box.drainOnce(a, bus_impl.port(), .{});
+    try std.testing.expectEqual(@as(usize, 1), st.published);
+    try std.testing.expectEqual(@as(usize, 0), try box.unpublishedCount());
+
+    var msg = mb.tryPop() orelse return error.TestUnexpectedResult;
+    defer msg.deinit(a);
+    try std.testing.expectEqualStrings("{\"ok\":1}", msg.data);
+
+    const prom = try box.toPrometheusFormat(a);
+    defer a.free(prom);
+    try std.testing.expect(std.mem.indexOf(u8, prom, "zfinal_outbox_unpublished 0") != null);
+}
+
+test "DbOutbox markFailed dead-letters after max_attempts" {
+    const a = std.testing.allocator;
+    const DBConfig = @import("../db/config.zig").DBConfig;
+    var db = try DB.init(a, DBConfig.sqliteMemory());
+    defer db.destroy();
+    var box = try DbOutbox.init(a, db);
+    defer box.deinit();
+    try box.port().append(a, "t", "{}", "fail-1");
+    const batch = try box.fetchUnpublished(a, 1);
+    defer DbOutbox.freeBatch(a, batch);
+    const id = batch[0].id;
+
+    try std.testing.expect(!(try box.markFailed(id, "e1", 2)));
+    try std.testing.expect(try box.markFailed(id, "e2", 2));
+    try std.testing.expectEqual(@as(usize, 0), try box.unpublishedCount());
+    try std.testing.expectEqual(@as(usize, 1), try box.deadCount());
 }

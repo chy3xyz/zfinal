@@ -90,6 +90,15 @@ pub fn main(init: std.process.Init) !void {
     defer run_audit.deinit();
     try run_audit.attachDb(db);
 
+    var quota = zfinal.ai.TokenQuota.init(allocator, io, 100_000);
+    defer quota.deinit();
+    try quota.attachDb(db);
+    try quota.setLimit(7, 50_000);
+
+    var tool_audit = try zfinal.ai.AgentAuditLog.init(allocator, io, 128);
+    defer tool_audit.deinit();
+    try tool_audit.attachDb(db);
+
     // ── Workflow ─────────────────────────────────────────────────────
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
@@ -250,6 +259,7 @@ pub fn main(init: std.process.Init) !void {
         .chat_override = MockChat.chat,
         .chat_override_ctx = &mock,
         .run_audit = &run_audit,
+        .audit = &tool_audit,
         .hooks = .{
             .ctx = @ptrCast(@constCast(&gate)),
             .on_tool_request = zfinal.ai.ToolGate.hook,
@@ -267,6 +277,7 @@ pub fn main(init: std.process.Init) !void {
     const audit_json = try run_audit.dumpJson(allocator);
     defer allocator.free(audit_json);
     std.debug.print("run_audit entries={d} json={s}\n", .{ run_audit.count, audit_json });
+    std.debug.print("quota tenant7 remaining={d} tool_audit={d}\n", .{ quota.remaining(7), tool_audit.count });
 
     const catalog = try zfinal.ai.toSkillsJson(&registry, allocator);
     defer allocator.free(catalog);

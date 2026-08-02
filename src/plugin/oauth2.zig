@@ -13,6 +13,10 @@ pub const OAuth2Client = struct {
     http: HttpClient,
     /// How to authenticate at the token endpoint.
     auth_style: AuthStyle = .body,
+    /// When set, `postToken` skips HTTP and treats this JSON as the response body.
+    mock_token_json: ?[]const u8 = null,
+    /// HTTP status accompanying `mock_token_json` (default 200).
+    mock_token_status: u16 = 200,
 
     pub const AuthStyle = enum {
         /// `client_id` + `client_secret` in form body (default).
@@ -171,6 +175,18 @@ pub const OAuth2Client = struct {
     }
 
     fn postToken(self: *OAuth2Client, body: []const u8) !TokenResponse {
+        if (self.mock_token_json) |json| {
+            if (self.mock_token_status < 200 or self.mock_token_status >= 300) {
+                var te = try OAuth2Client.parseTokenError(self.allocator, json);
+                defer te.arena.deinit();
+                return error.TokenEndpointError;
+            }
+            return try parseTokenResponse(self.allocator, json);
+        }
+        return self.postTokenHttp(body);
+    }
+
+    fn postTokenHttp(self: *OAuth2Client, body: []const u8) !TokenResponse {
         if (self.auth_style == .basic) {
             const raw = try std.fmt.allocPrint(self.allocator, "{s}:{s}", .{ self.client_id, self.client_secret });
             defer self.allocator.free(raw);
@@ -340,4 +356,28 @@ test "oauth2: parseTokenError extracts fields" {
     defer err.arena.deinit();
     try std.testing.expectEqualStrings("invalid_grant", err.code);
     try std.testing.expectEqualStrings("bad code", err.description);
+}
+
+test "oauth2: mock exchangeCodePkce parses token" {
+    const a = std.testing.allocator;
+    var oauth = try OAuth2Client.init(a, "cid", "sec", "https://a/x", "https://a/t", "https://app/cb");
+    defer oauth.deinit();
+    oauth.mock_token_json =
+        \\{"access_token":"atk","token_type":"Bearer","expires_in":60,"refresh_token":"rtk"}
+    ;
+    const verifier = try OAuth2Client.generateCodeVerifier(a);
+    defer a.free(verifier);
+    var tok = try oauth.exchangeCodePkce("auth-code", verifier);
+    defer tok.deinit();
+    try std.testing.expectEqualStrings("atk", tok.access_token);
+    try std.testing.expectEqualStrings("rtk", tok.refresh_token.?);
+}
+
+test "oauth2: mock token error status" {
+    const a = std.testing.allocator;
+    var oauth = try OAuth2Client.init(a, "cid", "sec", "https://a/x", "https://a/t", "https://app/cb");
+    defer oauth.deinit();
+    oauth.mock_token_status = 400;
+    oauth.mock_token_json = "{\"error\":\"invalid_grant\"}";
+    try std.testing.expectError(error.TokenEndpointError, oauth.exchangeCode("bad"));
 }

@@ -39,11 +39,24 @@ try mq_bus.port().publish("order.placed", payload);
 the framework types. Or inject `zfinal.Bus` directly (see `examples/ports-l3`).
 
 Prefer **Outbox** (same TX as business write) + bus publish from a worker when
-you need at-least-once delivery under crash. See
+you need at-least-once delivery under crash. See [outbox.md](outbox.md) /
 [progressive_architecture.md](progressive_architecture.md) L3.
+
+## Consume
+
+| Adapter | Consume API |
+|---------|-------------|
+| `MemoryBus` | `bus.queueClient().subscribe(topic)` → mailbox `tryPop` |
+| `NatsBus` | `subscribe` / `subscribeGroup` + `poll` (queue groups for workers) |
+| `RobustMQBus` | publish-only port; pair with `KafkaConsumer.subscribe` + `poll` |
+
+Offline unit tests assert `NotConnected` / subscribe pairing without a live broker.
+Live soak: set `NATS_URL` / `KAFKA_BOOTSTRAP` / `ROBUSTMQ_URL` (CI job
+`messaging-live` in `.github/workflows/ci.yml`).
 
 ## Related
 
+- [outbox.md](outbox.md) — `DbOutbox.drainOnce`
 - [nats.md](nats.md) — `QueueNatsClient`
-- [robustmq.md](robustmq.md) — `QueueRobustMQClient`
+- [robustmq.md](robustmq.md) — `QueueRobustMQClient` / `KafkaConsumer`
 - [scale_to_millions.md](scale_to_millions.md) — topology

@@ -2,8 +2,10 @@ const std = @import("std");
 const io_instance = @import("../io_instance.zig");
 const sockread = @import("../core/sockread.zig");
 const Plugin = @import("plugin.zig").Plugin;
+const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
 
 /// Length-prefixed mesh frame: magic "ZFP2" | ver | type | len(u32 BE) | payload
+/// When `hmac_key` is set, payload is `HMAC-SHA256(typ||plain) || plain` (32 + N).
 pub const FrameType = enum(u8) {
     data = 0,
     peer_announce = 1,
@@ -40,6 +42,8 @@ pub const P2pPlugin = struct {
     max_frame_len: u32 = 1 * 1024 * 1024,
     /// Cap inbox size; oldest dropped when full.
     max_inbox: usize = 1024,
+    /// Optional shared secret for frame HMAC (duped via `setHmacKey`).
+    hmac_key: ?[]const u8 = null,
     /// Spin mutex — server runs on `std.Thread`; `std.Io.Mutex` futex is unsafe across
     /// threads under `std.testing.io`.
     mutex: std.atomic.Mutex = .unlocked,
@@ -50,6 +54,7 @@ pub const P2pPlugin = struct {
 
     const magic = "ZFP2";
     const version: u8 = 1;
+    const hmac_len: usize = HmacSha256.mac_length;
 
     pub fn init(allocator: std.mem.Allocator, port: u16) !P2pPlugin {
         const id = try std.fmt.allocPrint(allocator, "node-{d}", .{port});
@@ -77,6 +82,12 @@ pub const P2pPlugin = struct {
         self.bind_host = owned;
     }
 
+    /// Shared HMAC key for all mesh frames. Pass empty to clear. Caller retains `key`.
+    pub fn setHmacKey(self: *P2pPlugin, key: []const u8) !void {
+        if (self.hmac_key) |old| self.allocator.free(old);
+        self.hmac_key = if (key.len == 0) null else try self.allocator.dupe(u8, key);
+    }
+
     fn lock(self: *P2pPlugin) void {
         while (!self.mutex.tryLock()) {
             std.atomic.spinLoopHint();
@@ -97,6 +108,7 @@ pub const P2pPlugin = struct {
         self.unlock();
         self.allocator.free(self.node_id);
         self.allocator.free(self.bind_host);
+        if (self.hmac_key) |k| self.allocator.free(k);
     }
 
     pub fn plugin(self: *P2pPlugin) Plugin {
@@ -212,9 +224,41 @@ pub const P2pPlugin = struct {
         return .{ .typ = typ, .payload = data[10 .. 10 + len], .consumed = 10 + len };
     }
 
-    fn sendFrame(stream: std.Io.net.Stream, typ: FrameType, payload: []const u8, allocator: std.mem.Allocator) !void {
-        const frame = try encodeFrame(allocator, typ, payload);
-        defer allocator.free(frame);
+    fn sealPayload(self: *P2pPlugin, typ: FrameType, plain: []const u8) ![]u8 {
+        const key = self.hmac_key orelse return try self.allocator.dupe(u8, plain);
+        const out = try self.allocator.alloc(u8, hmac_len + plain.len);
+        errdefer self.allocator.free(out);
+        var mac: [hmac_len]u8 = undefined;
+        var h = HmacSha256.init(key);
+        const typ_b = [_]u8{@intFromEnum(typ)};
+        h.update(&typ_b);
+        h.update(plain);
+        h.final(&mac);
+        @memcpy(out[0..hmac_len], &mac);
+        @memcpy(out[hmac_len..], plain);
+        return out;
+    }
+
+    fn openPayload(self: *P2pPlugin, typ: FrameType, sealed: []const u8) ![]const u8 {
+        const key = self.hmac_key orelse return sealed;
+        if (sealed.len < hmac_len) return error.BadHmac;
+        var expected: [hmac_len]u8 = undefined;
+        var h = HmacSha256.init(key);
+        const typ_b = [_]u8{@intFromEnum(typ)};
+        h.update(&typ_b);
+        h.update(sealed[hmac_len..]);
+        h.final(&expected);
+        if (!std.crypto.timing_safe.eql([hmac_len]u8, sealed[0..hmac_len].*, expected)) {
+            return error.BadHmac;
+        }
+        return sealed[hmac_len..];
+    }
+
+    fn sendFrame(self: *P2pPlugin, stream: std.Io.net.Stream, typ: FrameType, payload: []const u8) !void {
+        const sealed = try self.sealPayload(typ, payload);
+        defer self.allocator.free(sealed);
+        const frame = try encodeFrame(self.allocator, typ, sealed);
+        defer self.allocator.free(frame);
         var wbuf: [4096]u8 = undefined;
         var writer = stream.writer(io_instance.io, &wbuf);
         try writer.interface.writeAll(frame);
@@ -228,7 +272,7 @@ pub const P2pPlugin = struct {
         const addr = try std.Io.net.IpAddress.parseIp4(host, port);
         const stream = try addr.connect(io_instance.io, .{ .mode = .stream });
         defer stream.close(io_instance.io);
-        try sendFrame(stream, .data, wire, self.allocator);
+        try self.sendFrame(stream, .data, wire);
     }
 
     fn snapshotPeers(self: *P2pPlugin) ![]Peer {
@@ -278,7 +322,7 @@ pub const P2pPlugin = struct {
             const addr = std.Io.net.IpAddress.parseIp4(p.host, p.port) catch continue;
             const stream = addr.connect(io_instance.io, .{ .mode = .stream }) catch continue;
             defer stream.close(io_instance.io);
-            sendFrame(stream, .peer_announce, payload, self.allocator) catch {};
+            self.sendFrame(stream, .peer_announce, payload) catch {};
         }
     }
 
@@ -290,7 +334,7 @@ pub const P2pPlugin = struct {
             const addr = std.Io.net.IpAddress.parseIp4(p.host, p.port) catch continue;
             const stream = addr.connect(io_instance.io, .{ .mode = .stream }) catch continue;
             defer stream.close(io_instance.io);
-            sendFrame(stream, .ping, self.node_id, self.allocator) catch {};
+            self.sendFrame(stream, .ping, self.node_id) catch {};
         }
     }
 
@@ -353,7 +397,8 @@ pub const P2pPlugin = struct {
         });
     }
 
-    fn dispatch(self: *P2pPlugin, conn: std.Io.net.Stream, typ: FrameType, payload: []const u8) !void {
+    fn dispatch(self: *P2pPlugin, conn: std.Io.net.Stream, typ: FrameType, sealed: []const u8) !void {
+        const payload = try self.openPayload(typ, sealed);
         switch (typ) {
             .data => {
                 var from: []const u8 = "peer";
@@ -383,7 +428,7 @@ pub const P2pPlugin = struct {
                 }
             },
             .ping => {
-                sendFrame(conn, .pong, payload, self.allocator) catch {};
+                self.sendFrame(conn, .pong, payload) catch {};
             },
             .pong => {},
         }
@@ -463,4 +508,40 @@ test "p2p: peer_announce gossip adds peer" {
         std.Io.sleep(io_instance.io, std.Io.Duration.fromMilliseconds(20), .real) catch {};
     }
     try std.testing.expect(b_node.peerCount() >= 1);
+}
+
+test "p2p: HMAC accepts matching key and rejects mismatch" {
+    const a = std.testing.allocator;
+    var a_node = try P2pPlugin.initWithId(a, 19021, "A");
+    defer a_node.deinit();
+    var b_node = try P2pPlugin.initWithId(a, 19022, "B");
+    defer b_node.deinit();
+    try a_node.setHmacKey("shared-secret");
+    try b_node.setHmacKey("shared-secret");
+
+    try a_node.startListening();
+    defer a_node.stopListening() catch {};
+    try b_node.startListening();
+    defer b_node.stopListening() catch {};
+
+    try a_node.addPeer("127.0.0.1", 19022);
+    try a_node.broadcast("hmac-ok");
+    var waited: usize = 0;
+    while (b_node.inboxLen() == 0 and waited < 50) : (waited += 1) {
+        std.Io.sleep(io_instance.io, std.Io.Duration.fromMilliseconds(20), .real) catch {};
+    }
+    try std.testing.expect(b_node.inboxLen() >= 1);
+
+    var c_node = try P2pPlugin.initWithId(a, 19023, "C");
+    defer c_node.deinit();
+    try c_node.setHmacKey("wrong-secret");
+    try c_node.startListening();
+    defer c_node.stopListening() catch {};
+    try a_node.addPeer("127.0.0.1", 19023);
+    try a_node.broadcast("should-drop");
+    waited = 0;
+    while (waited < 20) : (waited += 1) {
+        std.Io.sleep(io_instance.io, std.Io.Duration.fromMilliseconds(20), .real) catch {};
+    }
+    try std.testing.expectEqual(@as(usize, 0), c_node.inboxLen());
 }

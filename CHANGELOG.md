@@ -1,6 +1,21 @@
 ## [Unreleased]
 
 ### Added
+- **CI `messaging-live`**: NATS service + Redpanda; env-gated consume soak
+  (`NATS_URL` / `KAFKA_BOOTSTRAP` / `ROBUSTMQ_URL`).
+- **Live consume soaks**: NATS pub/sub asserts delivery; `QueueNatsClient` /
+  `NatsBus` soak; RobustMQ produce+`KafkaConsumer.poll` soak.
+- **ai-runtime**: `TokenQuota.attachDb` + `AgentAuditLog.attachDb` wired into Agent.
+- **Production example L3 demo**: MemoryOutbox + MemoryBus, JWT `/internal/outbox/drain`, WS `/ws`.
+- **`zf check --prod` L3 heuristics**: WARN on SQL-like lines without `tenant_id`/`app_id`;
+  Bus `.publish` without Outbox/drainOnce.
+- **Bus consume wiring**: `NatsBus.subscribe`/`subscribeGroup`/`poll`; RobustMQ publish+`KafkaConsumer` pairing test;
+  `MemoryOutbox.drainOnce`.
+- **`DbOutbox.drainOnce`**: poll → Bus.publish → mark; retries + dead-letter (`attempts` /
+  `dead_at_ms`); PG/MySQL DDL + insert dialects; Prometheus gauges.
+- **WS `tickIdle` / `cronTickIdle`**: periodic reap + ping hook for CronPlugin.
+- **OAuth2 `mock_token_json`**: offline `exchangeCodePkce` / error-path tests.
+- **P2P `setHmacKey`**: HMAC-SHA256 over frame payloads (drop on mismatch).
 - **`zfinal.DbOutbox`**: durable outbox on `zfinal_outbox` (idempotent append, fetch/mark);
   docs [doc/outbox.md](doc/outbox.md).
 - **WS idle / ping**: `WebSocket.idle_timeout_ms`, `WebSocketManager.pingAll` / `reapIdle`.
