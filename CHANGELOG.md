@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Fixed
+- **`SkillRegistry.toOpenAiFunctionsAlloc`**: drop an extra `}` so tools JSON is
+  valid (DeepSeek/OpenAI Agent+tools path was returning `ProviderError`).
+
 ## [0.20.12] - 2026-08-02
 
 ### Docs

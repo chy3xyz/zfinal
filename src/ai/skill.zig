@@ -179,7 +179,7 @@ pub const SkillRegistry = struct {
                     try buf.print(allocator, "\"{s}\"", .{p.name});
                 }
             }
-            try buf.appendSlice(allocator, "]}}}}");
+            try buf.appendSlice(allocator, "]}}}");
         }
         try buf.append(allocator, ']');
         return try buf.toOwnedSlice(allocator);
@@ -297,4 +297,36 @@ test "SkillRegistry allowlist" {
     });
     var ctx = SkillContext{ .allocator = allocator };
     try std.testing.expectError(error.ToolNotAllowed, reg.dispatchAllowed("echo", &ctx, .null, &.{"other"}));
+}
+
+test "SkillRegistry toOpenAiFunctionsAlloc is valid JSON" {
+    const allocator = std.testing.allocator;
+    var reg = SkillRegistry.init(allocator, std.testing.io);
+    defer reg.deinit();
+    try reg.register(.{
+        .name = "get_time",
+        .description = "unix ms",
+        .parameters = &.{},
+        .handler = struct {
+            fn h(_: *SkillContext, _: std.json.Value) anyerror!std.json.Value {
+                return .null;
+            }
+        }.h,
+    });
+    try reg.register(.{
+        .name = "echo",
+        .description = "echo text",
+        .parameters = &.{.{ .name = "text", .type = .string, .description = "t", .required = true }},
+        .handler = struct {
+            fn h(_: *SkillContext, _: std.json.Value) anyerror!std.json.Value {
+                return .null;
+            }
+        }.h,
+    });
+    const tools = try reg.toOpenAiFunctionsAlloc(allocator);
+    defer allocator.free(tools);
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, tools, .{});
+    defer parsed.deinit();
+    try std.testing.expect(parsed.value == .array);
+    try std.testing.expectEqual(@as(usize, 2), parsed.value.array.items.len);
 }
