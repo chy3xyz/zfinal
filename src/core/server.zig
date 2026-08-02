@@ -8,6 +8,10 @@ const getLog = @import("logger.zig").getLogger;
 const shutdown = @import("shutdown.zig");
 const io_instance = @import("../io_instance.zig");
 const http_error = @import("http_error.zig");
+const sockread = @import("sockread.zig");
+const WebSocket = @import("../websocket/websocket.zig").WebSocket;
+const WebSocketManager = @import("../websocket/manager.zig").WebSocketManager;
+const ws_handshake = @import("../websocket/handshake.zig");
 
 pub const ServerConfig = struct {
     host: []const u8 = "0.0.0.0",
@@ -25,8 +29,8 @@ pub const ServerConfig = struct {
     /// (it consumed `async_limit` slots and looked like "thread pool leak"
     /// after ~3–4 keep-alive connections). 0 disables. Default 30s.
     request_timeout_ms: u64 = 30_000,
-    /// Per `net_read` deadline (ms) via `Io.operateTimeout` for receiveHead/body.
-    /// This is the real between-request idle limit. 0 disables. Default 30s.
+    /// Per-read poll deadline (ms) for receiveHead/body via sockread.
+    /// This is the real between-request idle limit. 0 = wait forever. Default 30s.
     read_timeout_ms: u64 = 30_000,
     /// Per-response write deadline (ms), wall-clock from the first `drain`
     /// of each request. Zig 0.17 removed `Operation.net_write`, so this is
@@ -68,6 +72,9 @@ pub const Server = struct {
     metrics: ?*Metrics = null,
     /// Typed app State from `ZFinal.setState`.
     app_state: @import("state.zig").Handle = .{},
+    /// Optional WebSocket routes (`ZFinal.addWebSocket`). When set, Upgrade
+    /// requests matching a route take over the TCP connection after 101.
+    ws_manager: ?*WebSocketManager = null,
     active_conns: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     err_handle: ErrorHandle = .{},
     /// Listener socket, stored so a shutdown watchdog can close it to unblock accept().
@@ -184,11 +191,15 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
     defer _ = server.active_conns.fetchSub(1, .monotonic);
     _ = server.active_conns.fetchAdd(1, .monotonic);
     if (server.metrics) |m| m.recordConnection();
-    defer conn.close(io);
+
+    var ws_took_over = false;
+    defer {
+        if (!ws_took_over) conn.close(io);
+    }
 
     var read_buf: [4096]u8 = undefined;
     var write_buf: [4096]u8 = undefined;
-    var reader = TimedReader.init(conn, io, &read_buf, server.config.read_timeout_ms);
+    var reader = sockread.TimedIoReader.init(conn, &read_buf, server.config.read_timeout_ms);
     var writer = TimedWriter.init(conn, io, &write_buf, server.config.write_timeout_ms);
     var http_srv = http.Server.init(&reader.interface, &writer.interface);
     var req_count: usize = 0;
@@ -196,6 +207,13 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
     while (req_count < server.config.max_requests_per_conn) : (req_count += 1) {
         var request = http_srv.receiveHead() catch break;
         writer.resetWriteDeadline();
+        if (tryWebSocketUpgrade(&request, server, conn) catch |err| {
+            getLog().warnFmt("WebSocket upgrade failed: {t}", .{err});
+            break;
+        }) {
+            ws_took_over = true;
+            break;
+        }
         dispatch(&request, server) catch break;
         if (server.config.force_connection_close) break;
         if (request.head.version != .@"HTTP/1.1") break;
@@ -203,77 +221,55 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
     }
 }
 
-/// Stream reader that applies `Io.operateTimeout` on each `net_read`.
-const TimedReader = struct {
-    io: std.Io,
-    interface: std.Io.Reader,
-    stream: std.Io.net.Stream,
-    timeout_ms: u64,
-    err: ?anyerror = null,
+/// If the request is a WebSocket upgrade for a registered path, send 101 and
+/// run the handler on `conn`. Returns true when the TCP socket is now owned by WS.
+fn tryWebSocketUpgrade(request: *http.Server.Request, server: *Server, conn: std.Io.net.Stream) !bool {
+    const mgr = server.ws_manager orelse return false;
 
-    const max_iovecs_len = 8;
+    var upgrade_val: ?[]const u8 = null;
+    var key_val: ?[]const u8 = null;
+    var it = request.iterateHeaders();
+    while (it.next()) |h| {
+        if (std.ascii.eqlIgnoreCase(h.name, "upgrade")) upgrade_val = h.value;
+        if (std.ascii.eqlIgnoreCase(h.name, "sec-websocket-key")) key_val = h.value;
+    }
+    const upgrade = upgrade_val orelse return false;
+    if (std.ascii.findIgnoreCasePos(upgrade, 0, "websocket") == null) return false;
+    const key = key_val orelse return false;
 
-    fn init(stream: std.Io.net.Stream, io: std.Io, buffer: []u8, timeout_ms: u64) TimedReader {
-        return .{
-            .io = io,
-            .interface = .{
-                .vtable = &.{
-                    .stream = streamImpl,
-                    .readVec = readVec,
-                },
-                .buffer = buffer,
-                .seek = 0,
-                .end = 0,
-            },
-            .stream = stream,
-            .timeout_ms = timeout_ms,
-        };
+    const target = request.head.target;
+    const safe_target = if (target.len > 4096) target[0..4096] else target;
+    const path = if (std.mem.indexOfScalar(u8, safe_target, '?')) |q| safe_target[0..q] else safe_target;
+    const handler = mgr.findRoute(path) orelse return false;
+
+    var accept_buf: [28]u8 = undefined;
+    const accept = ws_handshake.acceptKey(key, &accept_buf);
+
+    try request.respond("", .{
+        .status = .switching_protocols,
+        .extra_headers = &.{
+            .{ .name = "Upgrade", .value = "websocket" },
+            .{ .name = "Connection", .value = "Upgrade" },
+            .{ .name = "Sec-WebSocket-Accept", .value = accept },
+        },
+    });
+
+    const ws = try server.allocator.create(WebSocket);
+    errdefer server.allocator.destroy(ws);
+    ws.* = WebSocket.init(server.allocator, conn);
+    try mgr.addConnection(ws);
+    defer {
+        mgr.removeConnection(ws);
+        // Close TCP here; handleConn skips its defer close when we return true.
+        ws.deinit();
+        server.allocator.destroy(ws);
     }
 
-    fn streamImpl(io_r: *std.Io.Reader, io_w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
-        const dest = limit.slice(try io_w.writableSliceGreedy(1));
-        var data: [1][]u8 = .{dest};
-        const n = try readVec(io_r, &data);
-        io_w.advance(n);
-        return n;
-    }
-
-    fn readVec(io_r: *std.Io.Reader, data: [][]u8) std.Io.Reader.Error!usize {
-        const r: *TimedReader = @alignCast(@fieldParentPtr("interface", io_r));
-        var iovecs_buffer: [max_iovecs_len][]u8 = undefined;
-        const dest_n, const data_size = try io_r.writableVector(&iovecs_buffer, data);
-        const dest = iovecs_buffer[0..dest_n];
-        std.debug.assert(dest[0].len > 0);
-
-        const timeout: std.Io.Timeout = if (r.timeout_ms == 0)
-            .none
-        else
-            .{ .duration = .{
-                .raw = .fromMilliseconds(@intCast(r.timeout_ms)),
-                .clock = .awake,
-            } };
-
-        const n = (r.io.operateTimeout(.{
-            .net_read = .{
-                .socket_handle = r.stream.socket.handle,
-                .data = dest,
-            },
-        }, timeout) catch |err| {
-            r.err = err;
-            return error.ReadFailed;
-        }).net_read catch |err| {
-            r.err = err;
-            return error.ReadFailed;
-        };
-
-        if (n == 0) return error.EndOfStream;
-        if (n > data_size) {
-            r.interface.end += n - data_size;
-            return data_size;
-        }
-        return n;
-    }
-};
+    handler(ws) catch |err| {
+        getLog().warnFmt("WebSocket handler error on {s}: {t}", .{ path, err });
+    };
+    return true;
+}
 
 /// Stream writer backed by `Io.vtable.netWrite`.
 /// Enforces `write_timeout_ms` as a wall-clock deadline from the first

@@ -1,5 +1,6 @@
 const std = @import("std");
 const io_instance = @import("../io_instance.zig");
+const sockread = @import("../core/sockread.zig");
 const Plugin = @import("plugin.zig").Plugin;
 
 /// MQTT 3.1.1 client configuration (TCP + optional native TLS).
@@ -19,7 +20,7 @@ pub const MqttConfig = struct {
 
 const TlsSession = struct {
     client: std.crypto.tls.Client,
-    stream_reader: std.Io.net.Stream.Reader,
+    stream_reader: sockread.TimedIoReader,
     stream_writer: std.Io.net.Stream.Writer,
     buffers: []u8,
 };
@@ -91,7 +92,7 @@ pub const MqttPlugin = struct {
         off += min;
         const tls_write_buf = bufs[off..][0..min];
 
-        var stream_reader = stream.reader(io_instance.io, stream_read_buf);
+        var stream_reader = sockread.TimedIoReader.init(stream, stream_read_buf, 0);
         var stream_writer = stream.writer(io_instance.io, stream_write_buf);
 
         var entropy: [std.crypto.tls.Client.Options.entropy_len]u8 = undefined;
@@ -159,10 +160,7 @@ pub const MqttPlugin = struct {
             return;
         }
         const s = try self.requireStream();
-        var rbuf: [64]u8 = undefined;
-        var reader = s.reader(io_instance.io, &rbuf);
-        const n = try reader.interface.readSliceShort(buf);
-        if (n < buf.len) return error.IncompleteConnack;
+        sockread.readFull(s.*, buf) catch return error.IncompleteConnack;
     }
 
     fn encodeRemainingLength(buf: *std.ArrayList(u8), allocator: std.mem.Allocator, len: usize) !void {

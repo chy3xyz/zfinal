@@ -1,5 +1,6 @@
 const std = @import("std");
 const io_instance = @import("../io_instance.zig");
+const sockread = @import("../core/sockread.zig");
 
 /// Redis client with RESP protocol support over TCP.
 /// Reads responses by accumulating until a complete RESP value is available
@@ -103,33 +104,29 @@ pub const RedisClient = struct {
         defer accum.deinit(self.allocator);
 
         var rbuf: [4096]u8 = undefined;
-        var dr = DeadlineReader.init(s.*, io_instance.io, &rbuf, deadline);
-        const r = &dr.interface;
 
         while (true) {
-            if (deadline) |d| {
-                if (nowMillis() >= d) return error.Timeout;
-            }
             if (accum.items.len >= self.max_response_bytes) return error.ResponseTooLarge;
 
-            // Exactly one underlying `net_read`, bounded by the remaining
-            // deadline. Returns as soon as ANY bytes arrive — never waits for
-            // `rbuf` to fill (which is what `readSliceShort` does, and why a
-            // 7-byte `+PONG\r\n` used to block forever).
-            r.fillMore() catch |err| switch (err) {
-                error.EndOfStream => {
-                    if (accum.items.len == 0) return error.ConnectionClosed;
-                    return error.IncompleteResponse;
-                },
-                error.ReadFailed => return dr.err orelse error.ReadFailed,
-            };
+            // One posix read via sockread (bypasses shared Threaded Io hang).
+            // Short reads are fine — RESP is reassembled in `accum`.
+            const timeout: i32 = if (deadline) |d| blk: {
+                const rem = d - nowMillis();
+                if (rem <= 0) return error.Timeout;
+                break :blk @intCast(@min(rem, std.math.maxInt(i32)));
+            } else -1;
 
-            const chunk = r.buffered();
-            // A zero-byte fill is not end-of-stream; loop to re-check deadline.
-            if (chunk.len == 0) continue;
-            const take_n = @min(chunk.len, self.max_response_bytes - accum.items.len);
-            try accum.appendSlice(self.allocator, chunk[0..take_n]);
-            r.toss(take_n);
+            const n = sockread.readSomeTimeout(s.*, &rbuf, timeout) catch |err| switch (err) {
+                error.Timeout => return error.Timeout,
+                error.ConnectionError => return error.ConnectionClosed,
+            };
+            if (n == 0) {
+                if (accum.items.len == 0) return error.ConnectionClosed;
+                return error.IncompleteResponse;
+            }
+
+            const take_n = @min(n, self.max_response_bytes - accum.items.len);
+            try accum.appendSlice(self.allocator, rbuf[0..take_n]);
 
             const parsed = parseResp(self.allocator, accum.items) catch |err| switch (err) {
                 error.NeedMoreData => continue,
@@ -254,91 +251,6 @@ pub const RedisClient = struct {
     pub fn flushDb(self: *Self) !void {
         const result = try self.command(&.{"FLUSHDB"});
         if (result) |r| self.allocator.free(r);
-    }
-};
-
-/// Stream reader that applies a wall-clock deadline to each underlying
-/// `net_read` via `Io.operateTimeout`, and performs exactly one syscall per
-/// `readVec` so callers get a short read as soon as any bytes are available.
-///
-/// Mirrors `core/server.zig`'s `TimedReader`, except the timeout is derived
-/// from an absolute deadline (shared across the whole RESP reply) instead of
-/// a fixed per-read duration.
-const DeadlineReader = struct {
-    io: std.Io,
-    interface: std.Io.Reader,
-    stream: std.Io.net.Stream,
-    /// Absolute wall-clock deadline in ms; null means "wait indefinitely".
-    deadline_ms: ?i64,
-    /// Real cause behind `error.ReadFailed` (e.g. `error.Timeout`).
-    err: ?anyerror = null,
-
-    const max_iovecs_len = 8;
-
-    fn init(stream: std.Io.net.Stream, io: std.Io, buffer: []u8, deadline_ms: ?i64) DeadlineReader {
-        return .{
-            .io = io,
-            .interface = .{
-                .vtable = &.{
-                    .stream = streamImpl,
-                    .readVec = readVec,
-                },
-                .buffer = buffer,
-                .seek = 0,
-                .end = 0,
-            },
-            .stream = stream,
-            .deadline_ms = deadline_ms,
-        };
-    }
-
-    fn streamImpl(io_r: *std.Io.Reader, io_w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
-        const dest = limit.slice(try io_w.writableSliceGreedy(1));
-        var data: [1][]u8 = .{dest};
-        const n = try readVec(io_r, &data);
-        io_w.advance(n);
-        return n;
-    }
-
-    fn readVec(io_r: *std.Io.Reader, data: [][]u8) std.Io.Reader.Error!usize {
-        const r: *DeadlineReader = @alignCast(@fieldParentPtr("interface", io_r));
-        var iovecs_buffer: [max_iovecs_len][]u8 = undefined;
-        const dest_n, const data_size = try io_r.writableVector(&iovecs_buffer, data);
-        const dest = iovecs_buffer[0..dest_n];
-        std.debug.assert(dest[0].len > 0);
-
-        var timeout: std.Io.Timeout = .none;
-        if (r.deadline_ms) |d| {
-            const remaining = d - RedisClient.nowMillis();
-            if (remaining <= 0) {
-                r.err = error.Timeout;
-                return error.ReadFailed;
-            }
-            timeout = .{ .duration = .{
-                .raw = .fromMilliseconds(@intCast(remaining)),
-                .clock = .awake,
-            } };
-        }
-
-        const n = (r.io.operateTimeout(.{
-            .net_read = .{
-                .socket_handle = r.stream.socket.handle,
-                .data = dest,
-            },
-        }, timeout) catch |err| {
-            r.err = err;
-            return error.ReadFailed;
-        }).net_read catch |err| {
-            r.err = err;
-            return error.ReadFailed;
-        };
-
-        if (n == 0) return error.EndOfStream;
-        if (n > data_size) {
-            r.interface.end += n - data_size;
-            return data_size;
-        }
-        return n;
     }
 };
 

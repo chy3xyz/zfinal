@@ -212,7 +212,10 @@ pub const CronJob = struct {
     name: []const u8,
     schedule: CronExpression,
     schedule_str: []const u8,
-    task: *const fn () void,
+    /// Nullary task (legacy). Prefer `ctx_task` when the job needs userdata.
+    task: ?*const fn () void = null,
+    ctx_task: ?*const fn (*anyopaque) void = null,
+    context: ?*anyopaque = null,
     last_run: i64,
     next_run: ?i64,
     allocator: std.mem.Allocator,
@@ -252,7 +255,11 @@ pub const CronJob = struct {
         const now = TimeKit.now();
         self.last_run = now;
         self.next_run = self.schedule.nextRun(now);
-        self.task();
+        if (self.ctx_task) |t| {
+            t(self.context orelse unreachable);
+        } else if (self.task) |t| {
+            t();
+        }
     }
 };
 
@@ -277,7 +284,7 @@ pub const CronPlugin = struct {
         self.jobs.deinit(self.allocator);
     }
 
-    /// Schedule a new cron job
+    /// Schedule a new cron job (nullary callback).
     pub fn schedule(self: *Self, name: []const u8, cron_expr: []const u8, task: *const fn () void) !void {
         const parsed = try CronExpression.parse(self.allocator, cron_expr);
 
@@ -294,7 +301,48 @@ pub const CronPlugin = struct {
             .allocator = self.allocator,
         };
 
-        try self.jobs.append(job);
+        try self.jobs.append(self.allocator, job);
+    }
+
+    /// Schedule a job with userdata context (for AI schedule skills / DI).
+    pub fn scheduleWith(
+        self: *Self,
+        name: []const u8,
+        cron_expr: []const u8,
+        task: *const fn (*anyopaque) void,
+        context: *anyopaque,
+    ) !void {
+        const parsed = try CronExpression.parse(self.allocator, cron_expr);
+
+        const now = TimeKit.now();
+        const next_run = parsed.nextRun(now) orelse return error.InvalidCronExpression;
+
+        const job = CronJob{
+            .name = try self.allocator.dupe(u8, name),
+            .schedule = parsed,
+            .schedule_str = cron_expr,
+            .ctx_task = task,
+            .context = context,
+            .last_run = 0,
+            .next_run = next_run,
+            .allocator = self.allocator,
+        };
+
+        try self.jobs.append(self.allocator, job);
+    }
+
+    pub fn jobCount(self: *const Self) usize {
+        return self.jobs.items.len;
+    }
+
+    /// Caller owns the returned slice and each name string.
+    pub fn listJobNames(self: *Self, allocator: std.mem.Allocator) ![][]const u8 {
+        var names = try allocator.alloc([]const u8, self.jobs.items.len);
+        errdefer allocator.free(names);
+        for (self.jobs.items, 0..) |job, i| {
+            names[i] = try allocator.dupe(u8, job.name);
+        }
+        return names;
     }
 
     /// Remove a job by name
@@ -307,6 +355,12 @@ pub const CronPlugin = struct {
             }
         }
         return error.JobNotFound;
+    }
+
+    /// True if a job was removed.
+    pub fn cancelJob(self: *Self, name: []const u8) bool {
+        self.remove(name) catch return false;
+        return true;
     }
 
     /// Get next job to run

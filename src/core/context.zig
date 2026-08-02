@@ -154,6 +154,8 @@ pub const Context = struct {
             }
             return null;
         }
+        // oneshot.capture sets `req = undefined`; skip real header walk.
+        if (self.capture != null) return null;
         var it = self.req.iterateHeaders();
         while (it.next()) |header| {
             if (std.ascii.eqlIgnoreCase(header.name, name)) {

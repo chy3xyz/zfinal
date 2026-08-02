@@ -18,7 +18,7 @@ zf check                    # Audit AI compliance
 ```bash
 zf g port store --json   # → src/ports/store.zig + memory_store / pg_store adapters
 zf g port cache --json   # → src/ports/cache.zig + memory_cache / redis_cache
-zf g port bus --json     # → src/ports/bus.zig + memory_bus / nats_bus / robustmq_bus
+zf g port bus --json     # → src/ports/bus.zig + Memory/Nats/RobustMQ re-exports (doc/bus.md)
 ```
 
 Edit only `// ── ai-edit-zone` blocks; wire adapters in `main.zig` as in

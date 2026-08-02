@@ -66,4 +66,7 @@ const q = zfinal.QueueNatsClient; // stable, zero dep
 
 `zfinal.experimental.QueueNatsClient` remains a deprecated alias.
 
+L3 apps: prefer `zfinal.NatsBus` over the raw client in services
+([bus.md](bus.md)).
+
 See also: [robustmq.md](robustmq.md), [progressive_architecture.md](progressive_architecture.md).

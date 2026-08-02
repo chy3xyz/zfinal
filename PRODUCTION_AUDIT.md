@@ -26,6 +26,7 @@
 | Ops / deployability | **9.8 / 10** | CI + drivers + live PG/MySQL + production + **`zf check --prod`** + [`doc/reverse_proxy.md`](doc/reverse_proxy.md) + [`benchmark/BASELINE.md`](benchmark/BASELINE.md) |
 | Docs / AI tooling | **9.9 / 10** | zone merge; ports-l2/**ports-l3**; reverse-proxy KA; deeper `zf openapi`; **[best_practices.md](doc/best_practices.md)** hub + envelope ADR-013 |
 | Optional (PG/MySQL/zent/messaging) | **9.6 / 10** | RobustMQ Metadata + range/sticky + Offset*; **MQTT native TLS**; Redis; live CI |
+| WebSocket / OAuth2 / P2P / AI (2026-08) | **~8.8–9.3** | `addWebSocket`; `DbOutbox`; WS idle/ping; Quota `attachDb`; PKCE; P2P; AI audit/trigger/SLA |
 | **Overall (contractual)** | **9.8 / 10** | Internet-facing BFF behind proxy: ready |
 | Absolute (toolchain) | **~9.2 / 10** | Zig-dev + keep-alive still default-forced |
 

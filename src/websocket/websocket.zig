@@ -1,6 +1,10 @@
 const std = @import("std");
 const io_instance = @import("../io_instance.zig");
 const logger = @import("../core/logger.zig");
+const sockread = @import("../core/sockread.zig");
+
+/// Max WebSocket payload accepted by `receive` (1 MiB).
+pub const max_payload_len: usize = 1024 * 1024;
 
 /// WebSocket 操作码
 pub const OpCode = enum(u8) {
@@ -24,21 +28,31 @@ pub const Frame = struct {
         self.allocator.free(self.payload);
     }
 
-    /// 解析 WebSocket 帧
+    /// Parse one frame from `data`. When `require_client_mask` is true (server
+    /// receive path), RSV bits must be 0, MASK must be set, and payload ≤ `max_payload_len`.
     pub fn parse(data: []const u8, allocator: std.mem.Allocator) !Frame {
+        return parseOpts(data, allocator, .{ .require_client_mask = false });
+    }
+
+    pub const ParseOpts = struct {
+        require_client_mask: bool = false,
+    };
+
+    pub fn parseOpts(data: []const u8, allocator: std.mem.Allocator, opts: ParseOpts) !Frame {
         if (data.len < 2) return error.InvalidFrame;
 
         const byte1 = data[0];
         const byte2 = data[1];
 
+        if ((byte1 & 0x70) != 0) return error.RsvBitsSet;
         const fin = (byte1 & 0x80) != 0;
         const opcode = @as(OpCode, @enumFromInt(byte1 & 0x0F));
         const masked = (byte2 & 0x80) != 0;
+        if (opts.require_client_mask and !masked) return error.MaskRequired;
         var payload_len: usize = @intCast(byte2 & 0x7F);
 
         var pos: usize = 2;
 
-        // 扩展长度
         if (payload_len == 126) {
             if (data.len < pos + 2) return error.InvalidFrame;
             payload_len = std.mem.readInt(u16, data[pos..][0..2], .big);
@@ -49,7 +63,8 @@ pub const Frame = struct {
             pos += 8;
         }
 
-        // 掩码
+        if (payload_len > max_payload_len) return error.PayloadTooLarge;
+
         var mask: [4]u8 = undefined;
         if (masked) {
             if (data.len < pos + 4) return error.InvalidFrame;
@@ -57,7 +72,6 @@ pub const Frame = struct {
             pos += 4;
         }
 
-        // 载荷
         if (data.len < pos + payload_len) return error.InvalidFrame;
         var payload = try allocator.alloc(u8, payload_len);
 
@@ -126,14 +140,65 @@ pub const WebSocket = struct {
     /// Buffer for reassembling fragmented messages.
     frag_buf: std.ArrayList(u8) = undefined,
     frag_opcode: OpCode = .text,
+    /// 4KB sockread cache — small frames share one refill (header/mask/payload).
+    read_buf: [4096]u8 = undefined,
+    buf_reader: ?sockread.BufReader = null,
+    /// Mono ms of last successful read/write (for idle checks).
+    last_activity_ms: i64 = 0,
+    /// Close with 1001 when idle longer than this (0 = disabled).
+    idle_timeout_ms: i64 = 0,
 
     pub fn init(allocator: std.mem.Allocator, stream: std.Io.net.Stream) WebSocket {
-        return .{ .allocator = allocator, .stream = stream, .frag_buf = std.ArrayList(u8).empty };
+        return .{
+            .allocator = allocator,
+            .stream = stream,
+            .frag_buf = std.ArrayList(u8).empty,
+            .last_activity_ms = monoMs(),
+        };
+    }
+
+    fn monoMs() i64 {
+        return @import("../kit/time_kit.zig").TimeKit.nowMillis();
+    }
+
+    fn touch(self: *WebSocket) void {
+        self.last_activity_ms = monoMs();
+    }
+
+    /// True when `idle_timeout_ms > 0` and no activity within the window.
+    pub fn isIdle(self: *const WebSocket) bool {
+        if (self.idle_timeout_ms <= 0) return false;
+        return monoMs() - self.last_activity_ms >= self.idle_timeout_ms;
+    }
+
+    /// If idle, send close 1001 and mark closed. Returns true when closed due to idle.
+    pub fn closeIfIdle(self: *WebSocket) bool {
+        if (!self.isIdle()) return false;
+        self.sendClose(1001, "idle timeout");
+        self.close();
+        return true;
     }
 
     pub fn deinit(self: *WebSocket) void {
         self.frag_buf.deinit(self.allocator);
         self.close();
+    }
+
+    fn frameReader(self: *WebSocket) *sockread.BufReader {
+        if (self.buf_reader == null) {
+            self.buf_reader = sockread.BufReader.init(self.stream, &self.read_buf);
+        }
+        return &self.buf_reader.?;
+    }
+
+    fn readExact(self: *WebSocket, out: []u8) !void {
+        self.frameReader().readFull(out) catch |err| switch (err) {
+            error.ConnectionClosed => {
+                self.closed = true;
+                return error.ConnectionClosed;
+            },
+            else => return error.ConnectionError,
+        };
     }
 
     fn writeFrame(self: *WebSocket, opcode: OpCode, data: []const u8) !void {
@@ -144,6 +209,8 @@ pub const WebSocket = struct {
         var write_buf: [4096]u8 = undefined;
         var writer = self.stream.writer(io_instance.io, &write_buf);
         try writer.interface.writeAll(encoded);
+        try writer.interface.flush();
+        self.touch();
     }
 
     /// 发送文本消息
@@ -186,6 +253,7 @@ pub const WebSocket = struct {
             var wbuf: [4096]u8 = undefined;
             var writer = self.stream.writer(io_instance.io, &wbuf);
             try writer.interface.writeAll(encoded);
+            try writer.interface.flush();
             offset = end;
         }
     }
@@ -204,22 +272,62 @@ pub const WebSocket = struct {
         };
     }
 
+    /// Read one RFC 6455 frame via buffered sockread (bypasses Threaded Io net_read).
+    /// Server path: rejects RSV≠0 and unmasked client frames.
+    fn readFrame(self: *WebSocket) !Frame {
+        var header: [2]u8 = undefined;
+        try self.readExact(&header);
+
+        if ((header[0] & 0x70) != 0) return error.RsvBitsSet;
+        const fin = (header[0] & 0x80) != 0;
+        const opcode: OpCode = @enumFromInt(header[0] & 0x0F);
+        const masked = (header[1] & 0x80) != 0;
+        if (!masked) return error.MaskRequired;
+        var payload_len: usize = header[1] & 0x7F;
+
+        if (payload_len == 126) {
+            var ext: [2]u8 = undefined;
+            try self.readExact(&ext);
+            payload_len = std.mem.readInt(u16, &ext, .big);
+        } else if (payload_len == 127) {
+            var ext: [8]u8 = undefined;
+            try self.readExact(&ext);
+            payload_len = @intCast(std.mem.readInt(u64, &ext, .big));
+        }
+
+        if (payload_len > max_payload_len) return error.PayloadTooLarge;
+
+        var mask: [4]u8 = undefined;
+        try self.readExact(&mask);
+
+        const payload = try self.allocator.alloc(u8, payload_len);
+        errdefer self.allocator.free(payload);
+        if (payload_len > 0) {
+            try self.readExact(payload);
+        }
+        for (payload, 0..) |*b, i| {
+            b.* ^= mask[i % 4];
+        }
+
+        return .{
+            .fin = fin,
+            .opcode = opcode,
+            .masked = true,
+            .payload = payload,
+            .allocator = self.allocator,
+        };
+    }
+
     /// 接收消息. Returns Frame on success. Caller must frame.deinit().
     /// Handles fragmented messages transparently — reassembles continuation frames.
+    ///
+    /// Frame pieces are read through `sockread.BufReader` (posix `read`, no Io
+    /// `net_read`) so small frames share one refill across header/mask/payload.
     pub fn receive(self: *WebSocket) !Frame {
+        if (self.closeIfIdle()) return error.ConnectionClosed;
         while (true) {
-            var buf: [8192]u8 = undefined;
-            var read_buf: [8192]u8 = undefined;
-            var reader = self.stream.reader(io_instance.io, &read_buf);
-            const n = reader.interface.readSliceShort(&buf) catch |err| switch (err) {
-                error.ReadFailed => return reader.err.?,
-            };
-            if (n == 0) {
-                self.closed = true;
-                return error.ConnectionClosed;
-            }
-
-            var frame = try Frame.parse(buf[0..n], self.allocator);
+            var frame = try self.readFrame();
+            self.touch();
 
             switch (frame.opcode) {
                 .ping => {
@@ -238,11 +346,10 @@ pub const WebSocket = struct {
                     return error.ConnectionClosed;
                 },
                 .continuation => {
-                    // Append to fragment buffer
+                    const fin = frame.fin;
                     try self.frag_buf.appendSlice(self.allocator, frame.payload);
                     frame.deinit();
-                    if (frame.fin) {
-                        // Final fragment — return reassembled message
+                    if (fin) {
                         const complete = try self.allocator.dupe(u8, self.frag_buf.items);
                         self.frag_buf.clearRetainingCapacity();
                         return Frame{
@@ -257,7 +364,6 @@ pub const WebSocket = struct {
                 },
                 else => {
                     if (!frame.fin) {
-                        // Start of fragmented message
                         self.frag_opcode = frame.opcode;
                         try self.frag_buf.appendSlice(self.allocator, frame.payload);
                         frame.deinit();
@@ -295,4 +401,25 @@ test "websocket frame encoding" {
     try std.testing.expect(encoded.len > 0);
     try std.testing.expectEqual(@as(u8, 0x81), encoded[0]); // FIN + TEXT
     try std.testing.expectEqual(@as(u8, 5), encoded[1]); // Length = 5
+}
+
+test "websocket frame parse masked roundtrip" {
+    const allocator = std.testing.allocator;
+    // FIN+TEXT, MASK, len=5, mask=01020304, payload "Hello" xor mask
+    const raw = [_]u8{ 0x81, 0x85, 0x01, 0x02, 0x03, 0x04, 0x48 ^ 0x01, 0x65 ^ 0x02, 0x6c ^ 0x03, 0x6c ^ 0x04, 0x6f ^ 0x01 };
+    var frame = try Frame.parseOpts(&raw, allocator, .{ .require_client_mask = true });
+    defer frame.deinit();
+    try std.testing.expectEqualStrings("Hello", frame.payload);
+}
+
+test "websocket frame parse rejects unmasked when required" {
+    const allocator = std.testing.allocator;
+    const raw = [_]u8{ 0x81, 0x05, 'H', 'e', 'l', 'l', 'o' };
+    try std.testing.expectError(error.MaskRequired, Frame.parseOpts(&raw, allocator, .{ .require_client_mask = true }));
+}
+
+test "websocket frame parse rejects rsv" {
+    const allocator = std.testing.allocator;
+    const raw = [_]u8{ 0x91, 0x85, 0, 0, 0, 0, 'H', 'e', 'l', 'l', 'o' }; // RSV1 + TEXT + masked
+    try std.testing.expectError(error.RsvBitsSet, Frame.parseOpts(&raw, allocator, .{ .require_client_mask = true }));
 }

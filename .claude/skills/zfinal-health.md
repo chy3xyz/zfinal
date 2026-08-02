@@ -23,7 +23,7 @@ Configured in `CLAUDE.md`. Prefer the **productized gate** over ad-hoc command l
 | Lint | `zig fmt --check src/ test/ benchmark/ tools/ examples/ build.zig` |
 | Tests | `zig build test` + `zig build test-zf` |
 | Prod contract | `zf check --prod` (full/release) |
-| Dead code | (no Zig tool available) |
+| Dead code | `zf check --deadcode` (optional `--deadcode-warn`) |
 
 Docs: `doc/release_and_quality_gates.md` (ADR-014). Marketplace discover: `zf market list` (ADR-015).
 

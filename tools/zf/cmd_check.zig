@@ -1,14 +1,39 @@
-//! `zf check` — AI boundary audit, --prod contract, --heal patches.
+//! `zf check` — AI boundary audit, --prod contract, --heal patches, --deadcode.
 const std = @import("std");
 const zf_cfg = @import("zf_cfg");
 const zf_shared = @import("zf_shared.zig");
+const zdeadcode = @import("deadcode");
 
 const readFileAlloc = zf_shared.readFileAlloc;
+
+pub const DeadcodeOpts = struct {
+    /// Scan roots (default `src` when empty).
+    paths: []const []const u8 = &.{},
+    binary: bool = false,
+    include_pub: bool = false,
+    no_tests: bool = false,
+    no_members: bool = false,
+    no_files: bool = false,
+    no_gitignore: bool = false,
+    json: bool = false,
+    verbose: bool = false,
+    /// Treat findings as WARN instead of FAIL.
+    warn_only: bool = false,
+};
 
 /// Audit project for AI compliance: .gen.zig boundaries, ext/ structure, import correctness.
 /// With --heal: automatically patch known issues (stale getPool pattern, missing getters, etc.)
 /// `prod_root`: directory to scan for `--prod` (default `examples/production`).
-pub fn handleCheck(allocator: std.mem.Allocator, heal: bool, ai_zones: bool, prod: bool, prod_root: []const u8) !void {
+/// With --deadcode: run [zdeadcode](https://github.com/chy3xyz/zdeadcode) reachability lint.
+pub fn handleCheck(
+    allocator: std.mem.Allocator,
+    heal: bool,
+    ai_zones: bool,
+    prod: bool,
+    prod_root: []const u8,
+    deadcode: bool,
+    deadcode_opts: DeadcodeOpts,
+) !void {
     if (ai_zones) {
         try printAiZones(allocator);
         return;
@@ -77,6 +102,10 @@ pub fn handleCheck(allocator: std.mem.Allocator, heal: bool, ai_zones: bool, pro
         try checkProdContract(allocator, prod_root, &pass, &warn, &fail);
     }
 
+    if (deadcode) {
+        try runDeadcodeCheck(allocator, deadcode_opts, &pass, &warn, &fail);
+    }
+
     std.debug.print("\n═══════════════════════════════\n", .{});
     std.debug.print("Results: {d} pass  {d} warn  {d} fail\n", .{ pass, warn, fail });
     if (fail > 0) {
@@ -87,6 +116,59 @@ pub fn handleCheck(allocator: std.mem.Allocator, heal: bool, ai_zones: bool, pro
         std.debug.print("\n✅ All checks passed. AI compliance verified.\n", .{});
     }
     std.debug.print("\n", .{});
+}
+
+fn runDeadcodeCheck(
+    allocator: std.mem.Allocator,
+    opts: DeadcodeOpts,
+    pass: *u32,
+    warn: *u32,
+    fail: *u32,
+) !void {
+    std.debug.print("\n--- Dead code (zdeadcode) ---\n", .{});
+    const default_paths = [_][]const u8{"src"};
+    const paths: []const []const u8 = if (opts.paths.len > 0) opts.paths else &default_paths;
+
+    var result = zdeadcode.run(allocator, zf_shared.io, .{
+        .paths = paths,
+        .binary = opts.binary,
+        .include_pub = opts.include_pub,
+        .no_tests = opts.no_tests,
+        .no_members = opts.no_members,
+        .no_files = opts.no_files,
+        .no_gitignore = opts.no_gitignore,
+        .json = opts.json,
+        .verbose = opts.verbose,
+    }) catch |err| {
+        if (err == error.NoZigFiles) {
+            warn.* += 1;
+            std.debug.print("⚠️  WARN: deadcode — no .zig files under {s}\n", .{paths[0]});
+            return;
+        }
+        fail.* += 1;
+        std.debug.print("❌ FAIL: deadcode scan error: {s}\n", .{@errorName(err)});
+        return;
+    };
+    defer result.deinit(allocator);
+
+    if (result.text.len > 0) {
+        std.debug.print("{s}", .{result.text});
+    }
+
+    const s = result.summary;
+    if (result.hasFindings()) {
+        const msg_fmt = "deadcode: {d} unused decl(s), {d} unused module(s) (scanned {d} files, {d} decls)\n";
+        if (opts.warn_only) {
+            warn.* += 1;
+            std.debug.print("⚠️  WARN: " ++ msg_fmt, .{ result.finding_count, result.unused_file_count, s.files_scanned, s.decls });
+        } else {
+            fail.* += 1;
+            std.debug.print("❌ FAIL: " ++ msg_fmt, .{ result.finding_count, result.unused_file_count, s.files_scanned, s.decls });
+        }
+    } else {
+        pass.* += 1;
+        std.debug.print("✅ PASS: no unused declarations ({d} files, {d} decls)\n", .{ s.files_scanned, s.decls });
+    }
 }
 
 /// Heuristic scan for PRODUCTION_AUDIT deployment-contract anti-patterns.

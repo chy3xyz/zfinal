@@ -1,4 +1,5 @@
-//! L3 ports demo — comptime `app_id` + setState + outbox + store/cache/bus.
+//! L3 ports demo — comptime `app_id` + setState + outbox + bus.
+//! Bus default: `zfinal.MemoryBus`. Swap to `NatsBus` / `RobustMQBus` (doc/bus.md).
 //!
 //! ```
 //! zig build run-ports-l3
@@ -48,13 +49,13 @@ pub fn main(init: std.process.Init) !void {
     zfinal.io_instance.init(init);
     const allocator = init.gpa;
 
-    var store_a = MemoryStore{ .allocator = allocator };
+    var store_a = zfinal.MemoryStore.init(allocator);
     defer store_a.deinit();
-    var cache_a = MemoryCache{ .allocator = allocator };
+    var cache_a = zfinal.MemoryCache.init(allocator);
     defer cache_a.deinit();
     var bus_a = MemoryBus.init(allocator);
     defer bus_a.deinit();
-    var outbox_a = MemoryOutbox{ .allocator = allocator };
+    var outbox_a = zfinal.MemoryOutbox.init(allocator);
     defer outbox_a.deinit();
 
     var orders: OrdersService = .{

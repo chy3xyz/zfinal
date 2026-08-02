@@ -29,9 +29,8 @@ pub const WebSocketManager = struct {
     pub fn deinit(self: *WebSocketManager) void {
         self.routes.deinit(self.allocator);
 
-        // 关闭所有连接
         for (self.connections.items) |ws| {
-            ws.close();
+            ws.deinit();
             self.allocator.destroy(ws);
         }
         self.connections.deinit(self.allocator);
@@ -76,29 +75,63 @@ pub const WebSocketManager = struct {
         }
     }
 
-    /// 广播消息到所有连接
-    pub fn broadcast(self: *WebSocketManager, message: []const u8) !void {
+    fn snapshot(self: *WebSocketManager) ![]*WebSocket {
         try self.mutex.lock(io_instance.io);
         defer self.mutex.unlock(io_instance.io);
+        return try self.allocator.dupe(*WebSocket, self.connections.items);
+    }
 
-        for (self.connections.items) |ws| {
-            ws.sendText(message) catch |err| {
-                std.debug.print("Broadcast error: {}\n", .{err});
-            };
+    /// 广播消息到所有连接（解锁后发送，避免持锁 I/O）
+    pub fn broadcast(self: *WebSocketManager, message: []const u8) !void {
+        const conns = try self.snapshot();
+        defer self.allocator.free(conns);
+        for (conns) |ws| {
+            ws.sendText(message) catch {};
         }
     }
 
     /// 广播消息到所有连接（除了指定的）
     pub fn broadcastExcept(self: *WebSocketManager, message: []const u8, except: *WebSocket) !void {
-        try self.mutex.lock(io_instance.io);
-        defer self.mutex.unlock(io_instance.io);
-
-        for (self.connections.items) |ws| {
+        const conns = try self.snapshot();
+        defer self.allocator.free(conns);
+        for (conns) |ws| {
             if (ws != except) {
-                ws.sendText(message) catch |err| {
-                    std.debug.print("Broadcast error: {}\n", .{err});
-                };
+                ws.sendText(message) catch {};
             }
         }
     }
+
+    /// Best-effort application ping to all live connections (idle probing).
+    pub fn pingAll(self: *WebSocketManager, payload: []const u8) void {
+        const conns = self.snapshot() catch return;
+        defer self.allocator.free(conns);
+        for (conns) |ws| {
+            if (ws.closeIfIdle()) continue;
+            ws.sendPing(payload);
+        }
+    }
+
+    /// Close and drop connections that exceeded their idle timeout.
+    pub fn reapIdle(self: *WebSocketManager) usize {
+        const conns = self.snapshot() catch return 0;
+        defer self.allocator.free(conns);
+        var n: usize = 0;
+        for (conns) |ws| {
+            if (ws.closeIfIdle()) {
+                self.removeConnection(ws);
+                n += 1;
+            }
+        }
+        return n;
+    }
 };
+test "WebSocketManager route lookup" {
+    const a = std.testing.allocator;
+    var mgr = WebSocketManager.init(a);
+    defer mgr.deinit();
+    try mgr.addRoute("/ws", struct {
+        fn h(_: *WebSocket) !void {}
+    }.h);
+    try std.testing.expect(mgr.findRoute("/ws") != null);
+    try std.testing.expect(mgr.findRoute("/other") == null);
+}

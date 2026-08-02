@@ -57,6 +57,7 @@ new output goes to `<path>.gen.new` (use `--force` to overwrite everything).
 
 ```bash
 zf check               # scans for generated/edit boundary violations
+zf check --deadcode    # unused decls / modules (zdeadcode); add --deadcode-warn for soft fail
 zig build gate-quick   # day-to-day; full: zig build gate / zf gate
 zf release-check       # before tagging vX.Y.Z (default --strict) — see doc/release_and_quality_gates.md
 zf market search <q>   # local module catalog — see doc/module_marketplace.md
@@ -105,7 +106,8 @@ zig build -Dlog-level=debug  # compile-time log level
 - `CHANGELOG.md` — version history
 - `SECURITY.md` — security policy
 - `PRODUCTION_AUDIT.md` — production readiness checklist
-- `doc/aichat.md` — AI migration prompt templates
+- `doc/ai.md` — business AI runtime (`zfinal.ai`: provider / skills / Agent)
+- `doc/aichat.md` — AI migration prompt templates / ZfTool
 
 Zig 0.17 specifics: `@cImport` removed → use `b.addTranslateC` in build.zig.
 `std.fmt.bufPrintZ` → `bufPrint` + manual `buf[len]=0`.

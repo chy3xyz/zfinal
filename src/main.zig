@@ -20,6 +20,10 @@ test {
     _ = @import("core/extension.zig");
     _ = @import("core/stock_interceptors.zig");
     _ = @import("core/oneshot.zig");
+    _ = @import("core/sockread.zig");
+    _ = @import("bus/bus.zig");
+    _ = @import("websocket/handshake.zig");
+    _ = @import("ports/ports.zig");
 }
 
 // Export core modules
@@ -162,6 +166,25 @@ pub const QueueRobustMQClient = @import("plugin/robustmq.zig").QueueRobustMQClie
 pub const NatsClient = @import("plugin/nats_client.zig").NatsClient;
 pub const NatsConfig = @import("plugin/nats_client.zig").NatsConfig;
 pub const QueueNatsClient = @import("plugin/queue_nats.zig").QueueNatsClient;
+
+/// Optional L3 message bus port + Memory / NATS / RobustMQ adapters (`doc/bus.md`).
+pub const bus = @import("bus/bus.zig");
+pub const Bus = bus.Bus;
+pub const MemoryBus = bus.MemoryBus;
+pub const NatsBus = bus.NatsBus;
+pub const RobustMQBus = bus.RobustMQBus;
+
+/// L2/L3 ports: Store / Cache / Outbox (`doc/progressive_architecture.md`).
+pub const ports = @import("ports/ports.zig");
+pub const Store = ports.Store;
+pub const MemoryStore = ports.MemoryStore;
+pub const Cache = ports.Cache;
+pub const MemoryCache = ports.MemoryCache;
+pub const Outbox = ports.Outbox;
+pub const MemoryOutbox = ports.MemoryOutbox;
+pub const DbOutbox = ports.DbOutbox;
+pub const OutboxRow = ports.OutboxRow;
+pub const OutboxEvent = @import("ports/memory_outbox.zig").OutboxEvent;
 // WeChat plugin — requires zwechat dependency in build.zig.zon:
 //   .zwechat = .{ .path = "../zwechat" }
 // Uncomment when ready:
@@ -188,8 +211,11 @@ pub const experimental = struct {
     pub const OAuth2Client = @import("plugin/oauth2.zig").OAuth2Client;
 };
 
-// AI Chat component
+// AI Chat component (Curl/SSE/ZfTool codegen)
 pub const aichat = @import("aichat/aichat.zig");
+
+// Business AI runtime (provider + skills + ReAct agent)
+pub const ai = @import("ai/ai.zig");
 
 // Export config and i18n modules
 pub const I18n = @import("i18n/i18n.zig").I18n;
@@ -207,6 +233,9 @@ pub const WebSocket = @import("websocket/websocket.zig").WebSocket;
 pub const WebSocketManager = @import("websocket/manager.zig").WebSocketManager;
 pub const WebSocketFrame = @import("websocket/websocket.zig").Frame;
 pub const WebSocketOpCode = @import("websocket/websocket.zig").OpCode;
+pub const websocket_handshake = @import("websocket/handshake.zig");
+pub const WebSocketHandler = @import("websocket/manager.zig").Handler;
+pub const sockread = @import("core/sockread.zig");
 
 // Export Token modules
 pub const TokenManager = @import("token/token.zig").TokenManager;

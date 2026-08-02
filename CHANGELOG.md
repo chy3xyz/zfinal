@@ -1,6 +1,66 @@
 ## [Unreleased]
 
+### Added
+- **`zfinal.DbOutbox`**: durable outbox on `zfinal_outbox` (idempotent append, fetch/mark);
+  docs [doc/outbox.md](doc/outbox.md).
+- **WS idle / ping**: `WebSocket.idle_timeout_ms`, `WebSocketManager.pingAll` / `reapIdle`.
+- **AI**: `TokenQuota.attachDb` → `ai_token_quota`; Workflow `.agent` inherits allowlist/audit/run_audit.
+- **WS Upgrade on `Server`**: `ZFinal.addWebSocket` → 101 + handler; demo `zig build run-ws`.
+- **L2/L3 ports**: `zfinal.Store` / `Cache` / `Outbox` + Memory adapters; ports-l3 re-exports.
+- **AI hardening**: `AgentAuditLog.attachDb`, `Trigger.fireIdempotent` + cron failure logs,
+  `TokenQuota` period/JSON, `checkApprovalSlaDedup` / `SlaNotifyGate`.
+- **OAuth2 demo**: `zig build run-oauth2` (PKCE offline).
+- **WS / OAuth2 / P2P / AI production hardening** (prior):
+  - WebSocket handshake helpers, MASK/RSV checks, Manager broadcast snapshot.
+  - OAuth2 PKCE / Basic / safe JSON; P2P bind_host / caps / heartbeat.
+  - Approval HTTP tenant gate; `db.query` tenant filter; provider retries; failed run_audit.
+- **`zfinal.Bus` optional adapters**: `MemoryBus` / `NatsBus` / `RobustMQBus`
+  (`src/bus/`) over `QueueClient` / `QueueNatsClient` / `QueueRobustMQClient`.
+  Docs: [doc/bus.md](doc/bus.md). `zf g port bus` + `examples/ports-l3` re-export
+  the framework types.
+- **`zf check --deadcode`**: dead-code lint via vendored
+  [zdeadcode](https://github.com/chy3xyz/zdeadcode) (reachability / unused
+  decls & modules). Flags: `--deadcode-warn`, `--deadcode-binary`,
+  `--include-pub`, `--deadcode-json`, optional paths (default `src`).
+  See `tools/zf/zdeadcode/UPSTREAM.md`.
+- **`zfinal.ai` business AI runtime**: OpenAI-compatible `AiProvider` (HttpClient
+  + `tool_calls` + **`chatStream` SSE** + `buildMessages`/`countTokens`/`fitsBudget`),
+  `SkillRegistry`, ReAct `Agent`, `Workflow` (DAG parallel + checkpoint + **JSONL
+  `WorkflowJournal`** + **`.approval` / `pending_human`** + run_audit), `Hierarchy`,
+  `Trigger` (fire / cron), `RunAuditStore` (`attachDb` → `ai_run_audit`),
+  `registerMemorySkills`, `registerBusinessSkills` (read-only `db.query` / entity
+  whitelist on `*DB`), `ApprovalFlow` (`attachDb`, **`lookup`**, tenant filter,
+  **`resolveForTenant`**, **`default_sla_ms` / `on_resolve`**, gate resume) +
+  **`checkApprovalSla`**, `registerApprovalSkills` + `ToolGate` +
+  **`registerApprovalHttp`**, `WorkflowJournal.attachDb` → `ai_workflow_journal`,
+  `AiRuntime` bootstrap (`attachDb` for run_audit; audit / quota / memory), plus
+  quota / budget / tokenizer / keyword retriever. Memory persist, `AgentHandle`,
+  `ContextManager`, skill OpenAPI export, schedule⇄cron skills, `AiMetrics`
+  Prometheus merge, optional client rate limit. Demos:
+  `zig build run-ai-runtime` (offline), `zig build run-ai-live` (`OPENAI_API_KEY`).
+  See [doc/ai.md](doc/ai.md). Orthogonal to `zfinal.aichat` (Curl/SSE/ZfTool).
+- **HttpClient.requestWith / requestStream**: arbitrary headers; streaming body
+  via chunk callback (forwarding `std.Io.Writer`).
+- **CronPlugin.scheduleWith**: context-aware cron callbacks for AI schedule skills.
+- **sockread / HttpClient micro-bench**: `zig build run-sockread-bench`
+  (`benchmark/sockread_io.zig`) — Threaded Io lifecycle tax, warm socketpair
+  sockread vs `net_read`, loopback `HttpClient` with dedicated Io.
+- **HttpClient connection reuse**: long-lived `std.http.Client` (pool) on the
+  dedicated Threaded Io; **sockread** unlimited path is bare `read` (no poll);
+  timed path tries `MSG.DONTWAIT` before poll; **NATS** INFO uses chunked line
+  read; **WS** uses `BufReader` (4KB). `TimedIoReader` is the `std.Io.Reader`
+  adapter (Server / MQTT TLS).
+
 ### Fixed
+- **WebSocket / plugin / HTTP server socket-read hang under shared Threaded Io**:
+  long-blocking socket reads now use `posix.read` via `src/core/sockread.zig`
+  (matching zigmodu; unlimited waits skip redundant poll). Covers WebSocket
+  frames (`BufReader` collapses header/mask/payload into ~1 refill), Redis RESP,
+  NATS, RobustMQ/Kafka, MQTT (`TimedIoReader` TLS underlay), P2P, and HTTP
+  `Server` receiveHead/body. Timed paths keep `poll` (`readSomeTimeout`).
+  `HttpClient` keeps full `std.http.Client` on a long-lived dedicated Threaded Io
+  + connection pool. Io `net_read`/`readv` could hang with data already buffered
+  when accept + workers (+ client) share one Threaded Io.
 - **Optional DB drivers link into examples/tests**: `-Ddriver_pg` / `-Ddriver_mysql`
   now propagate `-lpq` / `-lmysqlclient` to `zfinal` and example artifacts (CI
   drivers jobs were failing with undefined `PQ*` / `mysql_*`).

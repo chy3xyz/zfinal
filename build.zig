@@ -193,11 +193,14 @@ pub fn build(b: *std.Build) void {
     addExample(b, zfinal_mod, "hello", "examples/hello-world/main.zig", "Run hello-world demo", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "blog", "examples/blog-single/main.zig", "Run blog-single demo", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "ai-blog-5min", "examples/ai-blog-5min/main.zig", "Run 5-minute AI speedrun demo (blog CRUD scaffold)", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "ai-runtime", "examples/ai-runtime/main.zig", "Run offline zfinal.ai runtime demo (Agent/Workflow/skills)", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "ai-live", "examples/ai-live/main.zig", "Run live LLM demo (needs OPENAI_API_KEY)", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "htmx", "examples/htmx/main.zig", "Run HTMX demo", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "htmx-admin", "examples/htmx-admin/main.zig", "Run vben-style admin UI demo (run `zf admin` first)", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "htmx-admin-demo", "examples/htmx-admin-demo/main.zig", "Run full-stack multi-table admin demo (3 tables, search, multi-table sidebar)", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "standalone-admin", "examples/standalone-admin/main.zig", "Run standalone single-binary admin (all HTML @embedFile, zero deps)", driver_mysql, driver_pg);
-    addExample(b, zfinal_mod, "ws", "examples/websocket/main.zig", "Run WebSocket demo", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "ws", "examples/websocket/main.zig", "Run WebSocket demo (ZFinal.addWebSocket)", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "oauth2", "examples/oauth2/main.zig", "Run OAuth2 PKCE helpers demo (offline)", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "edge", "examples/edge/main.zig", "Run edge computing demo", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "auth", "examples/auth/main.zig", "Run auth demo", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "captcha", "examples/captcha/main.zig", "Run captcha demo", driver_mysql, driver_pg);
@@ -305,6 +308,15 @@ pub fn build(b: *std.Build) void {
         });
         zf_mod.addImport("openapi", openapi_for_zf);
     }
+    {
+        // Vendored [zdeadcode](https://github.com/chy3xyz/zdeadcode) — `zf check --deadcode`
+        const deadcode_mod = b.createModule(.{
+            .root_source_file = b.path("tools/zf/deadcode.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        zf_mod.addImport("deadcode", deadcode_mod);
+    }
     zf_mod.link_libc = true;
     zf_mod.linkSystemLibrary("sqlite3", .{});
     if (enable_pg) zf_mod.linkSystemLibrary("pq", .{});
@@ -376,6 +388,28 @@ pub fn build(b: *std.Build) void {
         run_db_bench_cmd.step.dependOn(b.getInstallStep());
         const run_db_bench_step = b.step("run-db-bench", "Run DB result decoding benchmark (v0.15.0 typed vs legacy)");
         run_db_bench_step.dependOn(&run_db_bench_cmd.step);
+    }
+
+    // sockread / HttpClient isolation micro-benchmark
+    {
+        const sr_bench_mod = b.createModule(.{
+            .root_source_file = b.path("benchmark/sockread_io.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{.{ .name = "zfinal", .module = zfinal_mod }},
+        });
+        sr_bench_mod.link_libc = true;
+        sr_bench_mod.linkSystemLibrary("sqlite3", .{});
+        linkOptionalDbDrivers(sr_bench_mod, driver_mysql, driver_pg);
+        const sr_bench_exe = b.addExecutable(.{
+            .name = "zbench-sockread",
+            .root_module = sr_bench_mod,
+        });
+        b.installArtifact(sr_bench_exe);
+        const run_sr_bench_cmd = b.addRunArtifact(sr_bench_exe);
+        run_sr_bench_cmd.step.dependOn(b.getInstallStep());
+        const run_sr_bench_step = b.step("run-sockread-bench", "Run sockread vs Io + HttpClient isolation micro-bench");
+        run_sr_bench_step.dependOn(&run_sr_bench_cmd.step);
     }
 
     // NATS integration test — disabled (NATS v0.1.0 incompatible with Zig 0.17-dev.704)

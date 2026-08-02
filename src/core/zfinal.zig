@@ -10,6 +10,8 @@ const InterceptorChain = @import("../interceptor/interceptor.zig").InterceptorCh
 
 const Plugin = @import("../plugin/plugin.zig").Plugin;
 const PluginManager = @import("../plugin/plugin.zig").PluginManager;
+const WebSocketManager = @import("../websocket/manager.zig").WebSocketManager;
+const WebSocketHandler = @import("../websocket/manager.zig").Handler;
 
 /// ZFinal application — main entry point for building web servers.
 /// Usage: `var app = zfinal.ZFinal.init(allocator); defer app.deinit();`
@@ -22,6 +24,8 @@ pub const ZFinal = struct {
     metrics: ?*Metrics = null,
     /// Typed app State (see `setState` / `Context.state`).
     app_state: @import("state.zig").Handle = .{},
+    /// Owned when `addWebSocket` is used; passed to `Server` on `start`.
+    ws_manager: ?WebSocketManager = null,
 
     /// Initialize a new ZFinal application. Routes, plugins, and config
     /// are added before calling `start()`.
@@ -40,6 +44,7 @@ pub const ZFinal = struct {
         self.plugin_manager.stopAll();
         self.plugin_manager.deinit();
         self.router.deinit();
+        if (self.ws_manager) |*m| m.deinit();
         self.* = undefined;
     }
 
@@ -152,6 +157,15 @@ pub const ZFinal = struct {
         try self.router.addWithMethodAndInterceptors(path, .PATCH, handler, chain);
     }
 
+    /// Register a WebSocket route. First call creates an owned `WebSocketManager`.
+    /// Upgrade is handled inside `Server` after HTTP `receiveHead` (101 + handler).
+    pub fn addWebSocket(self: *ZFinal, path: []const u8, handler: WebSocketHandler) !void {
+        if (self.ws_manager == null) {
+            self.ws_manager = WebSocketManager.init(self.allocator);
+        }
+        try self.ws_manager.?.addRoute(path, handler);
+    }
+
     /// Start the HTTP server. Blocks until shutdown or fatal error.
     /// Automatically starts all registered plugins before accepting connections.
     pub fn start(self: *ZFinal) !void {
@@ -160,6 +174,7 @@ pub const ZFinal = struct {
         var server = try Server.init(self.allocator, &self.router, self.config);
         server.metrics = self.metrics;
         server.app_state = self.app_state;
+        if (self.ws_manager) |*m| server.ws_manager = m;
         try server.start();
     }
 

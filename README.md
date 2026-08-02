@@ -99,6 +99,7 @@ zig build test-zf          # Run 17 codegen regression tests
 zig build run-hello              # Hello-world demo
 zig build run-blog               # Blog with SQLite
 zig build run-ai-blog-5min       # 5-minute AI speedrun demo
+zig build run-ai-runtime         # offline zfinal.ai Agent/Workflow demo
 zig build run-production         # Production example (CSRF, metrics, graceful shutdown)
 zig build run-htmx               # HTMX interactive app
 zig build run-standalone-admin   # Single-binary admin (all HTML @embedFile'd)
@@ -217,7 +218,9 @@ zig build run
 ```
 
 Full walkthrough: [doc/ai-quickstart.md](doc/ai-quickstart.md).
+Business chat / Agent runtime: [doc/ai.md](doc/ai.md) (`zfinal.ai`).
 Runnable demo: [`examples/ai-blog-5min/`](examples/ai-blog-5min/ZF_GEN.md).
+Business AI offline smoke: [`examples/ai-runtime/`](examples/ai-runtime/) (`zig build run-ai-runtime`).
 
 ---
 
@@ -369,7 +372,8 @@ zfinal/
 │   ├── interceptor/              # Auth, CORS, CSRF
 │   ├── plugin/                   # Cache, Cron, Redis
 │   ├── kit/                      # 17 utility kits
-│   ├── aichat/                   # AI client + ZfTool
+│   ├── aichat/                   # Curl/SSE client + ZfTool codegen
+│   ├── ai/                       # Business AI runtime (provider/agent/skills)
 │   └── io_instance.zig           # Global Io + allocator
 ├── tools/zf/                     # CLI tool
 │   ├── main.zig                  # Entry point (new/migrate/seed/fixture/bench/ai/check)
@@ -378,6 +382,7 @@ zfinal/
 │   └── templates.zig             # Code templates
 ├── examples/                     # 13+ runnable examples
 │   ├── ai-blog-5min/             # 5-minute AI speedrun
+│   ├── ai-runtime/               # offline zfinal.ai Agent/Workflow demo
 │   ├── standalone-admin/         # @embedFile single-binary admin
 │   ├── blog-single/
 │   ├── hello-world/
@@ -497,6 +502,7 @@ Scale-out (millions of users) and progressive L0→L3 code layout:
 | Admin (Static) | ✅ Stable | `zfinal.StaticAdmin` — `@embedFile` |
 
 Messaging connectors: [doc/nats.md](doc/nats.md) · [doc/robustmq.md](doc/robustmq.md).
+Business AI runtime: [doc/ai.md](doc/ai.md) · codegen / ZfTool: [doc/aichat.md](doc/aichat.md).
 
 ---
 

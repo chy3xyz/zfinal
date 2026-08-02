@@ -340,7 +340,42 @@ pub fn main(init: std.process.Init) !void {
                 std.debug.print("Note: --root implies --prod\n", .{});
             }
             const do_prod = prod or zf_shared.flagValue(args, "--root") != null;
-            try handleCheck(allocator, heal, ai_zones, do_prod, prod_root);
+            const do_deadcode = hasFlag(args, "--deadcode");
+            var dc_paths_buf: [8][]const u8 = undefined;
+            var dc_paths_len: usize = 0;
+            if (zf_shared.flagValue(args, "--deadcode-root")) |p| {
+                dc_paths_buf[0] = p;
+                dc_paths_len = 1;
+            }
+            // Extra positional paths after flags: `zf check --deadcode src tools`
+            {
+                var i: usize = 2;
+                while (i < args.len) : (i += 1) {
+                    const a = args[i];
+                    if (a.len >= 2 and a[0] == '-' and a[1] == '-') {
+                        // skip flag values
+                        if (std.mem.eql(u8, a, "--root") or std.mem.eql(u8, a, "--deadcode-root")) i += 1;
+                        continue;
+                    }
+                    if (dc_paths_len < dc_paths_buf.len) {
+                        dc_paths_buf[dc_paths_len] = a;
+                        dc_paths_len += 1;
+                    }
+                }
+            }
+            const dc_opts = cmd_check.DeadcodeOpts{
+                .paths = if (dc_paths_len > 0) dc_paths_buf[0..dc_paths_len] else &.{},
+                .binary = hasFlag(args, "--deadcode-binary") or hasFlag(args, "-b"),
+                .include_pub = hasFlag(args, "--include-pub") or hasFlag(args, "-p"),
+                .no_tests = hasFlag(args, "--no-tests") or hasFlag(args, "-n"),
+                .no_members = hasFlag(args, "--no-members") or hasFlag(args, "-m"),
+                .no_files = hasFlag(args, "--no-files") or hasFlag(args, "-F"),
+                .no_gitignore = hasFlag(args, "--no-gitignore") or hasFlag(args, "-g"),
+                .json = hasFlag(args, "--deadcode-json") or (do_deadcode and hasFlag(args, "--json")),
+                .verbose = hasFlag(args, "--verbose") or hasFlag(args, "-v"),
+                .warn_only = hasFlag(args, "--deadcode-warn"),
+            };
+            try handleCheck(allocator, heal, ai_zones, do_prod, prod_root, do_deadcode, dc_opts);
         },
         .upgrade => {
             try handleUpgrade(allocator);
@@ -435,6 +470,11 @@ fn printHelp(exe_name: []const u8) void {
     std.debug.print("  admin <file>            Generate vben-style admin HTML (htmx + alpine + tailwind, CDN)\n", .{});
     std.debug.print("  check                   Audit project for AI compliance (gen/ext boundaries)\n", .{});
     std.debug.print("  check --prod [--root R] Production-contract scan (default root: examples/production)\n", .{});
+    std.debug.print("  check --deadcode [path] Dead-code lint via zdeadcode (default path: src)\n", .{});
+    std.debug.print("      --deadcode-warn     Report unused decls as WARN (default: FAIL)\n", .{});
+    std.debug.print("      --deadcode-binary   Binary mode (main entry + unused modules)\n", .{});
+    std.debug.print("      --include-pub       Also report unused pub API\n", .{});
+    std.debug.print("      --deadcode-json     JSON findings (or --json with --deadcode)\n", .{});
     std.debug.print("  upgrade                 Upgrade zfinal dependency to latest release\n", .{});
     std.debug.print("  docker                  Generate Dockerfile\n", .{});
     std.debug.print("  deploy                  Deploy application\n", .{});

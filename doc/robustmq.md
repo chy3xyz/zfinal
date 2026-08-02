@@ -101,4 +101,4 @@ try sticky.subscribe("orders.created", onMsg);
 try sticky.join(); // advertises protocol "sticky"; cold start matches range
 ```
 
-See also: [nats.md](nats.md), [progressive_architecture.md](progressive_architecture.md), [scale_to_millions.md](scale_to_millions.md).
+See also: [bus.md](bus.md) (`RobustMQBus`), [nats.md](nats.md), [progressive_architecture.md](progressive_architecture.md), [scale_to_millions.md](scale_to_millions.md).

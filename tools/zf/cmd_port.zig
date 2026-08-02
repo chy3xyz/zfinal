@@ -173,25 +173,9 @@ const cache_port_src =
 ;
 
 const bus_port_src =
-    \\//! Message bus port (L3). Publish only — consume via worker / NATS / KafkaConsumer.
-    \\//! L3 multi-instance consume: prefer QueueNatsClient (see doc/robustmq.md).
-    \\//! See doc/progressive_architecture.md
-    \\const std = @import("std");
-    \\
-    \\pub const Bus = struct {
-    \\    ptr: *anyopaque,
-    \\    vtable: *const VTable,
-    \\
-    \\    pub const VTable = struct {
-    \\        // ── ai-edit-zone: port ops ────────────────────────────────
-    \\        publish: *const fn (ptr: *anyopaque, subject: []const u8, payload: []const u8) anyerror!void,
-    \\        // ── end ai-edit-zone ──────────────────────────────────────
-    \\    };
-    \\
-    \\    pub fn publish(self: Bus, subject: []const u8, payload: []const u8) !void {
-    \\        return self.vtable.publish(self.ptr, subject, payload);
-    \\    }
-    \\};
+    \\//! Message bus port (L3) — alias of `zfinal.Bus` (Memory / NATS / RobustMQ).
+    \\//! Prefer framework adapters; see doc/bus.md + doc/progressive_architecture.md.
+    \\pub const Bus = @import("zfinal").Bus;
     \\
 ;
 
@@ -349,81 +333,20 @@ const redis_cache_src =
 ;
 
 const memory_bus_src =
-    \\//! In-process bus via zfinal.QueueClient (L0–L2 tests).
-    \\const std = @import("std");
-    \\const ports = @import("../ports/bus.zig");
-    \\
-    \\pub const MemoryBus = struct {
-    \\    // queue: *zfinal.QueueClient,
-    \\
-    \\    pub fn port(self: *MemoryBus) ports.Bus {
-    \\        return .{ .ptr = self, .vtable = &vtable };
-    \\    }
-    \\
-    \\    // ── ai-edit-zone: adapter impl ───────────────────────────────
-    \\    fn publishImpl(ptr: *anyopaque, subject: []const u8, payload: []const u8) anyerror!void {
-    \\        _ = ptr;
-    \\        _ = subject;
-    \\        _ = payload;
-    \\        // Wire: try self.queue.publish(subject, payload);
-    \\    }
-    \\    // ── end ai-edit-zone ─────────────────────────────────────────
-    \\
-    \\    const vtable = ports.Bus.VTable{ .publish = publishImpl };
-    \\};
+    \\//! In-process bus — re-export `zfinal.MemoryBus` (L0–L2 / tests). See doc/bus.md.
+    \\pub const MemoryBus = @import("zfinal").MemoryBus;
     \\
 ;
 
 const nats_bus_src =
-    \\//! NATS bus adapter — preferred for L3 multi-instance consume (queue groups).
-    \\//! See doc/nats.md + doc/robustmq.md
-    \\const std = @import("std");
-    \\const ports = @import("../ports/bus.zig");
-    \\
-    \\pub const NatsBus = struct {
-    \\    // client: *zfinal.QueueNatsClient,
-    \\
-    \\    pub fn port(self: *NatsBus) ports.Bus {
-    \\        return .{ .ptr = self, .vtable = &vtable };
-    \\    }
-    \\
-    \\    // ── ai-edit-zone: adapter impl ───────────────────────────────
-    \\    fn publishImpl(ptr: *anyopaque, subject: []const u8, payload: []const u8) anyerror!void {
-    \\        _ = ptr;
-    \\        _ = subject;
-    \\        _ = payload;
-    \\        return error.NotWired; // try self.client.publish(subject, payload);
-    \\    }
-    \\    // ── end ai-edit-zone ─────────────────────────────────────────
-    \\
-    \\    const vtable = ports.Bus.VTable{ .publish = publishImpl };
-    \\};
+    \\//! NATS bus — re-export `zfinal.NatsBus`. Wire a connected QueueNatsClient.
+    \\//! See doc/bus.md + doc/nats.md
+    \\pub const NatsBus = @import("zfinal").NatsBus;
     \\
 ;
 
 const robustmq_bus_src =
-    \\//! RobustMQ / Kafka publish adapter (L3). Consume: JoinGroup MVP or prefer NATS.
-    \\//! See doc/robustmq.md
-    \\const std = @import("std");
-    \\const ports = @import("../ports/bus.zig");
-    \\
-    \\pub const RobustmqBus = struct {
-    \\    // client: *zfinal.QueueRobustMQClient,
-    \\
-    \\    pub fn port(self: *RobustmqBus) ports.Bus {
-    \\        return .{ .ptr = self, .vtable = &vtable };
-    \\    }
-    \\
-    \\    // ── ai-edit-zone: adapter impl ───────────────────────────────
-    \\    fn publishImpl(ptr: *anyopaque, subject: []const u8, payload: []const u8) anyerror!void {
-    \\        _ = ptr;
-    \\        _ = subject;
-    \\        _ = payload;
-    \\        return error.NotWired; // try self.client.publish(subject, payload);
-    \\    }
-    \\    // ── end ai-edit-zone ─────────────────────────────────────────
-    \\
-    \\    const vtable = ports.Bus.VTable{ .publish = publishImpl };
-    \\};
+    \\//! RobustMQ / Kafka bus — re-export `zfinal.RobustMQBus`. See doc/bus.md + doc/robustmq.md
+    \\pub const RobustMQBus = @import("zfinal").RobustMQBus;
     \\
 ;

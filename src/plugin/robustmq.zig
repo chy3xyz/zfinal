@@ -13,6 +13,7 @@
 //! `ROBUSTMQ_URL` or `KAFKA_BOOTSTRAP` (e.g. `127.0.0.1:9092`).
 
 const std = @import("std");
+const sockread = @import("../core/sockread.zig");
 const builtin = @import("builtin");
 const io_instance = @import("../io_instance.zig");
 
@@ -385,12 +386,12 @@ pub const RobustMQTransport = struct {
     fn readFrame(self: *Self) ![]u8 {
         const s = self.stream orelse return error.NotConnected;
         var size_buf: [4]u8 = undefined;
-        try readExact(s, self.io, &size_buf);
+        try readExact(s, &size_buf);
         const size = readI32(&size_buf);
         if (size <= 0 or size > 16 * 1024 * 1024) return error.InvalidFrame;
         const buf = try self.allocator.alloc(u8, @intCast(size));
         errdefer self.allocator.free(buf);
-        try readExact(s, self.io, buf);
+        try readExact(s, buf);
         return buf;
     }
 
@@ -420,16 +421,11 @@ fn parseBootstrap(bootstrap: []const u8) !struct { []const u8, u16 } {
     return .{ trimmed, 9092 };
 }
 
-fn readExact(stream: std.Io.net.Stream, io: std.Io, buf: []u8) !void {
-    var filled: usize = 0;
-    while (filled < buf.len) {
-        const n = stream.read(io, data: {
-            var d: [1][]u8 = .{buf[filled..]};
-            break :data &d;
-        }) catch return error.ConnectionError;
-        if (n == 0) return error.ConnectionClosed;
-        filled += n;
-    }
+fn readExact(stream: std.Io.net.Stream, buf: []u8) !void {
+    sockread.readFull(stream, buf) catch |err| switch (err) {
+        error.ConnectionClosed => return error.ConnectionClosed,
+        else => return error.ConnectionError,
+    };
 }
 
 fn writeI32(out: *[4]u8, v: i32) void {

@@ -7,6 +7,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const io_instance = @import("../io_instance.zig");
+const sockread = @import("../core/sockread.zig");
 
 fn nowMillis() i64 {
     return std.Io.Timestamp.now(io_instance.io, .real).toMilliseconds();
@@ -101,15 +102,17 @@ pub const NatsClient = struct {
         var info_line = std.ArrayList(u8).empty;
         defer info_line.deinit(self.allocator);
 
-        // Read bytes until newline
+        // Read until newline (chunked sockread — not byte-at-a-time).
         while (true) {
-            var byte_buf: [1]u8 = undefined;
-            _ = stream.read(self.io, data: {
-                var d: [1][]u8 = .{&byte_buf};
-                break :data &d;
-            }) catch return error.ConnectionError;
-            if (byte_buf[0] == '\n') break;
-            try info_line.append(self.allocator, byte_buf[0]);
+            var chunk: [512]u8 = undefined;
+            const got = sockread.readSome(stream, &chunk) catch return error.ConnectionError;
+            if (got == 0) return error.ConnectionError;
+            try info_line.appendSlice(self.allocator, chunk[0..got]);
+            if (std.mem.indexOfScalar(u8, info_line.items, '\n')) |nl| {
+                info_line.shrinkRetainingCapacity(nl); // drop '\n' and any trailing bytes
+                break;
+            }
+            if (info_line.items.len > 64 * 1024) return error.ConnectionError;
         }
 
         // Strip trailing \r if present
@@ -301,20 +304,18 @@ pub const NatsClient = struct {
                 return error.Timeout;
             }
 
-            // Non-blocking read
-            const n = s.read(self.io, data: {
-                var d: [1][]u8 = .{&rbuf};
-                break :data &d;
-            }) catch |err| {
+            const rem = deadline - now;
+            const timeout: i32 = @intCast(@min(rem, std.math.maxInt(i32)));
+            const n = sockread.readSomeTimeout(s, &rbuf, timeout) catch |err| {
                 self.unsubscribeRaw(req_sid) catch {};
-                return err;
+                return switch (err) {
+                    error.Timeout => error.Timeout,
+                    else => err,
+                };
             };
             if (n == 0) {
-                var i: usize = 0;
-                while (i < 50000) : (i += 1) {
-                    _ = nowMillis();
-                }
-                continue;
+                self.unsubscribeRaw(req_sid) catch {};
+                return error.ConnectionError;
             }
 
             // Parse for MSG lines matching our inbox subscription
@@ -373,15 +374,12 @@ pub const NatsClient = struct {
         try self.ping();
     }
 
-    /// Poll for messages (non-blocking). Dispatches matching callbacks.
+    /// Poll for messages. Dispatches matching callbacks.
     /// Returns number of messages processed.
     pub fn poll(self: *Self) !usize {
         const s = self.stream orelse return error.NotConnected;
         var buf: [8192]u8 = undefined;
-        const n = s.read(self.io, data: {
-            var d: [1][]u8 = .{&buf};
-            break :data &d;
-        }) catch |err| return err;
+        const n = sockread.readSome(s, &buf) catch |err| return err;
         if (n == 0) return 0;
 
         return try self.parseMessages(buf[0..n]);
@@ -396,10 +394,7 @@ pub const NatsClient = struct {
         try w.interface.flush();
 
         var rbuf: [128]u8 = undefined;
-        const n = s.read(self.io, data: {
-            var d: [1][]u8 = .{&rbuf};
-            break :data &d;
-        }) catch return error.ConnectionError;
+        const n = sockread.readSome(s, &rbuf) catch return error.ConnectionError;
         if (n < 6 or !std.mem.eql(u8, rbuf[0..6], "PONG\r\n")) return error.ProtocolError;
     }
 
