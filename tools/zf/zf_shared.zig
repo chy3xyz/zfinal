@@ -3,6 +3,9 @@ const std = @import("std");
 
 pub var io: std.Io = undefined;
 
+/// Process environment map (set by main from `std.process.Init.environ_map`).
+pub var environ_map: ?*std.process.Environ.Map = null;
+
 pub const framework_skill_names = [_][]const u8{
     "zfinal-onboarding.md",
     "zfinal-ai-playbook.md",

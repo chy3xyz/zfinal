@@ -34,6 +34,7 @@ const Command = cmd_catalog.Command;
 
 pub fn main(init: std.process.Init) !void {
     zf_shared.io = init.io;
+    zf_shared.environ_map = init.environ_map;
     const allocator = init.gpa;
 
     var args_iter = init.minimal.args.iterate();
