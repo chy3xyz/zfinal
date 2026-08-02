@@ -285,6 +285,12 @@
 - `doc/robustmq.md`: JoinGroup + Metadata + range/sticky.
 - `doc/codegen.md` / `doc/progressive_architecture.md`: ports codegen + ports-l3.
 
+## [0.20.4] - Unreleased
+
+### Added
+- **Module marketplace phase 2 (ADR-016)**: `zf market update` syncs the remote catalog (`https://raw.githubusercontent.com/chy3xyz/zfinal/main/marketplace/catalog.json`) to `~/.cache/zf/marketplace-catalog.json`; `zf market list|search|info` prefer the cache and fall back to the repo-local catalog; `zf market install <id>` downloads the entry's `url` tarball, extracts its `path` (skipping the GitHub archive prefix), and places plugins into `src/plugin/` or examples/modules into `vendor/marketplace/<id>/`. Supports `--dir`, `--dry-run`, `--verify`, `--registry`, `--json`.
+- **Marketplace catalog schema v2**: entries now carry a `url` artifact field; `market_util.zig` provides pure, unit-tested helpers (path resolution, strip computation, cache path, query matching).
+
 ## [0.20.3] - 2026-07-22
 
 ### Added

@@ -355,6 +355,9 @@ self-healing, AI assist, load testing, and AI-edit-zone audits.
 | `zf check --heal` | Auto-patch 6 common compile errors (Zig 0.17, stale API, etc.) |
 | `zf check --ai-zones` | Reverse-index of AI-editable vs AI-LOCKED files |
 | `zf openapi [--out <file>]` | Generate minimal OpenAPI 3.0.3 spec from project routes |
+| `zf market update` | Sync remote module catalog → `~/.cache/zf/` (ADR-016) |
+| `zf market list\|search <q>\|info <id>` | Browse the module catalog (`--json` supported) |
+| `zf market install <id> [--dir DIR] [--dry-run]` | Download + extract a module (plugin → `src/plugin/`, example → `vendor/marketplace/`) |
 | `zf g handler\|model\|middleware\|service\|task <Name>` | Add a single module |
 **`--json` everywhere**: every command emits structured JSON for AI parsing.
 **`--heal` is idempotent** — second run patches 0 files.

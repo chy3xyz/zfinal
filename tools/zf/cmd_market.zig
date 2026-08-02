@@ -265,7 +265,7 @@ fn listOrSearch(allocator: std.mem.Allocator, path: ?[]const u8, query: ?[]const
         try out.writer.writeAll("{\"modules\":[");
         var first = true;
         for (modules.array.items) |item| {
-            if (!matchQuery(item, query)) continue;
+            if (!market_util.matchQuery(item, query)) continue;
             if (!first) try out.writer.writeByte(',');
             first = false;
             try std.json.Stringify.value(item, .{}, &out.writer);
@@ -280,7 +280,7 @@ fn listOrSearch(allocator: std.mem.Allocator, path: ?[]const u8, query: ?[]const
 
     var n: usize = 0;
     for (modules.array.items) |item| {
-        if (!matchQuery(item, query)) continue;
+        if (!market_util.matchQuery(item, query)) continue;
         const id = item.object.get("id").?.string;
         const name = item.object.get("name").?.string;
         const kind = item.object.get("kind").?.string;
@@ -328,38 +328,4 @@ fn infoOne(allocator: std.mem.Allocator, path: ?[]const u8, id: []const u8, json
     }
     std.debug.print("error: module id not found: {s}\n", .{id});
     std.process.exit(1);
-}
-
-fn matchQuery(item: std.json.Value, query: ?[]const u8) bool {
-    const q = query orelse return true;
-    const id = item.object.get("id").?.string;
-    const name = item.object.get("name").?.string;
-    const summary = item.object.get("summary").?.string;
-    if (containsIgnoreCase(id, q)) return true;
-    if (containsIgnoreCase(name, q)) return true;
-    if (containsIgnoreCase(summary, q)) return true;
-    if (item.object.get("tags")) |tags| {
-        for (tags.array.items) |t| {
-            if (containsIgnoreCase(t.string, q)) return true;
-        }
-    }
-    return false;
-}
-
-fn containsIgnoreCase(hay: []const u8, needle: []const u8) bool {
-    if (needle.len == 0) return true;
-    if (needle.len > hay.len) return false;
-    var i: usize = 0;
-    while (i + needle.len <= hay.len) : (i += 1) {
-        if (eqlIgnoreCase(hay[i..][0..needle.len], needle)) return true;
-    }
-    return false;
-}
-
-fn eqlIgnoreCase(a: []const u8, b: []const u8) bool {
-    if (a.len != b.len) return false;
-    for (a, b) |x, y| {
-        if (std.ascii.toLower(x) != std.ascii.toLower(y)) return false;
-    }
-    return true;
 }

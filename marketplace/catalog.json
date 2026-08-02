@@ -1,6 +1,6 @@
 {
-  "schema_version": 1,
-  "description": "ZFinal local module marketplace catalog (phase 1). Browse with: zf market list|search|info. No remote install yet — see doc/module_marketplace.md and ADR-015.",
+  "schema_version": 2,
+  "description": "ZFinal module marketplace catalog. Browse with: zf market list|search|info. Sync remote index: zf market update. Install: zf market install <id> [--dry-run] [--dir DIR] (ADR-016).",
   "modules": [
     {
       "id": "example/hello-world",
@@ -10,7 +10,8 @@
       "summary": "Minimal HTTP binary — size/startup baseline",
       "tags": ["starter", "http"],
       "min_zfinal": "0.20.0",
-      "doc": "examples/README.md"
+      "doc": "examples/README.md",
+      "url": "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.3.tar.gz"
     },
     {
       "id": "example/production",
@@ -20,7 +21,8 @@
       "summary": "Logging, metrics, CSRF, security headers — prod contract reference",
       "tags": ["production", "security", "metrics"],
       "min_zfinal": "0.20.0",
-      "doc": "PRODUCTION_AUDIT.md"
+      "doc": "PRODUCTION_AUDIT.md",
+      "url": "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.3.tar.gz"
     },
     {
       "id": "example/smart-routing",
@@ -30,7 +32,8 @@
       "summary": "actions.zig true source + zf routes codegen",
       "tags": ["routing", "actions", "codegen"],
       "min_zfinal": "0.20.9",
-      "doc": "doc/smart_routing.md"
+      "doc": "doc/smart_routing.md",
+      "url": "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.3.tar.gz"
     },
     {
       "id": "example/zent-shop",
@@ -40,7 +43,8 @@
       "summary": "E-commerce graph via zfinal.zent peer data layer",
       "tags": ["zent", "ecommerce", "graph"],
       "min_zfinal": "0.20.0",
-      "doc": "doc/zent.md"
+      "doc": "doc/zent.md",
+      "url": "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.3.tar.gz"
     },
     {
       "id": "example/htmx-admin",
@@ -50,7 +54,8 @@
       "summary": "Admin UI with htmx + alpine patterns",
       "tags": ["htmx", "admin", "ui"],
       "min_zfinal": "0.20.0",
-      "doc": "examples/README.md"
+      "doc": "examples/README.md",
+      "url": "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.3.tar.gz"
     },
     {
       "id": "example/auth",
@@ -60,7 +65,8 @@
       "summary": "JWT / session auth starter patterns",
       "tags": ["auth", "jwt"],
       "min_zfinal": "0.20.0",
-      "doc": "examples/README.md"
+      "doc": "examples/README.md",
+      "url": "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.3.tar.gz"
     },
     {
       "id": "example/ports-l2",
@@ -70,7 +76,8 @@
       "summary": "Progressive architecture L2 — ports + adapters",
       "tags": ["ports", "architecture", "l2"],
       "min_zfinal": "0.20.4",
-      "doc": "doc/progressive_architecture.md"
+      "doc": "doc/progressive_architecture.md",
+      "url": "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.3.tar.gz"
     },
     {
       "id": "example/ports-l3",
@@ -80,7 +87,19 @@
       "summary": "Progressive architecture L3 — multi-adapter wiring",
       "tags": ["ports", "architecture", "l3"],
       "min_zfinal": "0.20.4",
-      "doc": "doc/progressive_architecture.md"
+      "doc": "doc/progressive_architecture.md",
+      "url": "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.3.tar.gz"
+    },
+    {
+      "id": "example/zfsaas",
+      "name": "zfsaas",
+      "kind": "example",
+      "path": "examples/zfsaas",
+      "summary": "Full-stack SaaS — ZFinal API + SolidStart UI (auth/org/billing/todo)",
+      "tags": ["saas", "auth", "billing", "multi-tenant", "solidstart"],
+      "min_zfinal": "0.20.15",
+      "doc": "doc/saas_kit.md",
+      "url": "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.3.tar.gz"
     },
     {
       "id": "plugin/metrics",
@@ -90,7 +109,8 @@
       "summary": "Prometheus-compatible metrics route plugin",
       "tags": ["plugin", "metrics", "ops"],
       "min_zfinal": "0.19.0",
-      "doc": "doc/architecture_best_practices.md"
+      "doc": "doc/architecture_best_practices.md",
+      "url": "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.20.3.tar.gz"
     }
   ]
 }
