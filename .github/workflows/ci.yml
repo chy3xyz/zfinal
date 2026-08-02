@@ -135,19 +135,34 @@ jobs:
         sudo apt-get install -y libsqlite3-dev
     - name: Start Redpanda (Kafka-compatible)
       run: |
+        set -euo pipefail
         docker run -d --name zf-redpanda -p 9092:9092 \
           docker.redpanda.com/redpandadata/redpanda:v24.2.4 \
           redpanda start --mode dev-container --smp 1 --memory 512M \
             --overprovisioned --check=false \
             --kafka-addr 0.0.0.0:9092 \
             --advertise-kafka-addr 127.0.0.1:9092
-        for i in $(seq 1 40); do
+        echo "waiting for :9092 ..."
+        for i in $(seq 1 60); do
+          if (echo > /dev/tcp/127.0.0.1/9092) >/dev/null 2>&1; then
+            echo "tcp 9092 open after ${i}s"
+            break
+          fi
+          sleep 1
+        done
+        (echo > /dev/tcp/127.0.0.1/9092) >/dev/null 2>&1 || {
+          echo "Redpanda port 9092 never opened"; docker logs zf-redpanda | tail -80; exit 1
+        }
+        # Best-effort cluster health + pre-create soak topics
+        for i in $(seq 1 30); do
           if docker exec zf-redpanda rpk cluster health 2>/dev/null | grep -qi healthy; then
-            echo "redpanda ready"; exit 0
+            echo "redpanda healthy"
+            break
           fi
           sleep 2
         done
-        echo "redpanda not healthy yet; continuing (produce may create topic)"
+        docker exec zf-redpanda rpk topic create zfinal.robustmq.smoke \
+          zfinal.robustmq.consume.soak -p 1 -r 1 || true
     - name: Messaging live soak
       env:
         NATS_URL: nats://127.0.0.1:4222

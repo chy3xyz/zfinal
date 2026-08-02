@@ -26,9 +26,12 @@ defer tok.deinit();
 **Offline / unit tests:** set `oauth.mock_token_json` (+ optional `mock_token_status`) to skip HTTP
 and exercise `exchangeCode` / `exchangeCodePkce` / error paths without a live IdP.
 
+**Live smoke:** `OAUTH2_LIVE=1` + `OAUTH2_TOKEN_URL` / `OAUTH2_CLIENT_ID` / `OAUTH2_CLIENT_SECRET`
+(optional `OAUTH2_SCOPE`, `OAUTH2_AUTH_STYLE=basic|body`) — unit test + `zig build run-oauth2`.
+
 Token JSON non-string fields → `error.InvalidTokenJson` (no panic).  
 Non-2xx token responses → `error.TokenEndpointError` after parsing `error` / `error_description`.
 
 See [progressive_architecture.md](progressive_architecture.md) (wrap with CircuitBreaker).
 
-Demo: `zig build run-oauth2` (prints PKCE authorize URL; no live IdP).
+Demo: `zig build run-oauth2` (prints PKCE authorize URL; no live IdP unless `OAUTH2_LIVE=1`).

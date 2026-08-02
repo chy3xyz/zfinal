@@ -406,3 +406,103 @@ test "DbOutbox markFailed dead-letters after max_attempts" {
     try std.testing.expectEqual(@as(usize, 0), try box.unpublishedCount());
     try std.testing.expectEqual(@as(usize, 1), try box.deadCount());
 }
+
+fn liveEnv(allocator: std.mem.Allocator, name: [:0]const u8, default: []const u8) ?[]const u8 {
+    const raw = std.c.getenv(name.ptr);
+    if (raw) |ptr| return allocator.dupe(u8, std.mem.sliceTo(ptr, 0)) catch return null;
+    if (default.len == 0) return null;
+    return allocator.dupe(u8, default) catch return null;
+}
+
+fn tryOpenLivePg(allocator: std.mem.Allocator) !?*DB {
+    const build_opts = @import("build_options");
+    if (!build_opts.enable_pg) return null;
+    const pwd = liveEnv(allocator, "ZF_PG_PASSWORD", "") orelse return null;
+    defer allocator.free(pwd);
+    const host = liveEnv(allocator, "ZF_PG_HOST", "localhost") orelse return null;
+    defer allocator.free(host);
+    const port_str = liveEnv(allocator, "ZF_PG_PORT", "5432") orelse return null;
+    defer allocator.free(port_str);
+    const port = std.fmt.parseInt(u16, port_str, 10) catch @as(u16, 5432);
+    const user = liveEnv(allocator, "ZF_PG_USER", "postgres") orelse return null;
+    defer allocator.free(user);
+    const db_name = liveEnv(allocator, "ZF_PG_DATABASE", "zfinal_test") orelse return null;
+    defer allocator.free(db_name);
+    return DB.init(allocator, .{
+        .db_type = .postgres,
+        .host = host,
+        .port = port,
+        .database = db_name,
+        .username = user,
+        .password = pwd,
+    }) catch null;
+}
+
+fn tryOpenLiveMy(allocator: std.mem.Allocator) !?*DB {
+    const build_opts = @import("build_options");
+    if (!build_opts.enable_mysql) return null;
+    const pwd = liveEnv(allocator, "ZF_MY_PASSWORD", "") orelse return null;
+    defer allocator.free(pwd);
+    const host = liveEnv(allocator, "ZF_MY_HOST", "localhost") orelse return null;
+    defer allocator.free(host);
+    const port_str = liveEnv(allocator, "ZF_MY_PORT", "3306") orelse return null;
+    defer allocator.free(port_str);
+    const port = std.fmt.parseInt(u16, port_str, 10) catch @as(u16, 3306);
+    const user = liveEnv(allocator, "ZF_MY_USER", "root") orelse return null;
+    defer allocator.free(user);
+    const db_name = liveEnv(allocator, "ZF_MY_DATABASE", "zfinal_test") orelse return null;
+    defer allocator.free(db_name);
+    return DB.init(allocator, .{
+        .db_type = .mysql,
+        .host = host,
+        .port = port,
+        .database = db_name,
+        .username = user,
+        .password = pwd,
+    }) catch null;
+}
+
+fn liveDrainRoundtrip(a: std.mem.Allocator, db: *DB, dialect: OutboxDialect) !void {
+    // Isolate from other suites on shared live DBs.
+    db.exec("DROP TABLE IF EXISTS zfinal_outbox") catch {};
+    var box = try DbOutbox.init(a, db);
+    defer box.deinit();
+    try std.testing.expectEqual(dialect, box.dialect);
+
+    const MemoryBus = @import("../bus/memory_bus.zig").MemoryBus;
+    var bus_impl = MemoryBus.init(a);
+    defer bus_impl.deinit();
+    const mb = try bus_impl.queue.subscribe("order.live");
+    defer {
+        mb.deinit();
+        a.destroy(mb);
+    }
+
+    const idem = try std.fmt.allocPrint(a, "live-{s}-{d}", .{ @tagName(dialect), TimeKit.nowMillis() });
+    defer a.free(idem);
+    try box.port().append(a, "order.live", "{\"live\":1}", idem);
+    try box.port().append(a, "order.live", "{\"live\":1}", idem); // idempotent
+    try std.testing.expectEqual(@as(usize, 1), try box.unpublishedCount());
+
+    const st = try box.drainOnce(a, bus_impl.port(), .{});
+    try std.testing.expectEqual(@as(usize, 1), st.published);
+    try std.testing.expectEqual(@as(usize, 0), try box.unpublishedCount());
+    var msg = mb.tryPop() orelse return error.TestUnexpectedResult;
+    defer msg.deinit(a);
+    try std.testing.expectEqualStrings("{\"live\":1}", msg.data);
+}
+
+test "DbOutbox live drainOnce on PostgreSQL" {
+    const a = std.testing.allocator;
+    var db = (try tryOpenLivePg(a)) orelse return error.SkipZigTest;
+    defer db.destroy();
+    try liveDrainRoundtrip(a, db, .postgres);
+}
+
+test "DbOutbox live drainOnce on MySQL" {
+    const a = std.testing.allocator;
+    var db = (try tryOpenLiveMy(a)) orelse return error.SkipZigTest;
+    defer db.destroy();
+    try liveDrainRoundtrip(a, db, .mysql);
+}
+

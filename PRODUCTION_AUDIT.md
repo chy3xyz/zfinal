@@ -1,6 +1,6 @@
 # ZFinal Framework — Production Readiness Audit
 
-**Date:** 2026-07-31 (CHANGELOG / package **0.20.11**)  
+**Date:** 2026-08-02 (CHANGELOG / package **0.20.11+**; L3/messaging refresh)  
 **Zig:** `0.17.0-dev.1422+e863bf3be` (pinned in CI; `minimum_zig_version` in `build.zig.zon`)  
 **Status:** **Production-ready under the deployment contract below.**  
 **Headline score (contractual):** **9.8 / 10**  
@@ -12,11 +12,12 @@
 > Absolute ceiling stays under 10 until Zig 0.17 stable and keep-alive is default-safe
 > (ziglang/zig#25017 — still asserts on pinned 0.17-dev; mitigated via force-close + drain + proxy).
 >
-> **2026-07-31 refresh:** HttpError / Extension / `oneshot.captureWith` / interceptor
-> `userdata` (no static secrets) landed; keep-alive residual unchanged — flip checklist still
-> [`doc/reverse_proxy.md`](doc/reverse_proxy.md) §9.
+> **2026-08-02 refresh:** `DbOutbox.drainOnce` (+ PG/MySQL live), Bus consume soaks,
+> `messaging-live` CI, production Outbox/WS, `zf check --prod` L3 heuristics, OAuth2
+> mock + optional `OAUTH2_LIVE` smoke. Keep-alive residual unchanged — flip checklist
+> still [`doc/reverse_proxy.md`](doc/reverse_proxy.md) §9.
 
-## Scorecard (evidence-based, 2026-07-31)
+## Scorecard (evidence-based, 2026-08-02)
 
 | Dimension | Score | Evidence |
 |-----------|-------|----------|
@@ -25,8 +26,8 @@
 | Observability | **9.9 / 10** | Auto Metrics + latency histogram + **6 route classes** (health/metrics/api/admin/static/other) + `routeTemplate`; `/metrics` |
 | Ops / deployability | **9.8 / 10** | CI + drivers + live PG/MySQL + production + **`zf check --prod`** + [`doc/reverse_proxy.md`](doc/reverse_proxy.md) + [`benchmark/BASELINE.md`](benchmark/BASELINE.md) |
 | Docs / AI tooling | **9.9 / 10** | zone merge; ports-l2/**ports-l3**; reverse-proxy KA; deeper `zf openapi`; **[best_practices.md](doc/best_practices.md)** hub + envelope ADR-013 |
-| Optional (PG/MySQL/zent/messaging) | **9.7 / 10** | RobustMQ + NATS live consume soak (`messaging-live`); MQTT TLS; Redis |
-| WebSocket / OAuth2 / P2P / AI (2026-08) | **~9.0–9.4** | `DbOutbox.drainOnce`+方言; WS `tickIdle`; OAuth2 mock exchange; P2P HMAC; Quota/AI audit |
+| Optional (PG/MySQL/zent/messaging) | **9.7 / 10** | RobustMQ + NATS live consume soak (`messaging-live`); DbOutbox live PG/MySQL; MQTT TLS; Redis |
+| WebSocket / OAuth2 / P2P / AI (2026-08) | **~9.1–9.5** | `DbOutbox.drainOnce`+方言+live; WS `tickIdle`; OAuth2 mock/`OAUTH2_LIVE`; P2P HMAC; Quota/AI audit |
 | **Overall (contractual)** | **9.8 / 10** | Internet-facing BFF behind proxy: ready |
 | Absolute (toolchain) | **~9.2 / 10** | Zig-dev + keep-alive still default-forced |
 
@@ -59,7 +60,15 @@
 |-----|----------|--------|
 | Zig **0.17-dev** drift | P1 | Pin + CI |
 | Keep-alive unsafe by default | P1 | force-close + proxy KA + drain + CI regression; flip checklist in [`doc/reverse_proxy.md`](doc/reverse_proxy.md) §9; wait #25017 |
-| OpenAPI per-entity DTO fields | P2 | **Closed 2026-07-31** — ORM `pub const Name = struct` → `Name`/`NameInput` schemas |
+
+## Gaps closed (2026-08)
+
+| Gap | Fix |
+|-----|-----|
+| Outbox only Memory / SQLite strings | `DbOutbox.drainOnce` + PG/MySQL live tests; `ZF_OUTBOX_DB` in production |
+| Messaging consume untested in CI | `messaging-live` (NATS + Redpanda TCP wait + topic create) |
+| OAuth2 no live path | `OAUTH2_LIVE` client_credentials smoke + demo |
+| `zf check --prod` no L3 hints | tenant SQL / Outbox-before-Bus WARN heuristics |
 
 ## Gaps closed (2026-07-31)
 

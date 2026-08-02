@@ -32,6 +32,9 @@ _ = st; // published / failed / dead
 
 观测：`box.toPrometheusFormat(allocator)` → `zfinal_outbox_unpublished` / `zfinal_outbox_dead`。
 
+生产示例：默认 `MemoryOutbox`；`ZF_OUTBOX_DB=./outbox.db zig build run-production` 切到 `DbOutbox`。
+Live 方言：`ZF_PG_*` / `ZF_MY_*` + `-Ddriver_pg=true -Ddriver_mysql=true` 跑 `DbOutbox live drainOnce`。
+
 ## 与 Bus 的关系
 
 - Outbox = **持久意图**（与领域写同 TX）

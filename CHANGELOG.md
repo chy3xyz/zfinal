@@ -1,6 +1,11 @@
 ## [Unreleased]
 
 ### Added
+- **DbOutbox live PG/MySQL** `drainOnce` roundtrip (env-gated; runs in `drivers-live`).
+- **messaging-live CI**: TCP wait on :9092, fail if Redpanda down, pre-create soak topics.
+- **production `ZF_OUTBOX_DB`**: durable `DbOutbox` optional; MemoryOutbox default.
+- **OAuth2 `OAUTH2_LIVE`**: client_credentials smoke test + `run-oauth2` live path.
+- **PRODUCTION_AUDIT** refresh (2026-08-02) for L3/messaging scores.
 - **CI `messaging-live`**: NATS service + Redpanda; env-gated consume soak
   (`NATS_URL` / `KAFKA_BOOTSTRAP` / `ROBUSTMQ_URL`).
 - **Live consume soaks**: NATS pub/sub asserts delivery; `QueueNatsClient` /

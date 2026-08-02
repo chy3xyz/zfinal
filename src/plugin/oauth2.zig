@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const HttpClient = @import("http_client.zig").HttpClient;
 const RandomKit = @import("../kit/random_kit.zig").RandomKit;
 
@@ -380,4 +381,29 @@ test "oauth2: mock token error status" {
     oauth.mock_token_status = 400;
     oauth.mock_token_json = "{\"error\":\"invalid_grant\"}";
     try std.testing.expectError(error.TokenEndpointError, oauth.exchangeCode("bad"));
+}
+
+// Optional live smoke: set OAUTH2_LIVE=1 plus OAUTH2_TOKEN_URL / CLIENT_ID / CLIENT_SECRET.
+test "oauth2: live client_credentials when OAUTH2_LIVE set" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const live = if (std.c.getenv("OAUTH2_LIVE")) |p| std.mem.span(p) else null;
+    if (live == null or live.?.len == 0) return error.SkipZigTest;
+
+    const a = std.testing.allocator;
+    const token_url = if (std.c.getenv("OAUTH2_TOKEN_URL")) |p| std.mem.span(p) else return error.SkipZigTest;
+    const client_id = if (std.c.getenv("OAUTH2_CLIENT_ID")) |p| std.mem.span(p) else return error.SkipZigTest;
+    const client_secret = if (std.c.getenv("OAUTH2_CLIENT_SECRET")) |p| std.mem.span(p) else return error.SkipZigTest;
+    const authorize_url = if (std.c.getenv("OAUTH2_AUTHORIZE_URL")) |p| std.mem.span(p) else "https://unused/authorize";
+    const redirect_uri = if (std.c.getenv("OAUTH2_REDIRECT_URI")) |p| std.mem.span(p) else "https://unused/cb";
+    const scope = if (std.c.getenv("OAUTH2_SCOPE")) |p| std.mem.span(p) else null;
+
+    var oauth = try OAuth2Client.init(a, client_id, client_secret, authorize_url, token_url, redirect_uri);
+    defer oauth.deinit();
+    if (std.c.getenv("OAUTH2_AUTH_STYLE")) |s| {
+        if (std.mem.eql(u8, std.mem.span(s), "basic")) oauth.auth_style = .basic;
+    }
+
+    var tok = try oauth.clientCredentials(scope);
+    defer tok.deinit();
+    try std.testing.expect(tok.access_token.len > 0);
 }

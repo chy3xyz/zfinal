@@ -128,13 +128,29 @@ pub fn main(init: std.process.Init) !void {
     try app.addGlobalInterceptor(zfinal.createCorsAllowlistInterceptor(&cors_cfg));
     try app.addGlobalInterceptor(rate_mw);
 
-    // L3 demo wiring: MemoryOutbox + MemoryBus (see doc/outbox.md). Swap DbOutbox + NatsBus in deploy.
+    // L3 demo: MemoryOutbox by default; set ZF_OUTBOX_DB=/path/to.db for durable DbOutbox.
     var bus_impl = zfinal.MemoryBus.init(allocator);
     defer bus_impl.deinit();
-    var outbox_impl = zfinal.MemoryOutbox.init(allocator);
-    defer outbox_impl.deinit();
-    app_state.outbox = &outbox_impl;
     app_state.bus = bus_impl.port();
+
+    var memory_outbox = zfinal.MemoryOutbox.init(allocator);
+    defer memory_outbox.deinit();
+    var outbox_db: ?*zfinal.DB = null;
+    defer if (outbox_db) |d| d.destroy();
+    var db_outbox_storage: zfinal.DbOutbox = undefined;
+
+    if (std.c.getenv("ZF_OUTBOX_DB")) |path_z| {
+        const path = std.mem.span(path_z);
+        outbox_db = try zfinal.DB.init(allocator, zfinal.DBConfig.sqlite(path));
+        db_outbox_storage = try zfinal.DbOutbox.init(allocator, outbox_db.?);
+        app_state.db_outbox = &db_outbox_storage;
+        app_state.outbox = db_outbox_storage.port();
+        zfinal.getLogger().infoFmt("Outbox backend: DbOutbox path={s}", .{path});
+    } else {
+        app_state.memory_outbox = &memory_outbox;
+        app_state.outbox = memory_outbox.port();
+        zfinal.getLogger().infoFmt("Outbox backend: MemoryOutbox (set ZF_OUTBOX_DB for durable)", .{});
+    }
 
     try api_routes.register(&app);
     try app.postWithInterceptors("/internal/outbox/drain", api_handler.drainOutbox, &.{interceptors.jwt});
