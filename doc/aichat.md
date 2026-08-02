@@ -63,7 +63,7 @@ const result = try aichat.chatSync(
     curl.client(),
     "https://api.deepseek.com",
     "sk-xxx",
-    "deepseek-chat",
+    "deepseek-v4-flash",
     &.{.{ .role = "user", .content = "Hello" }},
     0.7,
     1024,

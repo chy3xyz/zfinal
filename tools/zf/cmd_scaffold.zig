@@ -761,15 +761,35 @@ fn copyPluginFile(allocator: std.mem.Allocator, filename: []const u8) !void {
 /// Loads AGENTS.md + .claude/skills/, builds request, POSTs via std.http.Client,
 /// parses response, prints the assistant message.
 pub fn handleAi(allocator: std.mem.Allocator, prompt: []const u8, provider: []const u8, model: []const u8) !void {
+    const is_anthropic = std.mem.eql(u8, provider, "anthropic");
+    const is_deepseek = std.mem.eql(u8, provider, "deepseek");
+
     // 1. Read API key from environment
-    const api_key_ptr = getenv("OPENAI_API_KEY");
+    const key_env: []const u8 = if (is_anthropic)
+        "ANTHROPIC_API_KEY"
+    else if (is_deepseek)
+        "DEEPSEEK_API_KEY"
+    else
+        "OPENAI_API_KEY";
+    const api_key_ptr = if (is_anthropic)
+        getenv("ANTHROPIC_API_KEY")
+    else if (is_deepseek)
+        getenv("DEEPSEEK_API_KEY") orelse getenv("OPENAI_API_KEY")
+    else
+        getenv("OPENAI_API_KEY");
     const api_key: []const u8 = if (api_key_ptr) |p| std.mem.sliceTo(p, 0) else {
-        std.debug.print("✗ OPENAI_API_KEY not set.\n", .{});
-        std.debug.print("  export OPENAI_API_KEY=sk-...\n", .{});
+        std.debug.print("✗ {s} not set.\n", .{key_env});
+        if (is_anthropic) {
+            std.debug.print("  export ANTHROPIC_API_KEY=sk-ant-...\n", .{});
+        } else if (is_deepseek) {
+            std.debug.print("  export DEEPSEEK_API_KEY=sk-...   # or OPENAI_API_KEY\n", .{});
+        } else {
+            std.debug.print("  export OPENAI_API_KEY=sk-...\n", .{});
+        }
         return;
     };
     if (api_key.len == 0) {
-        std.debug.print("✗ OPENAI_API_KEY is empty.\n", .{});
+        std.debug.print("✗ API key is empty.\n", .{});
         return;
     }
 
@@ -809,76 +829,136 @@ pub fn handleAi(allocator: std.mem.Allocator, prompt: []const u8, provider: []co
 
     var body_buf: std.ArrayList(u8) = .empty;
     defer body_buf.deinit(allocator);
-    try body_buf.appendSlice(allocator, "{\"model\":\"");
-    try body_buf.appendSlice(allocator, model);
-    try body_buf.appendSlice(allocator, "\",\"messages\":[");
     const sys_escaped = try jsonEscape(allocator, system_msg);
     defer allocator.free(sys_escaped);
-    try body_buf.appendSlice(allocator, "{\"role\":\"system\",\"content\":");
-    try body_buf.appendSlice(allocator, sys_escaped);
-    try body_buf.appendSlice(allocator, "},");
     const user_escaped = try jsonEscape(allocator, user_msg.items);
     defer allocator.free(user_escaped);
-    try body_buf.appendSlice(allocator, "{\"role\":\"user\",\"content\":");
-    try body_buf.appendSlice(allocator, user_escaped);
-    try body_buf.appendSlice(allocator, "}]}");
 
-    // 5. Build Authorization header
-    const auth_header = try std.fmt.allocPrint(allocator, "Authorization: Bearer {s}", .{api_key});
-    defer allocator.free(auth_header);
+    if (is_anthropic) {
+        // Anthropic Messages API
+        try body_buf.appendSlice(allocator, "{\"model\":\"");
+        try body_buf.appendSlice(allocator, model);
+        try body_buf.appendSlice(allocator, "\",\"max_tokens\":2048,\"system\":");
+        try body_buf.appendSlice(allocator, sys_escaped);
+        try body_buf.appendSlice(allocator, ",\"messages\":[{\"role\":\"user\",\"content\":");
+        try body_buf.appendSlice(allocator, user_escaped);
+        try body_buf.appendSlice(allocator, "}]}");
+    } else {
+        // OpenAI-compatible chat/completions
+        try body_buf.appendSlice(allocator, "{\"model\":\"");
+        try body_buf.appendSlice(allocator, model);
+        try body_buf.appendSlice(allocator, "\",\"messages\":[");
+        try body_buf.appendSlice(allocator, "{\"role\":\"system\",\"content\":");
+        try body_buf.appendSlice(allocator, sys_escaped);
+        try body_buf.appendSlice(allocator, "},");
+        try body_buf.appendSlice(allocator, "{\"role\":\"user\",\"content\":");
+        try body_buf.appendSlice(allocator, user_escaped);
+        try body_buf.appendSlice(allocator, "}]}");
+    }
 
     std.debug.print("\n🤖 ZFinal AI ({s}/{s}) — {d} bytes context\n", .{ provider, model, context_buf.items.len });
     std.debug.print("════════════════════════════════════════════════════\n", .{});
 
-    // 6. HTTP POST via std.http.Client
+    // 5. HTTP POST via std.http.Client
     var client: std.http.Client = .{
         .allocator = allocator,
         .io = zf_shared.io,
     };
     defer client.deinit();
 
-    const url = "https://api.openai.com/v1/chat/completions";
+    const url = if (is_anthropic)
+        "https://api.anthropic.com/v1/messages"
+    else if (is_deepseek)
+        "https://api.deepseek.com/v1/chat/completions"
+    else
+        "https://api.openai.com/v1/chat/completions";
 
-    // Allocate a buffer for response body
     var response_buf = try allocator.alloc(u8, 1024 * 1024);
     defer allocator.free(response_buf);
     const response_writer = std.Io.Writer.fixed(response_buf);
 
-    const result = client.fetch(.{
-        .location = .{ .url = url },
-        .method = .POST,
-        .extra_headers = &[_]std.http.Header{
-            .{ .name = "content-type", .value = "application/json" },
-            .{ .name = "authorization", .value = auth_header },
-        },
-        .payload = body_buf.items,
-        .response_writer = @constCast(&response_writer),
-    }) catch |err| {
+    const result = if (is_anthropic) blk: {
+        const auth_value = api_key; // x-api-key is raw key
+        break :blk client.fetch(.{
+            .location = .{ .url = url },
+            .method = .POST,
+            .extra_headers = &[_]std.http.Header{
+                .{ .name = "content-type", .value = "application/json" },
+                .{ .name = "x-api-key", .value = auth_value },
+                .{ .name = "anthropic-version", .value = "2023-06-01" },
+            },
+            .payload = body_buf.items,
+            .response_writer = @constCast(&response_writer),
+        });
+    } else blk: {
+        const auth_header = try std.fmt.allocPrint(allocator, "Bearer {s}", .{api_key});
+        defer allocator.free(auth_header);
+        break :blk client.fetch(.{
+            .location = .{ .url = url },
+            .method = .POST,
+            .extra_headers = &[_]std.http.Header{
+                .{ .name = "content-type", .value = "application/json" },
+                .{ .name = "authorization", .value = auth_header },
+            },
+            .payload = body_buf.items,
+            .response_writer = @constCast(&response_writer),
+        });
+    };
+
+    const fetch_result = result catch |err| {
         std.debug.print("✗ HTTP request failed: {t}\n", .{err});
-        std.debug.print("  (offline? check OPENAI_API_KEY)\n", .{});
+        std.debug.print("  (offline? check API key / network)\n", .{});
         return;
     };
 
-    std.debug.print("HTTP {d} ", .{@intFromEnum(result.status)});
-    if (@intFromEnum(result.status) >= 200 and @intFromEnum(result.status) < 300) {
+    std.debug.print("HTTP {d} ", .{@intFromEnum(fetch_result.status)});
+    if (@intFromEnum(fetch_result.status) >= 200 and @intFromEnum(fetch_result.status) < 300) {
         std.debug.print("✓\n\n", .{});
     } else {
         std.debug.print("✗ (error)\n", .{});
     }
 
-    // 7. Extract assistant message from response JSON.
+    // 6. Extract assistant message from response JSON.
     if (response_writer.end == 0) {
         std.debug.print("(no response body)\n", .{});
         return;
     }
     const body_str = response_buf[0..response_writer.end];
-    if (extractAssistantContent(allocator, body_str)) |content| {
-        defer allocator.free(content);
-        std.debug.print("{s}\n", .{content});
+    const content = if (is_anthropic)
+        extractAnthropicText(allocator, body_str)
+    else
+        extractAssistantContent(allocator, body_str);
+    if (content) |c| {
+        defer allocator.free(c);
+        if (c.len == 0) {
+            std.debug.print("(empty assistant content)\n", .{});
+            std.debug.print("--- Raw response ---\n{s}\n", .{body_str});
+        } else {
+            std.debug.print("{s}\n", .{c});
+        }
     } else |_| {
         std.debug.print("(could not parse assistant content from response)\n", .{});
         std.debug.print("--- Raw response ---\n{s}\n", .{body_str});
     }
+}
+
+/// Anthropic Messages: content[0].text
+fn extractAnthropicText(allocator: std.mem.Allocator, json: []const u8) ![]u8 {
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+    defer parsed.deinit();
+    if (parsed.value != .object) return error.InvalidResponse;
+    const content = parsed.value.object.get("content") orelse return error.InvalidResponse;
+    if (content != .array or content.array.items.len == 0) return error.InvalidResponse;
+    for (content.array.items) |part| {
+        if (part != .object) continue;
+        if (part.object.get("type")) |t| {
+            if (t != .string or !std.mem.eql(u8, t.string, "text")) continue;
+        }
+        if (part.object.get("text")) |tx| {
+            if (tx == .string) return try allocator.dupe(u8, tx.string);
+        }
+    }
+    return error.InvalidResponse;
 }
 
 /// Extract "content": "..." value from OpenAI chat completion response.

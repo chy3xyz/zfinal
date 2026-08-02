@@ -12,13 +12,13 @@ test "aichat: ChatMessage and ChatResult construction" {
 
     const result: aichat.ChatResult = .{
         .content = "Hi there!",
-        .model_name = "deepseek-chat",
+        .model_name = "deepseek-v4-flash",
         .prompt_tokens = 5,
         .completion_tokens = 8,
         .total_tokens = 13,
     };
     try testing.expectEqualStrings("Hi there!", result.content);
-    try testing.expectEqualStrings("deepseek-chat", result.model_name.?);
+    try testing.expectEqualStrings("deepseek-v4-flash", result.model_name.?);
     try testing.expectEqual(@as(i64, 13), result.total_tokens);
 }
 
@@ -29,10 +29,10 @@ test "aichat: buildSyncRequestBody produces valid JSON" {
         aichat.ChatMessage{ .role = "user", .content = "Hi" },
     };
 
-    const body = try aichat.buildSyncRequestBody(allocator, "deepseek-chat", messages, 0.7, 2048);
+    const body = try aichat.buildSyncRequestBody(allocator, "deepseek-v4-flash", messages, 0.7, 2048);
     defer allocator.free(body);
 
-    try testing.expect(std.mem.indexOf(u8, body, "deepseek-chat") != null);
+    try testing.expect(std.mem.indexOf(u8, body, "deepseek-v4-flash") != null);
     try testing.expect(std.mem.indexOf(u8, body, "\"stream\":false") != null);
     try testing.expect(std.mem.indexOf(u8, body, "\"temperature\":0.7") != null);
     try testing.expect(std.mem.indexOf(u8, body, "\"max_tokens\":2048") != null);
@@ -49,7 +49,7 @@ test "aichat: buildSyncRequestBody produces valid JSON" {
         max_tokens: i64,
     }, allocator, body, .{ .allocate = .alloc_always });
     defer parsed.deinit();
-    try testing.expectEqualStrings("deepseek-chat", parsed.value.model);
+    try testing.expectEqualStrings("deepseek-v4-flash", parsed.value.model);
     try testing.expectEqual(@as(usize, 2), parsed.value.messages.len);
     try testing.expectEqualStrings("system", parsed.value.messages[0].role);
     try testing.expectEqualStrings("You are a helpful assistant.", parsed.value.messages[0].content);
@@ -62,7 +62,7 @@ test "aichat: buildStreamingRequestBody sets stream=true" {
     const allocator = std.testing.allocator;
     const messages = &.{aichat.ChatMessage{ .role = "user", .content = "Hello" }};
 
-    const body = try aichat.buildStreamingRequestBody(allocator, "deepseek-chat", messages, 0.5, 1024);
+    const body = try aichat.buildStreamingRequestBody(allocator, "deepseek-v4-flash", messages, 0.5, 1024);
     defer allocator.free(body);
 
     try testing.expect(std.mem.indexOf(u8, body, "\"stream\":true") != null);
@@ -131,7 +131,7 @@ test "aichat: chatSync with invalid URL returns error" {
     const result = aichat.chatSync(
         "https://127.0.0.1:99999",
         "sk-invalid-no-real-key",
-        "deepseek-chat",
+        "deepseek-v4-flash",
         messages,
         0.7,
         10,

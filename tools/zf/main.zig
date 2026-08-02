@@ -171,18 +171,19 @@ pub fn main(init: std.process.Init) !void {
             try handleBench(allocator, url, count, concurrency);
         },
         .ai => {
-            // zf ai <prompt...> [--provider openai|anthropic] [--model <model>]
+            // zf ai <prompt...> [--provider openai|anthropic|deepseek] [--model <model>]
             if (args.len < 3) {
-                std.debug.print("Usage: {s} ai <prompt...> [--provider openai|anthropic] [--model <name>]\n", .{args[0]});
+                std.debug.print("Usage: {s} ai <prompt...> [--provider openai|anthropic|deepseek] [--model <name>]\n", .{args[0]});
                 std.debug.print("  Ask an LLM about your ZFinal project. Auto-loads AGENTS.md + last zf check output.\n", .{});
-                std.debug.print("  Set OPENAI_API_KEY or ANTHROPIC_API_KEY environment variable.\n", .{});
+                std.debug.print("  Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or DEEPSEEK_API_KEY.\n", .{});
+                std.debug.print("  DeepSeek default model: deepseek-v4-flash (deepseek-chat retired).\n", .{});
                 return;
             }
             // Join all non-flag args as the prompt
             var prompt_buf: std.ArrayList(u8) = .empty;
             defer prompt_buf.deinit(allocator);
             var provider: []const u8 = "openai";
-            var model: []const u8 = "gpt-4o-mini";
+            var model: ?[]const u8 = null;
             var i: usize = 2;
             while (i < args.len) : (i += 1) {
                 if (std.mem.eql(u8, args[i], "--provider") and i + 1 < args.len) {
@@ -196,7 +197,13 @@ pub fn main(init: std.process.Init) !void {
                     try prompt_buf.appendSlice(allocator, args[i]);
                 }
             }
-            try cmd_scaffold.handleAi(allocator, prompt_buf.items, provider, model);
+            const resolved_model = model orelse if (std.mem.eql(u8, provider, "deepseek"))
+                "deepseek-v4-flash"
+            else if (std.mem.eql(u8, provider, "anthropic"))
+                "claude-haiku-4-5-20251001"
+            else
+                "gpt-4o-mini";
+            try cmd_scaffold.handleAi(allocator, prompt_buf.items, provider, resolved_model);
         },
         .test_gen => {
             if (args.len < 3) {

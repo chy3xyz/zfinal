@@ -1,5 +1,5 @@
 //! ReAct agent: AiProvider tool_calls ↔ SkillRegistry.dispatch.
-//! Does not execute shell/MCP by default — only registered Zig skills.
+//! Shell/MCP are not default — only registered Zig skills (incl. opt-in MCP bridge).
 
 const std = @import("std");
 const provider_mod = @import("provider.zig");

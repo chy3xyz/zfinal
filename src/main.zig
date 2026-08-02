@@ -138,6 +138,7 @@ pub const CacheBackend = @import("plugin/cache.zig").CacheBackend;
 pub const RedisClient = @import("plugin/redis.zig").RedisClient;
 pub const RedisCache = @import("plugin/redis.zig").RedisCache;
 pub const RedisSessionStore = @import("plugin/redis_session.zig").RedisSessionStore;
+pub const RedisCooldownStore = @import("plugin/redis_cooldown.zig").RedisCooldownStore;
 pub const CronPlugin = @import("plugin/cron.zig").CronPlugin;
 pub const CircuitBreaker = @import("plugin/circuit_breaker.zig").CircuitBreaker;
 pub const QueueClient = @import("plugin/queue.zig").QueueClient;

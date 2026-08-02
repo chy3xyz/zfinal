@@ -28,6 +28,8 @@ pub const SkillContext = struct {
     run_id: ?[]const u8 = null,
     userdata: ?*anyopaque = null,
     deadline_ms: ?i64 = null,
+    /// Set by `dispatchWith` for the duration of a handler call (e.g. MCP bridge).
+    active_tool_name: ?[]const u8 = null,
 
     pub fn expired(self: *const SkillContext) bool {
         const d = self.deadline_ms orelse return false;
@@ -242,7 +244,12 @@ pub const SkillRegistry = struct {
         self.mutex.unlock(self.io);
 
         const prev_deadline = ctx.deadline_ms;
-        defer ctx.deadline_ms = prev_deadline;
+        const prev_tool = ctx.active_tool_name;
+        defer {
+            ctx.deadline_ms = prev_deadline;
+            ctx.active_tool_name = prev_tool;
+        }
+        ctx.active_tool_name = name;
         const started = time_util.nowMillis();
         if (budget) |ms| {
             ctx.deadline_ms = started + @as(i64, @intCast(ms));

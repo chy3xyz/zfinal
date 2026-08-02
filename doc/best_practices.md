@@ -1,8 +1,8 @@
 # ZFinal 最佳实践总索
 
-> **版本**：v0.20.14 · Zig `0.17.0-dev.1422+e863bf3be` · 修订 **2026-08-02**  
+> **版本**：v0.20.15 · Zig `0.17.0-dev.1422+e863bf3be` · 修订 **2026-08-02**  
 > **受众**：应用开发者、框架贡献者、AI agent  
-> **验证基线**：`zig build gate`（或 `zig build test` → **372 passed; 17 skipped**）· `zig build test-zf`
+> **验证基线**：`zig build gate`（或 `zig build test` → **390 passed; 17 skipped**）· `zig build test-zf`
 
 本文是**最佳实践文档的入口**：按任务选文档，按版本看能力何时可用。细节仍在各专题文中。
 
@@ -37,6 +37,7 @@
 
 | 时段 | 版本 | 写应用时默认采用 |
 |------|------|------------------|
+| 2026-08-02 | **0.20.15** | KeyPool / ProviderRegistry；MCP client（stdio+HTTP/SSE、resources/prompts、id 缓冲）；`RedisCooldownStore`；DeepSeek `deepseek-v4-flash`；`zf ai` Anthropic |
 | 2026-08-02 | **0.20.14** | `zf doctor` / `check --practice` / catalog help / routes cache / Release zf artifacts / ZfTool schema 对齐；请求路径内存泄漏修复 |
 | 2026-08-02 | **0.20.13** | 修复 `toOpenAiFunctionsAlloc` tools JSON（DeepSeek/OpenAI Agent+tools） |
 | 2026-08-02 | **0.20.12** | L3：`DbOutbox.drainOnce`（SQLite/PG/MySQL）→ `Bus`；CI `messaging-live`；`ZF_OUTBOX_DB` / `OAUTH2_LIVE`；WS `tickIdle`；P2P HMAC；`zf check --prod` 租户/Outbox 启发式；文档枢纽刷新 |
@@ -57,7 +58,7 @@
 
 ---
 
-## 3. 绿场默认栈（2026-08 / v0.20.14+）
+## 3. 绿场默认栈（2026-08 / v0.20.15+）
 
 一条「今天新建项目」的推荐路径：
 
@@ -116,4 +117,4 @@ zig build gate-quick     # 或完整：zig build gate / zf gate
 
 ## 6. 一句话
 
-**按 v0.20.14+ 能力写：生成器定骨架，三层定方向，路由用 actions，错误用 HttpError，拦截器 cfg 自持有，规模按 L0→L3 只换装配（L3 用 Outbox→Bus）；合并前走 `zig build gate`；keep-alive 与 zapi 默认不翻，用文档与 ADR 锁边界。**
+**按 v0.20.15+ 能力写：生成器定骨架，三层定方向，路由用 actions，错误用 HttpError，拦截器 cfg 自持有，规模按 L0→L3 只换装配（L3 用 Outbox→Bus）；合并前走 `zig build gate`；keep-alive 与 zapi 默认不翻，用文档与 ADR 锁边界。**

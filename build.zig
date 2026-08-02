@@ -194,7 +194,7 @@ pub fn build(b: *std.Build) void {
     addExample(b, zfinal_mod, "blog", "examples/blog-single/main.zig", "Run blog-single demo", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "ai-blog-5min", "examples/ai-blog-5min/main.zig", "Run 5-minute AI speedrun demo (blog CRUD scaffold)", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "ai-runtime", "examples/ai-runtime/main.zig", "Run offline zfinal.ai runtime demo (Agent/Workflow/skills)", driver_mysql, driver_pg);
-    addExample(b, zfinal_mod, "ai-live", "examples/ai-live/main.zig", "Run live LLM demo (needs OPENAI_API_KEY)", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "ai-mcp", "examples/ai-mcp/main.zig", "Run offline MCP client bridge demo (FakeTransport)", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "htmx", "examples/htmx/main.zig", "Run HTMX demo", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "htmx-admin", "examples/htmx-admin/main.zig", "Run vben-style admin UI demo (run `zf admin` first)", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "htmx-admin-demo", "examples/htmx-admin-demo/main.zig", "Run full-stack multi-table admin demo (3 tables, search, multi-table sidebar)", driver_mysql, driver_pg);

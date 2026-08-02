@@ -4,6 +4,72 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+## 2026-08-02 — MCP id buffer + RedisCooldownStore
+
+**Session**: Continue after bugfix pass
+**Changes**:
+1. `McpClient.pending_by_id` — buffer out-of-order JSON-RPC responses (cap 32)
+2. `plugin/redis_cooldown.zig` — `RedisCooldownStore` for KeyPool cross-process cooldown
+3. Docs / CHANGELOG Unreleased
+**Tests**: zig build test → 390 passed; 17 skipped
+**Next**: MCP GET long-lived SSE session; live Redis CI soak
+
+---
+
+## 2026-08-02 — MCP P2 (HTTP/SSE + resources/prompts + KeyPool)
+
+**Session**: Continue polish — deferred P2
+**Changes**:
+1. `mcp_http.zig` — HttpTransport + `mcpConnectHttp` (JSON / SSE `data:`)
+2. `McpClient` resources/list|read + prompts/list|get
+3. `AgentPlugin` registerResource/registerPrompt + handlers
+4. `KeyPoolMetrics` atomics; `CooldownStore` + `MemoryCooldownStore`
+**Tests**: zig build test → 387 passed; 17 skipped
+**Next**: Redis CooldownStore adapter; MCP session/GET SSE long-poll
+
+---
+
+## 2026-08-02 — MCP polish (bridge instance + framing)
+
+**Session**: Follow-up on MCP client gaps
+**Changes**:
+1. `McpBridge` instance-owned maps (removed process globals)
+2. stdio: Content-Length + NDJSON; File write/read via `io`; id-match + skip notifications
+3. `tools/list` cursor pagination; list/call respect skill deadline
+4. `examples/ai-mcp`; README AgentPlugin vs McpClient; `zf ai --provider anthropic`
+**Tests**: zig build test → 382 passed; 17 skipped
+**Next**: HTTP/SSE MCP; resources/prompts; Redis key pool
+
+---
+
+## 2026-08-02 — MCP client → SkillRegistry
+
+**Session**: AI MCP support (Client bridge)
+**Changes**:
+1. `src/ai/mcp_client.zig` — Transport + FakeTransport + initialize/list/call (stdio spawn)
+2. `src/ai/mcp_skills.zig` — registerMcpTools; schema→Param; AiRuntime.attachMcp
+3. `SkillContext.active_tool_name` set by dispatchWith
+4. AgentPlugin tools/list returns MCP-shaped objects
+5. doc/ai.md MCP section; CHANGELOG Unreleased
+**Tests**: zig build test → 381 passed; 17 skipped
+**Next**: HTTP/SSE MCP transport; resources/prompts
+
+---
+
+## 2026-08-02 — AI KeyPool + ProviderRegistry
+
+**Session**: High-concurrency provider management / API key rotation
+**Changes**:
+1. `src/ai/key_pool.zig` — multi-key least-inflight+RR, per-key RPM/inflight, 429/401 cooldown
+2. `AiProvider` acquires keys for chatWith/chatStream; metrics for rotations/exhausted
+3. `AiConfig.api_keys` + `AiRuntime` owned KeyPool
+4. `provider_registry.zig` — multi-endpoint weighted failover
+5. Docs: `doc/ai.md` concurrency section; CHANGELOG Unreleased
+**Tests**: zig build test → 379 passed; 17 skipped
+**Next**: optional Redis shared cooldown; env helper for comma-separated keys
+
+---
+
 ## 2026-07-31 — release v0.20.10 (gates + market phase 1)
 
 **Session**: Continue productizing release/quality gates; ship 0.20.10

@@ -2,7 +2,7 @@
 
 > LLM 对话 / Agent **产品能力**（OpenAI 兼容 chat + tools + ReAct）。  
 > 写 ZFinal 框架 / 用 `zf` 生成代码：见 [aichat.md](aichat.md) 与 `zfinal.aichat.ZfTool`。  
-> 本模块**不含**默认 shell、外部 MCP client，也不含 ZfTool。
+> 外部 MCP：**opt-in** client（`McpClient` + `registerMcpTools`）；默认不 spawn 子进程。不含 ZfTool。
 
 ## 与 `zfinal.aichat` 的分工
 
@@ -17,7 +17,10 @@
 
 | 类型 | 作用 |
 |------|------|
-| `AiProvider` | OpenAI 兼容 `chat` / `chatWith` / **`chatStream`**（SSE）；`buildMessages` / `countTokens` / `fitsBudget`；解析 `tool_calls`；可选 `enableRateLimit` |
+| `AiProvider` | OpenAI 兼容 `chat` / `chatWith` / **`chatStream`**（SSE）；可选 `key_pool` / `enableRateLimit`；`buildMessages` / `countTokens` / `fitsBudget`；解析 `tool_calls` |
+| `KeyPool` / `KeyPoolConfig` | 多 API key：least-inflight + RR；每 key RPM / max_inflight；429/401 cooldown |
+| `ProviderRegistry` / `ProviderSpec` | 多 endpoint 加权选择 + failover（应用层组装；Agent 仍用单一 `*AiProvider`） |
+| `McpClient` / `registerMcpTools` | **opt-in** MCP stdio client → `SkillRegistry`（`tools/list` + `tools/call`） |
 | `SkillRegistry` | 注册 Zig skill；`dispatch` / `dispatchWith`（白名单 + 协作超时）；`toOpenAiFunctionsAlloc`；`names` |
 | `Agent` | ReAct：`provider` + `registry` → `run`；`hooks` / `metrics` / `audit` / `run_audit` / `retriever` / `quota` / `budget` / `handle` / `context` |
 | `AgentHandle` | 协作式 cancel / pause / stepsDone（步进边界检查） |
@@ -58,7 +61,7 @@ pub fn main() !void {
     var runtime = try zfinal.ai.AiRuntime.init(allocator, std.Io.Threaded.init(allocator, .{}).io(), .{
         .endpoint = "https://api.deepseek.com/v1/chat/completions",
         .api_key = "sk-...",
-        .model = "deepseek-chat",
+        .model = zfinal.ai.default_deepseek_model, // deepseek-v4-flash
         .enable_audit = true,
     });
     defer runtime.deinit();
@@ -270,9 +273,118 @@ const prom = try metrics.toPrometheusFormat(allocator);
 defer allocator.free(prom);
 ```
 
+## 高并发：KeyPool / ProviderRegistry
+
+高并发下上游常按 **API key** 限 RPM/TPM。ZFinal 在 `zfinal.ai` 内提供进程内池（不读环境变量；应用自行解析 `OPENAI_API_KEY_*` 或逗号分隔密钥）。
+
+### 同一 endpoint，多 key（推荐默认）
+
+```zig
+var runtime = try zfinal.ai.AiRuntime.init(allocator, io, .{
+    .endpoint = "https://api.deepseek.com/v1/chat/completions",
+    .api_keys = &.{ "sk-1", "sk-2", "sk-3" }, // 或配合 api_key 合并去重
+    .key_rpm = 60,
+    .key_max_inflight = 8,
+    .model = "deepseek-v4-flash", // or zfinal.ai.default_deepseek_model
+});
+defer runtime.deinit();
+// Agent / chatWith 透明走 KeyPool：least-inflight → RR；429 → cooldown 换 key 重试
+```
+
+也可手动：
+
+```zig
+var pool = try zfinal.ai.KeyPool.init(allocator, io, .{
+    .keys = &.{ "sk-1", "sk-2" },
+    .rpm_per_key = 120,
+    .max_inflight_per_key = 16,
+});
+defer pool.deinit();
+provider.key_pool = &pool;
+```
+
+### 多 endpoint failover
+
+```zig
+var specs = [_]zfinal.ai.ProviderSpec{
+    .{ .name = "primary", .provider = &provider_a, .weight = 10 },
+    .{ .name = "backup", .provider = &provider_b, .weight = 1 },
+};
+var reg = zfinal.ai.ProviderRegistry.init(io, &specs);
+var resp = try reg.chatWith(messages, .{ .max_retries = 1 });
+defer reg.freeResponse(&resp);
+```
+
+**边界**：跨进程 cooldown 用 `CooldownStore`：`MemoryCooldownStore`（进程内）或
+`zfinal.RedisCooldownStore`（Redis `SETEX`，前缀默认 `zfinal:ai:cd:`）。
+`zfinal.aichat.AiClient` 签名不变（每调用仍传 key）。
+
+---
+
+## MCP（opt-in）
+
+把**外部** MCP server 的工具导入 `SkillRegistry`，Agent ReAct **无需改循环**。默认**不**启动任何子进程。
+
+> **别和 `zfinal.AgentPlugin` 搞混**  
+> - `AgentPlugin`：进程内 MCP-style **server**（你注册本地 handler，对外暴露 `tools/list` / `tools/call`）。  
+> - `McpClient` + `McpBridge`：MCP **client**（连外部 stdio server，把远端工具挂进 Agent skills）。
+
+```zig
+var client = try zfinal.ai.McpClient.start(allocator, io, &.{ "npx", "-y", "@modelcontextprotocol/server-everything" });
+defer client.deinit();
+try client.initialize();
+
+var bridge = zfinal.ai.McpBridge.init(allocator, &client);
+defer bridge.deinit();
+
+var runtime = try zfinal.ai.AiRuntime.init(allocator, io, .{ ... });
+defer runtime.deinit();
+
+_ = try runtime.attachMcp(&bridge, .{
+    .name_prefix = "mcp.",
+    .allowlist = &.{ "echo", "add" }, // 原始 MCP 名；null = 全量
+    .timeout_ms = 15_000,
+});
+
+var skill_ctx = zfinal.ai.SkillContext{
+    .allocator = allocator,
+    .backend_ptr = &bridge, // 必须指向 bridge（不是 client）
+};
+var result = try runtime.run("use mcp.echo", &skill_ctx, &.{"mcp.echo"});
+```
+
+能力：NDJSON + `Content-Length` 分帧、HTTP POST（JSON / SSE `data:`）、按 JSON-RPC `id` 匹配（乱序响应入缓冲）、跳过 notification、`tools/list` cursor 分页、`resources/*` + `prompts/*`、`callTool`/`listTools` 尊重 skill deadline。
+
+```zig
+// HTTP MCP（Streamable-style POST）
+var client = try zfinal.ai.mcpConnectHttp(allocator, io, "http://127.0.0.1:3100/mcp", .{
+    .headers = &.{.{ .name = "authorization", .value = "Bearer …" }},
+});
+defer client.deinit();
+try client.initialize();
+```
+
+跨进程 KeyPool cooldown：
+
+```zig
+var redis = try zfinal.RedisClient.init(allocator, "127.0.0.1", 6379);
+try redis.connect();
+defer redis.deinit();
+var cd = zfinal.RedisCooldownStore.init(&redis, "zfinal:ai:cd:");
+pool.cooldown_store = cd.store();
+```
+
+离线演示：`zig build run-ai-mcp`（`FakeTransport`，无子进程）。
+
+安全：生产务必给 Agent 设 `allowlist`（含 `mcp.*`）；可叠加 `hooks.on_tool_request` 审批。
+
+进程内 MCP-style **server** 仍用 `zfinal.AgentPlugin`（已支持 tools / resources / prompts）。
+
+---
+
 ## 安全边界
 
-- **默认不执行**任意 shell / 外部 MCP。需要时自行 `register` 受控 handler。
+- **默认不启动** shell / 外部 MCP；启用 MCP 后仍须 Agent `allowlist` + 可选 approval。
 - 生产务必设 `allowlist`，只暴露列出的工具名。
 - `hooks.on_tool_request` → `ToolApproval.allow/deny` 做人机确认门。
 - `tool_timeout_ms` / `Tool.timeout_ms` 为**协作式**超时（handler 应 `checkDeadline`），非抢占取消。

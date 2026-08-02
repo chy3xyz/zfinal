@@ -6,6 +6,11 @@ const std = @import("std");
 const HttpClient = @import("../plugin/http_client.zig").HttpClient;
 const tokenizer = @import("tokenizer.zig");
 const io_instance = @import("../io_instance.zig");
+const key_pool_mod = @import("key_pool.zig");
+
+pub const KeyPool = key_pool_mod.KeyPool;
+pub const KeyPoolConfig = key_pool_mod.KeyPoolConfig;
+pub const TokenBucket = key_pool_mod.TokenBucket;
 
 pub const AiProvider = struct {
     allocator: std.mem.Allocator,
@@ -16,8 +21,10 @@ pub const AiProvider = struct {
     max_output_tokens: usize = 4096,
     temperature: f64 = 0.7,
     metrics: Metrics = .{},
-    /// Simple client-side token bucket (optional).
+    /// Simple client-side token bucket (optional; ignored when `key_pool` is set).
     rate_limit: ?TokenBucket = null,
+    /// Multi-key pool for high concurrency (optional).
+    key_pool: ?*KeyPool = null,
 
     pub const Metrics = struct {
         total_requests: usize = 0,
@@ -27,6 +34,9 @@ pub const AiProvider = struct {
         tool_call_responses: usize = 0,
         rate_limited_count: usize = 0,
         retries_total: usize = 0,
+        key_rotations: usize = 0,
+        key_cooldowns: usize = 0,
+        all_keys_exhausted: usize = 0,
 
         pub fn toPrometheusFormat(self: Metrics, allocator: std.mem.Allocator, name: []const u8) ![]u8 {
             return std.fmt.allocPrint(allocator,
@@ -45,8 +55,22 @@ pub const AiProvider = struct {
                 \\# HELP zfinal_ai_provider_retries_total Transient retries.
                 \\# TYPE zfinal_ai_provider_retries_total counter
                 \\zfinal_ai_provider_retries_total{{provider="{s}"}} {d}
+                \\# HELP zfinal_ai_provider_key_rotations_total Key pool rotations after 429/401.
+                \\# TYPE zfinal_ai_provider_key_rotations_total counter
+                \\zfinal_ai_provider_key_rotations_total{{provider="{s}"}} {d}
+                \\# HELP zfinal_ai_provider_all_keys_exhausted_total Acquire failures when pool empty.
+                \\# TYPE zfinal_ai_provider_all_keys_exhausted_total counter
+                \\zfinal_ai_provider_all_keys_exhausted_total{{provider="{s}"}} {d}
                 \\
-            , .{ name, self.total_requests, name, self.total_prompt_tokens, name, self.total_completion_tokens, name, self.error_count, name, self.retries_total });
+            , .{
+                name, self.total_requests,
+                name, self.total_prompt_tokens,
+                name, self.total_completion_tokens,
+                name, self.error_count,
+                name, self.retries_total,
+                name, self.key_rotations,
+                name, self.all_keys_exhausted,
+            });
         }
     };
 
@@ -185,6 +209,7 @@ pub const AiProvider = struct {
     }
 
     fn acquireRate(self: *AiProvider) !void {
+        if (self.key_pool != null) return; // per-key RPM handled in KeyPool.acquire
         if (self.rate_limit) |*rl| {
             if (!rl.tryAcquire()) {
                 self.metrics.rate_limited_count += 1;
@@ -193,9 +218,42 @@ pub const AiProvider = struct {
         }
     }
 
-    fn authHeader(self: *AiProvider, auth_buf: *[512]u8) ![]const u8 {
-        if (std.mem.startsWith(u8, self.api_key, "Bearer ")) return self.api_key;
-        return try std.fmt.bufPrint(auth_buf, "Bearer {s}", .{self.api_key});
+    fn authHeaderFor(self: *AiProvider, key: []const u8, auth_buf: *[512]u8) ![]const u8 {
+        _ = self;
+        if (std.mem.startsWith(u8, key, "Bearer ")) return key;
+        return try std.fmt.bufPrint(auth_buf, "Bearer {s}", .{key});
+    }
+
+    fn resolveKey(self: *AiProvider) !struct { key: []const u8, acquired: ?key_pool_mod.Acquired } {
+        if (self.key_pool) |pool| {
+            const a = pool.acquire() catch |err| {
+                if (err == error.AllKeysExhausted) {
+                    self.metrics.all_keys_exhausted += 1;
+                    self.metrics.rate_limited_count += 1;
+                    return error.AllKeysExhausted;
+                }
+                return err;
+            };
+            return .{ .key = a.key, .acquired = a };
+        }
+        return .{ .key = self.api_key, .acquired = null };
+    }
+
+    fn finishKey(self: *AiProvider, acquired: ?key_pool_mod.Acquired, err: ?anyerror) void {
+        const a = acquired orelse return;
+        const pool = self.key_pool orelse return;
+        if (err) |e| {
+            if (e == error.RateLimited) {
+                pool.markRateLimited(a);
+                self.metrics.key_cooldowns += 1;
+                self.metrics.key_rotations += 1;
+            } else if (e == error.AuthError) {
+                pool.markBad(a);
+                self.metrics.key_cooldowns += 1;
+                self.metrics.key_rotations += 1;
+            }
+        }
+        pool.release(a);
     }
 
     pub fn chat(self: *AiProvider, messages: []const ChatMsg) !ChatResponse {
@@ -220,15 +278,19 @@ pub const AiProvider = struct {
     }
 
     fn isRetryable(err: anyerror) bool {
-        return err == error.RateLimited or err == error.UpstreamError or err == error.ConnectionError;
+        return err == error.RateLimited or err == error.UpstreamError or err == error.ConnectionError or err == error.AllKeysExhausted;
     }
 
     fn chatWithUnlocked(self: *AiProvider, messages: []const ChatMsg, opts: ChatOpts) !ChatResponse {
+        const resolved = self.resolveKey() catch |err| {
+            if (err == error.AllKeysExhausted) return error.RateLimited;
+            return err;
+        };
         const body = try self.buildRequestBody(messages, opts);
         defer self.allocator.free(body);
 
         var auth_buf: [512]u8 = undefined;
-        const auth = try self.authHeader(&auth_buf);
+        const auth = try self.authHeaderFor(resolved.key, &auth_buf);
 
         var headers: [2]std.http.Header = .{
             .{ .name = "content-type", .value = "application/json" },
@@ -236,6 +298,7 @@ pub const AiProvider = struct {
         };
 
         var http_resp = self.http.requestWith(.POST, self.endpoint, body, &headers) catch {
+            self.finishKey(resolved.acquired, error.ConnectionError);
             self.metrics.error_count += 1;
             return error.ConnectionError;
         };
@@ -244,10 +307,16 @@ pub const AiProvider = struct {
         self.metrics.total_requests += 1;
         if (http_resp.status < 200 or http_resp.status >= 300) {
             self.metrics.error_count += 1;
-            return mapHttpStatus(http_resp.status);
+            const mapped = mapHttpStatus(http_resp.status);
+            self.finishKey(resolved.acquired, mapped);
+            return mapped;
         }
 
-        const parsed = try self.parseResponse(http_resp.body);
+        const parsed = self.parseResponse(http_resp.body) catch |err| {
+            self.finishKey(resolved.acquired, err);
+            return err;
+        };
+        self.finishKey(resolved.acquired, null);
         if (parsed.tool_calls.len > 0) self.metrics.tool_call_responses += 1;
         return parsed;
     }
@@ -263,13 +332,18 @@ pub const AiProvider = struct {
     ) !ChatResponse {
         try self.acquireRate();
 
+        const resolved = self.resolveKey() catch |err| {
+            if (err == error.AllKeysExhausted) return error.RateLimited;
+            return err;
+        };
+
         var o = opts;
         o.stream = true;
         const body = try self.buildRequestBody(messages, o);
         defer self.allocator.free(body);
 
         var auth_buf: [512]u8 = undefined;
-        const auth = try self.authHeader(&auth_buf);
+        const auth = try self.authHeaderFor(resolved.key, &auth_buf);
 
         var headers: [3]std.http.Header = .{
             .{ .name = "content-type", .value = "application/json" },
@@ -281,6 +355,7 @@ pub const AiProvider = struct {
         defer acc.deinit();
 
         var http_resp = self.http.requestStream(.POST, self.endpoint, body, &headers, &acc, StreamAccum.onChunk) catch {
+            self.finishKey(resolved.acquired, null);
             o.stream = false;
             var resp = try self.chatWithUnlocked(messages, o);
             errdefer self.freeResponse(&resp);
@@ -298,7 +373,9 @@ pub const AiProvider = struct {
         self.metrics.total_requests += 1;
         if (http_resp.status < 200 or http_resp.status >= 300) {
             self.metrics.error_count += 1;
-            return mapHttpStatus(http_resp.status);
+            const mapped = mapHttpStatus(http_resp.status);
+            self.finishKey(resolved.acquired, mapped);
+            return mapped;
         }
 
         try acc.flush();
@@ -309,6 +386,7 @@ pub const AiProvider = struct {
         const content = try self.allocator.dupe(u8, acc.content.items);
         errdefer self.allocator.free(content);
         const tool_calls = try acc.takeToolCalls(self.allocator);
+        self.finishKey(resolved.acquired, null);
         if (tool_calls.len > 0) self.metrics.tool_call_responses += 1;
         self.metrics.total_prompt_tokens += acc.prompt_tokens;
         self.metrics.total_completion_tokens += acc.completion_tokens;
@@ -549,38 +627,6 @@ pub const AiProvider = struct {
                 }
             }
         }
-    }
-};
-
-const TokenBucket = struct {
-    io: std.Io,
-    mutex: std.Io.Mutex,
-    tokens: f64,
-    max_tokens: f64,
-    refill_per_sec: f64,
-    last_ms: i64,
-
-    fn init(io: std.Io, max_tokens: f64, refill_per_sec: f64) TokenBucket {
-        return .{
-            .io = io,
-            .mutex = .init,
-            .tokens = max_tokens,
-            .max_tokens = max_tokens,
-            .refill_per_sec = refill_per_sec,
-            .last_ms = @import("time_util.zig").nowMillis(),
-        };
-    }
-
-    fn tryAcquire(self: *TokenBucket) bool {
-        self.mutex.lock(self.io) catch return false;
-        defer self.mutex.unlock(self.io);
-        const now = @import("time_util.zig").nowMillis();
-        const elapsed_ms = @max(now - self.last_ms, 0);
-        self.last_ms = now;
-        self.tokens = @min(self.max_tokens, self.tokens + @as(f64, @floatFromInt(elapsed_ms)) * self.refill_per_sec / 1000.0);
-        if (self.tokens < 1.0) return false;
-        self.tokens -= 1.0;
-        return true;
     }
 };
 

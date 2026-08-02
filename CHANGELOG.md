@@ -1,5 +1,30 @@
 ## [Unreleased]
 
+## [0.20.15] - 2026-08-02
+
+### Added
+- **`zfinal.ai.KeyPool`**: multi-API-key rotation (least-inflight + RR), per-key RPM /
+  max_inflight, 429/401 cooldown; wired into `AiProvider.chatWith` / `chatStream`.
+- **`AiConfig.api_keys` / `key_rpm` / `key_max_inflight`**: `AiRuntime` builds an owned
+  `KeyPool` when multiple keys are configured.
+- **`ProviderRegistry` / `ProviderSpec`**: multi-endpoint weighted pick + failover.
+- **`zfinal.ai.default_deepseek_model`**: `deepseek-v4-flash` (official; `deepseek-chat` retired).
+- **`McpClient` / `McpBridge` / `AiRuntime.attachMcp`**: opt-in MCP client
+  (`initialize` / `tools/list`+cursor / `tools/call` / `resources/*` / `prompts/*`)
+  bridged into `SkillRegistry`. Instance-owned bridge; NDJSON + Content-Length;
+  **HTTP POST + SSE `data:`** (`mcpConnectHttp` / `McpHttpTransport`); response id match
+  **with out-of-order id buffer**; skip notifications; skill deadline on list/call.
+  Demo: `zig build run-ai-mcp`.
+- **`KeyPool`**: atomic metrics + `CooldownStore` / `MemoryCooldownStore` /
+  **`RedisCooldownStore`** (`zfinal.RedisCooldownStore`) for shared cooldown.
+
+### Changed
+- Docs / `aichat` tests / `zf ai --provider deepseek` default model → `deepseek-v4-flash`.
+- **`AgentPlugin`**: `tools/*` + `resources/list|read` + `prompts/list|get`.
+- **`SkillContext.active_tool_name`**: set by `dispatchWith` for MCP bridge handlers.
+- **`zf ai --provider anthropic`**: Messages API (`ANTHROPIC_API_KEY`, default Haiku).
+- README：区分 `AgentPlugin`（进程内 server）与 `McpClient`/`McpBridge`（外部 client）。
+
 ## [0.20.14] - 2026-08-02
 
 ### Added

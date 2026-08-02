@@ -1,6 +1,9 @@
 //! Business AI runtime: OpenAI-compatible chat + tools + ReAct agent.
 //! Orthogonal to `zfinal.aichat` (Curl/SSE/ZfTool codegen layer).
 
+/// Recommended DeepSeek chat model (official default; `deepseek-chat` retired).
+pub const default_deepseek_model = "deepseek-v4-flash";
+
 pub const Tool = @import("skill.zig").Tool;
 pub const Param = @import("skill.zig").Param;
 pub const SkillContext = @import("skill.zig").SkillContext;
@@ -9,6 +12,32 @@ pub const DispatchOpts = @import("skill.zig").DispatchOpts;
 pub const freeValue = @import("skill.zig").freeValue;
 
 pub const AiProvider = @import("provider.zig").AiProvider;
+pub const KeyPool = @import("key_pool.zig").KeyPool;
+pub const KeyPoolConfig = @import("key_pool.zig").KeyPoolConfig;
+pub const TokenBucket = @import("key_pool.zig").TokenBucket;
+pub const ProviderRegistry = @import("provider_registry.zig").ProviderRegistry;
+pub const ProviderSpec = @import("provider_registry.zig").ProviderSpec;
+
+pub const McpClient = @import("mcp_client.zig").McpClient;
+pub const McpToolInfo = @import("mcp_client.zig").McpToolInfo;
+pub const McpResourceInfo = @import("mcp_client.zig").McpResourceInfo;
+pub const McpPromptInfo = @import("mcp_client.zig").McpPromptInfo;
+pub const McpCallOpts = @import("mcp_client.zig").CallOpts;
+pub const McpTransport = @import("mcp_client.zig").Transport;
+pub const McpFakeTransport = @import("mcp_client.zig").FakeTransport;
+pub const McpHttpTransport = @import("mcp_http.zig").HttpTransport;
+pub const McpHttpOpts = @import("mcp_http.zig").HttpOpts;
+pub const mcpConnectHttp = @import("mcp_http.zig").connect;
+pub const parseMcpHttpBody = @import("mcp_http.zig").parseMcpHttpBody;
+pub const McpBridge = @import("mcp_skills.zig").McpBridge;
+pub const McpImportOpts = @import("mcp_skills.zig").McpImportOpts;
+pub const registerMcpTools = @import("mcp_skills.zig").registerMcpTools;
+/// Deprecated no-op; use `McpBridge.deinit`.
+pub const deinitMcpBridgeMetas = @import("mcp_skills.zig").deinitBridgeMetas;
+
+pub const KeyPoolMetrics = @import("key_pool.zig").KeyPoolMetrics;
+pub const CooldownStore = @import("key_pool.zig").CooldownStore;
+pub const MemoryCooldownStore = @import("key_pool.zig").MemoryCooldownStore;
 
 pub const Agent = @import("agent.zig").Agent;
 pub const AgentResult = @import("agent.zig").AgentResult;
@@ -120,6 +149,11 @@ pub const time_util = @import("time_util.zig");
 test {
     _ = @import("skill.zig");
     _ = @import("provider.zig");
+    _ = @import("key_pool.zig");
+    _ = @import("provider_registry.zig");
+    _ = @import("mcp_client.zig");
+    _ = @import("mcp_http.zig");
+    _ = @import("mcp_skills.zig");
     _ = @import("agent.zig");
     _ = @import("audit.zig");
     _ = @import("quota.zig");
