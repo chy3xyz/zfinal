@@ -1,8 +1,11 @@
 ## [Unreleased]
 
+## [0.20.13] - 2026-08-02
+
 ### Fixed
 - **`SkillRegistry.toOpenAiFunctionsAlloc`**: drop an extra `}` so tools JSON is
   valid (DeepSeek/OpenAI Agent+tools path was returning `ProviderError`).
+  Verified live with `deepseek-chat` / `deepseek-v4-flash`.
 
 ## [0.20.12] - 2026-08-02
 

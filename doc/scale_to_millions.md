@@ -1,6 +1,6 @@
 # 千万级用户支撑方案
 
-> **版本**：对齐 v0.20.12+ · 修订 **2026-08-02**  
+> **版本**：对齐 v0.20.13+ · 修订 **2026-08-02**  
 > **相关**：[progressive_architecture.md](progressive_architecture.md) · [outbox.md](outbox.md) · [bus.md](bus.md) · [architecture_best_practices.md](architecture_best_practices.md) · [best_practices.md](best_practices.md) · [`PRODUCTION_AUDIT.md`](../PRODUCTION_AUDIT.md) · [reverse_proxy.md](reverse_proxy.md)
 
 **结论：**「千万级用户」通常指注册量 / 月活，不是单机千万并发。  

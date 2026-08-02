@@ -5,7 +5,7 @@
 
 ZFinal is a high-performance Zig web framework **designed for AI-driven development**.
 Generated files mark `// ── ai-edit-zone: …`; `zf` emits JSON manifests; `zfinal.ZfTool`
-can invoke generators in-process. Current release: **v0.20.12** (Zig `0.17.0-dev.1422`).
+can invoke generators in-process. Current release: **v0.20.13** (Zig `0.17.0-dev.1422`).
 
 ## Why ZFinal
 
@@ -86,7 +86,7 @@ zfinal/
 
 ## Versioning
 
-Semantic versioning. Current: **v0.20.12** (`src/version.zig` ≡ `build.zig.zon`).  
+Semantic versioning. Current: **v0.20.13** (`src/version.zig` ≡ `build.zig.zon`).  
 Tagged releases on GitHub; manifests use the same `semver`. Unreleased L3/messaging
 hardening is tracked in [CHANGELOG.md](../CHANGELOG.md) `[Unreleased]`.
 
