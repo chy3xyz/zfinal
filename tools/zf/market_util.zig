@@ -78,6 +78,11 @@ pub fn matchQuery(item: std.json.Value, query: ?[]const u8) bool {
 }
 
 fn basename(p: []const u8) []const u8 {
+    return basenameOf(p);
+}
+
+/// Trailing path component (after the last '/', or the whole string).
+pub fn basenameOf(p: []const u8) []const u8 {
     if (std.mem.lastIndexOfScalar(u8, p, '/')) |i| return p[i + 1 ..];
     return p;
 }

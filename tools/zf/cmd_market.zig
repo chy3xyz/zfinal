@@ -132,13 +132,114 @@ pub const InstallOptions = struct {
     verify: bool = false,
 };
 
-/// `zf market install <id>` — implemented in Task 3 (download/extract/place).
+/// `zf market install <id>` — download the entry's artifact tarball, extract its
+/// `path` subdir, and place it (plugin → src/plugin/, example|module → vendor/marketplace/<id>/).
 pub fn handleInstall(allocator: std.mem.Allocator, catalog_path: ?[]const u8, id: []const u8, opts: InstallOptions) !void {
-    _ = allocator;
-    _ = catalog_path;
-    _ = id;
-    _ = opts;
-    std.debug.print("install: not implemented yet\n", .{});
+    var parsed = try loadCatalogSource(allocator, catalog_path);
+    defer parsed.deinit();
+    const entry = market_util.findEntry(&parsed.value, id) orelse {
+        std.debug.print("❌ module id not found: {s}\n", .{id});
+        return error.ModuleNotFound;
+    };
+    const url = market_util.entryUrl(entry) orelse {
+        std.debug.print("❌ module '{s}' has no remote artifact (url missing)\n", .{id});
+        return error.NoRemoteArtifact;
+    };
+    const kind = entry.object.get("kind").?.string;
+    const path = entry.object.get("path").?.string;
+
+    var dest_owned: []u8 = undefined;
+    if (std.mem.eql(u8, kind, "plugin")) {
+        dest_owned = try std.fmt.allocPrint(allocator, "src/plugin/{s}", .{market_util.basenameOf(path)});
+    } else {
+        dest_owned = try market_util.installDestFor(allocator, id, kind, opts.explicit_dir);
+    }
+    defer allocator.free(dest_owned);
+    const dest = dest_owned;
+
+    std.debug.print("📦 Install {s} [{s}]\n", .{ id, kind });
+    std.debug.print("   url:  {s}\n", .{url});
+    std.debug.print("   path: {s}\n", .{path});
+    std.debug.print("   dest: {s}\n", .{dest});
+
+    if (opts.dry_run) {
+        std.debug.print("   (dry-run — no changes made)\n", .{});
+        return;
+    }
+
+    // 1. Download the artifact tarball into memory.
+    var body = std.ArrayList(u8).empty;
+    defer body.deinit(allocator);
+    try fetchCatalog(allocator, url, &body);
+    if (body.items.len == 0) return error.EmptyArtifact;
+
+    // 2. Decompress gzip → tar and extract into a temp dir (no strip; the
+    //    archive prefix dir is resolved afterwards via moduleSrcIn).
+    const tmp_name = try std.fmt.allocPrint(allocator, ".zf-market-tmp-{d}", .{std.Io.Timestamp.now(zf_shared.io, .real).toSeconds()});
+    defer allocator.free(tmp_name);
+    defer std.Io.Dir.cwd().deleteTree(zf_shared.io, tmp_name) catch {};
+
+    var tmp_dir = try std.Io.Dir.cwd().createDirPathOpen(zf_shared.io, tmp_name, .{});
+    defer tmp_dir.close(zf_shared.io);
+
+    {
+        var input_reader = std.Io.Reader.fixed(body.items);
+        var win_buf: [std.compress.flate.max_window_len]u8 = undefined;
+        var decomp = std.compress.flate.Decompress.init(&input_reader, .gzip, &win_buf);
+        try std.tar.extract(zf_shared.io, tmp_dir, &decomp.reader, .{});
+    }
+
+    // 3. Locate the module source inside the extracted tree, skipping one
+    //    leading archive prefix dir when present (e.g. `zfinal-v0.20.3/`).
+    const module_src = try moduleSrcIn(allocator, tmp_dir, path);
+    defer allocator.free(module_src);
+
+    // 4. Ensure the destination parent exists, then move the module into place.
+    if (std.mem.lastIndexOfScalar(u8, dest, '/')) |slash| {
+        try zf_shared.ensureDir(allocator, dest[0..slash]);
+    }
+    tmp_dir.rename(module_src, std.Io.Dir.cwd(), dest, zf_shared.io) catch |err| {
+        std.debug.print("❌ failed to place module (dest may already exist): {t}\n", .{err});
+        return err;
+    };
+    std.debug.print("✅ Installed → {s}\n", .{dest});
+
+    if (opts.verify) {
+        std.debug.print("   Verifying: zig build\n", .{});
+        const r = std.process.run(allocator, zf_shared.io, .{ .argv = &.{ "zig", "build" } }) catch |err| {
+            std.debug.print("   ⚠️ zig build failed to run: {t}\n", .{err});
+            return;
+        };
+        defer allocator.free(r.stdout);
+        defer allocator.free(r.stderr);
+        if (r.term == .exited and r.term.exited == 0) {
+            std.debug.print("   ✅ zig build ok\n", .{});
+        } else {
+            std.debug.print("   ❌ zig build failed:\n{s}\n", .{r.stderr});
+        }
+    }
+}
+
+/// Resolve `path` inside an extracted `dir`, skipping one leading archive
+/// prefix directory when present (GitHub archives are `<repo>-<tag>/...`).
+/// Returns a caller-owned path.
+fn moduleSrcIn(allocator: std.mem.Allocator, dir: std.Io.Dir, path: []const u8) ![]u8 {
+    var it = dir.iterate();
+    var prefix: ?[]const u8 = null;
+    while (try it.next(zf_shared.io)) |entry| {
+        if (entry.kind == .directory and prefix == null) {
+            prefix = entry.name;
+        }
+    }
+    if (prefix) |p| {
+        const joined = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ p, path });
+        if (dir.access(zf_shared.io, joined, .{})) |_| {
+            return joined;
+        } else |_| {
+            allocator.free(joined);
+        }
+    }
+    return allocator.dupe(u8, path);
 }
 
 fn loadCatalog(allocator: std.mem.Allocator, path: []const u8) !std.json.Parsed(std.json.Value) {
