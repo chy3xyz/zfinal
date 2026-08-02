@@ -102,6 +102,10 @@ pub const SkillRegistry = struct {
         errdefer self.allocator.free(key);
         const params = try self.allocator.alloc(Param, tool.parameters.len);
         errdefer self.allocator.free(params);
+        var n_params: usize = 0;
+        errdefer {
+            for (params[0..n_params]) |p| self.allocator.free(p.name);
+        }
         for (tool.parameters, 0..) |p, i| {
             params[i] = .{
                 .name = try self.allocator.dupe(u8, p.name),
@@ -109,6 +113,7 @@ pub const SkillRegistry = struct {
                 .description = p.description,
                 .required = p.required,
             };
+            n_params = i + 1;
         }
         const gop = try self.tools.getOrPut(key);
         if (gop.found_existing) {

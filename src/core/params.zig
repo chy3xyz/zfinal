@@ -18,15 +18,35 @@ pub fn parseQueryIntoAllocator(allocator: std.mem.Allocator, query: []const u8, 
             const key = pair[0..eq_pos];
             const value = pair[eq_pos + 1 ..];
 
-            // URL decode both key and value
             const decoded_key = try urlDecode(allocator, key);
+            errdefer allocator.free(decoded_key);
             const decoded_value = try urlDecode(allocator, value);
+            errdefer allocator.free(decoded_value);
 
-            try params.put(decoded_key, decoded_value);
+            const gop = try params.getOrPut(decoded_key);
+            if (gop.found_existing) {
+                allocator.free(decoded_key);
+                allocator.free(gop.value_ptr.*);
+                gop.value_ptr.* = decoded_value;
+            } else {
+                gop.key_ptr.* = decoded_key;
+                gop.value_ptr.* = decoded_value;
+            }
         } else {
-            // No value, just key
             const decoded_key = try urlDecode(allocator, pair);
-            try params.put(decoded_key, "");
+            errdefer allocator.free(decoded_key);
+            const empty = try allocator.dupe(u8, "");
+            errdefer allocator.free(empty);
+
+            const gop = try params.getOrPut(decoded_key);
+            if (gop.found_existing) {
+                allocator.free(decoded_key);
+                allocator.free(gop.value_ptr.*);
+                gop.value_ptr.* = empty;
+            } else {
+                gop.key_ptr.* = decoded_key;
+                gop.value_ptr.* = empty;
+            }
         }
     }
 }
@@ -140,6 +160,14 @@ test "parseQuery with url encoding" {
 
     try std.testing.expectEqualStrings("Hello World", params.get("msg").?);
     try std.testing.expectEqualStrings("test@example.com", params.get("email").?);
+}
+
+test "parseQuery overwrite and key-only free cleanly" {
+    const allocator = std.testing.allocator;
+    var params = try parseQuery(allocator, "a=1&a=2&flag");
+    defer freeParams(allocator, &params);
+    try std.testing.expectEqualStrings("2", params.get("a").?);
+    try std.testing.expectEqualStrings("", params.get("flag").?);
 }
 
 /// Free a StringHashMap created by parseQuery

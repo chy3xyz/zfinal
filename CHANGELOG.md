@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Fixed
+- **Memory leaks (request path)**: `compressBody` no longer heap-allocates a
+  never-freed flate window; performance/access-log interceptors and
+  `SessionExt.setUserId` stop `allocPrint`+`setAttr` double-copy orphans;
+  performance interceptor no longer `free`s map-owned `getAttr` (UAF);
+  `setAttr`/`setHeader` overwrite frees prior values; `setCookieFull` /
+  `ensureQueryParams` / `parseQueryIntoAllocator` / `SkillRegistry.register`
+  errdefer ownership tightened.
+
 ## [0.20.13] - 2026-08-02
 
 ### Fixed

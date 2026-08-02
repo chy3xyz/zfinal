@@ -74,7 +74,8 @@ pub const SessionExt = struct {
 
     /// 设置当前用户 ID
     pub fn setUserId(ctx: *zfinal.Context, user_id: i64) !void {
-        const user_id_str = try std.fmt.allocPrint(ctx.allocator, "{d}", .{user_id});
+        var buf: [32]u8 = undefined;
+        const user_id_str = try std.fmt.bufPrint(&buf, "{d}", .{user_id});
         try ctx.setAttr(SESSION_PREFIX ++ "user_id", user_id_str);
     }
 

@@ -8,14 +8,15 @@ pub fn createPerformanceInterceptor() zfinal.Interceptor {
     const Impl = struct {
         fn before(ctx: *zfinal.Context, _: ?*anyopaque) !bool {
             const start_time = TimeKit.nowMillis();
-            try ctx.setAttr("_start_time", try std.fmt.allocPrint(ctx.allocator, "{d}", .{start_time}));
+            var buf: [32]u8 = undefined;
+            const start_str = try std.fmt.bufPrint(&buf, "{d}", .{start_time});
+            try ctx.setAttr("_start_time", start_str);
             return true;
         }
 
         fn after(ctx: *zfinal.Context, _: ?*anyopaque) !void {
+            // getAttr returns a map-owned borrow — do not free.
             if (ctx.getAttr("_start_time")) |start_str| {
-                defer ctx.allocator.free(start_str);
-
                 const start_time = try std.fmt.parseInt(i64, start_str, 10);
                 const end_time = TimeKit.nowMillis();
                 const duration = end_time - start_time;
@@ -61,7 +62,9 @@ pub fn createAccessLogInterceptor() zfinal.Interceptor {
     const Impl = struct {
         fn before(ctx: *zfinal.Context, _: ?*anyopaque) !bool {
             const timestamp = TimeKit.now();
-            try ctx.setAttr("_request_time", try std.fmt.allocPrint(ctx.allocator, "{d}", .{timestamp}));
+            var buf: [32]u8 = undefined;
+            const ts_str = try std.fmt.bufPrint(&buf, "{d}", .{timestamp});
+            try ctx.setAttr("_request_time", ts_str);
             return true;
         }
 

@@ -193,10 +193,17 @@ pub const Context = struct {
     }
 
     /// Set a response header. Copies both name and value — caller retains ownership.
+    /// Overwriting the same name frees the previous owned value.
     pub fn setHeader(self: *Context, name: []const u8, value: []const u8) !void {
+        const value_copy = try self.allocator.dupe(u8, value);
+        errdefer self.allocator.free(value_copy);
+        if (self.response_headers.getPtr(name)) |vp| {
+            self.allocator.free(vp.*);
+            vp.* = value_copy;
+            return;
+        }
         const name_copy = try self.allocator.dupe(u8, name);
         errdefer self.allocator.free(name_copy);
-        const value_copy = try self.allocator.dupe(u8, value);
         try self.response_headers.put(name_copy, value_copy);
     }
 
@@ -206,6 +213,14 @@ pub const Context = struct {
         if (self.query_params != null) return;
 
         var map = std.StringHashMap([]const u8).init(self.allocator);
+        errdefer {
+            var it = map.iterator();
+            while (it.next()) |e| {
+                self.allocator.free(e.key_ptr.*);
+                self.allocator.free(e.value_ptr.*);
+            }
+            map.deinit();
+        }
 
         // 1. Parse URL query string
         const target = self.req.head.target;
@@ -323,10 +338,17 @@ pub const Context = struct {
 
     // === Attributes ===
 
+    /// Store a request attribute (copies key+value). Overwrite frees the old value.
     pub fn setAttr(self: *Context, key: []const u8, value: []const u8) !void {
+        const value_copy = try self.allocator.dupe(u8, value);
+        errdefer self.allocator.free(value_copy);
+        if (self.attributes.getPtr(key)) |vp| {
+            self.allocator.free(vp.*);
+            vp.* = value_copy;
+            return;
+        }
         const key_copy = try self.allocator.dupe(u8, key);
         errdefer self.allocator.free(key_copy);
-        const value_copy = try self.allocator.dupe(u8, value);
         try self.attributes.put(key_copy, value_copy);
     }
 
@@ -420,6 +442,7 @@ pub const Context = struct {
         const value_copy = try self.allocator.dupe(u8, value);
         errdefer self.allocator.free(value_copy);
         const path_copy = try self.allocator.dupe(u8, path);
+        errdefer self.allocator.free(path_copy);
         try self.response_cookies.append(self.allocator, .{
             .name = name_copy,
             .value = value_copy,
@@ -444,20 +467,19 @@ pub const Context = struct {
 
     /// Apply gzip compression to a response body using std.compress.flate.
     /// Returns the compressed data, or the original body if compression fails/declines.
+    /// When `is_compressed`, caller owns `data` and must free it.
     fn compressBody(self: *Context, body: []const u8) !struct { data: []const u8, is_compressed: bool } {
         if (body.len < 256 or !self.clientAcceptsGzip()) return .{ .data = body, .is_compressed = false };
 
         var buf = std.ArrayList(u8).empty;
         errdefer buf.deinit(self.allocator);
 
-        // Compress in two phases: first write gzip output into a
-        // stack scratch buffer; if it fits in 16KB, append directly
-        // to `buf`. Otherwise allocate. The Raw compressor handles
-        // gzip header + footer automatically when container = .gzip.
+        // Stack window — Compress.Raw borrows it; never heap-alloc (was leaked).
+        var window: [std.compress.flate.max_window_len]u8 = undefined;
         var scratch: [16384]u8 = undefined;
         var scratch_w: std.Io.Writer = .fixed(&scratch);
         const Compress = std.compress.flate.Compress;
-        var compressor = Compress.Raw.init(&scratch_w, try self.allocator.alloc(u8, 8192), .gzip) catch |err| {
+        var compressor = Compress.Raw.init(&scratch_w, &window, .gzip) catch |err| {
             std.debug.print("context.compressGzip: compressor init failed ({s}); serving uncompressed\n", .{@errorName(err)});
             return .{ .data = body, .is_compressed = false };
         };
@@ -965,4 +987,25 @@ test "context: second render is no-op when response_started" {
     try ctx.renderJson(.{ .ignored = true });
     try std.testing.expect(ctx.response_started);
     try std.testing.expectEqualStrings("first", cap.body.items);
+}
+
+test "context: setAttr/setHeader overwrite frees previous value" {
+    const a = std.testing.allocator;
+    var ctx: Context = .{
+        .req = undefined,
+        .allocator = a,
+        .attributes = .init(a),
+        .response_cookies = .empty,
+        .response_headers = .init(a),
+        .compress_enabled = false,
+    };
+    defer ctx.deinit();
+
+    try ctx.setAttr("k", "v1");
+    try ctx.setAttr("k", "v2");
+    try std.testing.expectEqualStrings("v2", ctx.getAttr("k").?);
+
+    try ctx.setHeader("X-A", "1");
+    try ctx.setHeader("X-A", "2");
+    try std.testing.expectEqualStrings("2", ctx.response_headers.get("X-A").?);
 }
