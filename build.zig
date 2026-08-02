@@ -207,6 +207,30 @@ pub fn build(b: *std.Build) void {
     addExample(b, zfinal_mod, "production", "examples/production/main.zig", "Run production example", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "ports-l2", "examples/ports-l2/main.zig", "Run L2 ports DI demo (store/cache/bus)", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "ports-l3", "examples/ports-l3/main.zig", "Run L3 ports DI demo (store/cache/bus/outbox + tenant)", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "zfsaas", "examples/zfsaas/backend/main.zig", "Run zfsaas backend (auth/org/billing/todo API)", driver_mysql, driver_pg);
+
+    // SaaS Kit unit tests (SQLite in-memory domain tests)
+    {
+        const saas_test_mod = b.createModule(.{
+            .root_source_file = b.path("examples/zfsaas/backend/test_root.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "zfinal", .module = zfinal_mod }},
+        });
+        saas_test_mod.link_libc = true;
+        saas_test_mod.linkSystemLibrary("sqlite3", .{});
+        linkOptionalDbDrivers(saas_test_mod, driver_mysql, driver_pg);
+        const saas_tests = b.addTest(.{ .root_module = saas_test_mod, .name = "zfsaas-tests" });
+        const run_saas_tests = b.addRunArtifact(saas_tests);
+        const saas_test_step = b.step("test-zfsaas", "Run zfsaas backend domain tests (auth/org/billing/todo)");
+        saas_test_step.dependOn(&run_saas_tests.step);
+        const test_alias = b.step("test-saas-kit", "Alias for test-zfsaas");
+        test_alias.dependOn(saas_test_step);
+    }
+    // Back-compat: run-saas-kit → same binary as run-zfsaas
+    if (b.top_level_steps.get("run-zfsaas")) |run_zf| {
+        b.step("run-saas-kit", "Alias for run-zfsaas").dependOn(&run_zf.step);
+    }
     // RuoYi example — only when MySQL driver is enabled (needs libmysqlclient)
     if (driver_mysql) {
         const ruoyi_mod = b.createModule(.{
@@ -494,9 +518,19 @@ pub fn build(b: *std.Build) void {
         const run_catalog_tests = b.addRunFile(catalog_tests.getEmittedBin());
         run_catalog_tests.expectExitCode(0);
 
+        const market_util_mod = b.createModule(.{
+            .root_source_file = b.path("tools/zf/market_util.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        const market_util_tests = b.addTest(.{ .root_module = market_util_mod });
+        const run_market_util_tests = b.addRunFile(market_util_tests.getEmittedBin());
+        run_market_util_tests.expectExitCode(0);
+
         const zf_test_step = b.step("test-zf", "Run zf code generator regression tests");
         zf_test_step.dependOn(&run_zf_tests.step);
         zf_test_step.dependOn(&run_routes_tests.step);
         zf_test_step.dependOn(&run_catalog_tests.step);
+        zf_test_step.dependOn(&run_market_util_tests.step);
     }
 }
