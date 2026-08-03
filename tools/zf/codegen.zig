@@ -16,6 +16,16 @@ pub const Column = struct {
     sortable: bool = false,
     /// `-- @hidden` — exclude from list/JSON output.
     hidden: bool = false,
+    /// `-- @required` — non-empty (text) / non-null (optional) in generated validate().
+    required: bool = false,
+    /// `-- @min(N)` — numeric lower bound in generated validate().
+    min: ?i64 = null,
+    /// `-- @max(N)` — numeric upper bound in generated validate().
+    max: ?i64 = null,
+    /// `-- @email` — basic email format check in generated validate().
+    email: bool = false,
+    /// `-- @unique` — generate `validateUnique(db, data)` uniqueness check.
+    unique: bool = false,
 };
 
 pub const Table = struct {
@@ -132,8 +142,9 @@ fn applyTableBodyAnnotations(body: []const u8, tables: *std.ArrayList(Table), ta
     for (tables.items) |*t| {
         if (!std.mem.eql(u8, t.name, table_name)) continue;
         for (t.columns.items) |*c| {
-            var tags_buf: [4][]const u8 = undefined;
-            const n = lineTags(body, c.name, &tags_buf);
+            const line = findColumnLine(body, c.name) orelse continue;
+            var tags_buf: [7][]const u8 = undefined;
+            const n = collectTags(line, &tags_buf);
             for (tags_buf[0..n]) |tag| {
                 if (std.mem.eql(u8, tag, "filter")) {
                     c.filter = true;
@@ -143,15 +154,23 @@ fn applyTableBodyAnnotations(body: []const u8, tables: *std.ArrayList(Table), ta
                     c.sortable = true;
                 } else if (std.mem.eql(u8, tag, "hidden")) {
                     c.hidden = true;
+                } else if (std.mem.eql(u8, tag, "required")) {
+                    c.required = true;
+                } else if (std.mem.eql(u8, tag, "email")) {
+                    c.email = true;
+                } else if (std.mem.eql(u8, tag, "unique")) {
+                    c.unique = true;
                 }
             }
+            if (parseNumTag(line, "min")) |v| c.min = v;
+            if (parseNumTag(line, "max")) |v| c.max = v;
         }
     }
 }
 
-/// Find `col_name` as a word in `body`, then collect `@tag`s from the rest of
-/// that line (`--` comments run to end-of-line; `/* */` block comments end there too).
-fn lineTags(body: []const u8, col_name: []const u8, out: *[4][]const u8) usize {
+/// Locate `col_name` as a word in `body` and return the rest of that line
+/// (`--` comments run to end-of-line; `/* */` block comments end there too).
+fn findColumnLine(body: []const u8, col_name: []const u8) ?[]const u8 {
     var p: usize = 0;
     while (std.mem.indexOfPos(u8, body, p, col_name)) |idx| {
         const after = idx + col_name.len;
@@ -159,16 +178,25 @@ fn lineTags(body: []const u8, col_name: []const u8, out: *[4][]const u8) usize {
         const ok_after = after >= body.len or isWs(body[after]) or body[after] == '(' or body[after] == ',' or body[after] == '`' or body[after] == '"';
         if (ok_before and ok_after) {
             const line_end = std.mem.indexOfScalarPos(u8, body, idx, '\n') orelse body.len;
-            return collectTags(body[idx..line_end], out);
+            return body[idx..line_end];
         }
         p = idx + col_name.len;
     }
-    return 0;
+    return null;
 }
 
-fn collectTags(seg: []const u8, out: *[4][]const u8) usize {
+/// Parse `@<tag>(N)` (e.g. `@min(0)`, `@max(100)`) from a column line.
+fn parseNumTag(line: []const u8, comptime tag: []const u8) ?i64 {
+    const needle = "@" ++ tag ++ "(";
+    const start = std.mem.indexOf(u8, line, needle) orelse return null;
+    const rest = line[start + needle.len ..];
+    const end = std.mem.indexOfScalar(u8, rest, ')') orelse return null;
+    return std.fmt.parseInt(i64, rest[0..end], 10) catch null;
+}
+
+fn collectTags(seg: []const u8, out: *[7][]const u8) usize {
     var n: usize = 0;
-    const known = [_][]const u8{ "filter", "search", "sortable", "hidden" };
+    const known = [_][]const u8{ "filter", "search", "sortable", "hidden", "required", "email", "unique" };
     for (known) |tag| {
         var p: usize = 0;
         while (std.mem.indexOfPos(u8, seg, p, tag)) |idx| {
@@ -662,6 +690,35 @@ pub fn generateService(allocator: std.mem.Allocator, table: *const Table) ![]con
     const searchable_cols_text = try searchable.toOwnedSlice(allocator);
     defer allocator.free(searchable_cols_text);
 
+    // Uniqueness checks for `@unique` columns (ADR-017) — empty body = no-op.
+    var unique_lines = std.ArrayList(u8).empty;
+    defer unique_lines.deinit(allocator);
+    for (table.columns.items) |col| {
+        if (!col.unique) continue;
+        const zt = zigType(col);
+        const is_int = std.mem.indexOf(u8, zt, "i64") != null;
+        const is_opt = zt.len > 0 and zt[0] == '?';
+        try unique_lines.appendSlice(allocator, "    const existing = try ");
+        try unique_lines.appendSlice(allocator, name);
+        try unique_lines.appendSlice(allocator, "Model.findWhere(\"");
+        try unique_lines.appendSlice(allocator, col.name);
+        try unique_lines.appendSlice(allocator, " = ?\", &.{ zfinal.SqlParam{ .");
+        try unique_lines.appendSlice(allocator, if (is_int) "int = data." else "text = data.");
+        try unique_lines.appendSlice(allocator, col.name);
+        if (is_opt) {
+            try unique_lines.appendSlice(allocator, if (is_int) " orelse 0 } }, db.allocator);\n" else " orelse \"\" } }, db.allocator);\n");
+        } else {
+            try unique_lines.appendSlice(allocator, " } }, db.allocator);\n");
+        }
+        try unique_lines.appendSlice(allocator, "    defer { for (existing) |*it| it.deinit(db.allocator); db.allocator.free(existing); }\n");
+        try unique_lines.appendSlice(allocator, "    if (existing.len > 0) return error.DuplicateEntry;\n");
+    }
+    const unique_lines_text = if (unique_lines.items.len == 0)
+        try allocator.dupe(u8, "    _ = data;\n")
+    else
+        try unique_lines.toOwnedSlice(allocator);
+    defer allocator.free(unique_lines_text);
+
     const base = try std.fmt.allocPrint(allocator,
         \\// @generated — DO NOT EDIT. AI: edit directly.
         \\// Regenerate: zf crud:sql <schema.sql> — runs zf check after
@@ -734,6 +791,7 @@ pub fn generateService(allocator: std.mem.Allocator, table: *const Table) ![]con
         \\/// Create a new {s} record. Validates input, returns instance with .id set.
         \\pub fn create(db: *zfinal.DB, data: Data) !Instance {{
         \\    validate(data) catch return error.ValidationError;
+        \\    try validateUnique(db, data);
         \\    var instance = Instance{{ .data = data }};
         \\    try instance.save(db);
         \\    return instance;
@@ -753,14 +811,20 @@ pub fn generateService(allocator: std.mem.Allocator, table: *const Table) ![]con
         \\        if (comptime T == ?[]const u8 and new_val != null and new_val.?.len > 0) @field(item.data, fname) = new_val;
         \\    }}
         \\    validate(item.data) catch return error.ValidationError;
+        \\    try validateUnique(db, item.data);
         \\    try item.save(db);
         \\    return item;
         \\}}
         \\
-        \\/// Delete {s} record by ID.
+        \\        \\/// Delete {s} record by ID.
         \\pub fn deleteOne(db: *zfinal.DB, id: i64) !void {{
         \\    var item = try {s}Model.findById(db, id, db.allocator) orelse return error.NotFound;
         \\    try item.delete(db);
+        \\}}
+        \\
+        \\/// Uniqueness check for `@unique` columns (ADR-017). No-op when none annotated.
+        \\pub fn validateUnique(db: *zfinal.DB, data: Data) !void {{
+        \\{s}
         \\}}
         \\
         \\// ── ai-edit-zone: business rules ─────────────────────────────────
@@ -774,6 +838,7 @@ pub fn generateService(allocator: std.mem.Allocator, table: *const Table) ![]con
         name, name, name, name, name, name, name, name, // 1-8
         searchable_cols_text, // 9: searchable columns body
         name, name, name, name, name, name, name, name, name, // 10-18
+        unique_lines_text, // 19: validateUnique body (no-op when no @unique)
     });
     if (!hasAnnotations(table)) return base; // caller owns `base`
 
@@ -1013,6 +1078,49 @@ pub fn generateModel(allocator: std.mem.Allocator, table: *const Table, naming: 
             const lline = try std.fmt.allocPrint(allocator, "    if (data.{s}.len > {d}) return error.ValidationError;\n", .{ col.name, max });
             defer allocator.free(lline);
             try validation.appendSlice(allocator, lline);
+        }
+        // ── ADR-017 annotation rules: @required / @min / @max / @email ──
+        const zt = zigType(col);
+        const is_opt_text = std.mem.startsWith(u8, zt, "?[]const u8");
+        const is_text = std.mem.startsWith(u8, zt, "[]const u8");
+        if (col.required) {
+            if (is_opt_text) {
+                const vline = try std.fmt.allocPrint(allocator, "    if (data.{s} == null or data.{s}.?.len == 0) return error.ValidationError;\n", .{ col.name, col.name });
+                defer allocator.free(vline);
+                try validation.appendSlice(allocator, vline);
+            } else if (is_text) {
+                const vline = try std.fmt.allocPrint(allocator, "    if (data.{s}.len == 0) return error.ValidationError;\n", .{col.name});
+                defer allocator.free(vline);
+                try validation.appendSlice(allocator, vline);
+            } else if (std.mem.startsWith(u8, zt, "?")) {
+                const vline = try std.fmt.allocPrint(allocator, "    if (data.{s} == null) return error.ValidationError;\n", .{col.name});
+                defer allocator.free(vline);
+                try validation.appendSlice(allocator, vline);
+            }
+        }
+        if (col.min) |min| {
+            const vline = if (std.mem.startsWith(u8, zt, "?"))
+                try std.fmt.allocPrint(allocator, "    if ((data.{s} orelse 0) < {d}) return error.ValidationError;\n", .{ col.name, min })
+            else
+                try std.fmt.allocPrint(allocator, "    if (data.{s} < {d}) return error.ValidationError;\n", .{ col.name, min });
+            defer allocator.free(vline);
+            try validation.appendSlice(allocator, vline);
+        }
+        if (col.max) |max| {
+            const vline = if (std.mem.startsWith(u8, zt, "?"))
+                try std.fmt.allocPrint(allocator, "    if ((data.{s} orelse 0) > {d}) return error.ValidationError;\n", .{ col.name, max })
+            else
+                try std.fmt.allocPrint(allocator, "    if (data.{s} > {d}) return error.ValidationError;\n", .{ col.name, max });
+            defer allocator.free(vline);
+            try validation.appendSlice(allocator, vline);
+        }
+        if (col.email) {
+            const vline = if (is_opt_text)
+                try std.fmt.allocPrint(allocator, "    if ((data.{s} orelse \"\").len > 0 and std.mem.indexOfScalar(u8, data.{s} orelse \"\", '@') == null) return error.InvalidEmail;\n", .{ col.name, col.name })
+            else
+                try std.fmt.allocPrint(allocator, "    if (data.{s}.len > 0 and std.mem.indexOfScalar(u8, data.{s}, '@') == null) return error.InvalidEmail;\n", .{ col.name, col.name });
+            defer allocator.free(vline);
+            try validation.appendSlice(allocator, vline);
         }
     }
     // Skip: validation comments (//) don't use `data`. Only add _ = data if truly needed.

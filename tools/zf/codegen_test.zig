@@ -420,6 +420,12 @@ test "codegen regression: all templates tokenize across 6 schemas (incl. annotat
         \\  content TEXT,     -- @search
         \\  secret TEXT       /* @hidden */
         \\);
+        \\CREATE TABLE validated_products (
+        \\  id INTEGER PRIMARY KEY,
+        \\  sku TEXT NOT NULL,     -- @required @unique
+        \\  price REAL NOT NULL,   -- @min(0) @max(10000)
+        \\  email TEXT             -- @email
+        \\);
     };
     for (schemas) |sql| {
         var tables = try codegen.parseSqlFile(allocator, sql);
@@ -972,6 +978,50 @@ test "codegen: un-annotated handler keeps legacy list" {
             defer t.allocator.free(code);
             try std.testing.expect(std.mem.indexOf(u8, code, "bindQuery") == null);
             try std.testing.expect(std.mem.indexOf(u8, code, "service.search(db, q, ctx.allocator)") != null);
+        }
+    }.f);
+}
+
+test "codegen: validation annotations → validate() rules + validateUnique" {
+    const allocator = std.testing.allocator;
+    try withTable(allocator,
+        \\CREATE TABLE products (
+        \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+        \\  sku TEXT NOT NULL,        -- @required @unique
+        \\  price REAL NOT NULL,      -- @required @min(0) @max(10000)
+        \\  email TEXT,               -- @email
+        \\  note TEXT
+        \\);
+    , struct {
+        fn f(t: *codegen.Table) !void {
+            const model = try codegen.generateModel(t.allocator, t, .snake_case);
+            defer t.allocator.free(model);
+            try std.testing.expect(std.mem.indexOf(u8, model, "if (data.price < 0) return error.ValidationError;") != null);
+            try std.testing.expect(std.mem.indexOf(u8, model, "if (data.price > 10000) return error.ValidationError;") != null);
+            try std.testing.expect(std.mem.indexOf(u8, model, "return error.InvalidEmail;") != null);
+
+            const service = try codegen.generateService(t.allocator, t);
+            defer t.allocator.free(service);
+            try std.testing.expect(std.mem.indexOf(u8, service, "pub fn validateUnique(db: *zfinal.DB, data: Data) !void") != null);
+            try std.testing.expect(std.mem.indexOf(u8, service, "error.DuplicateEntry") != null);
+            try std.testing.expect(std.mem.indexOf(u8, service, "findWhere(\"sku = ?\"") != null);
+            try std.testing.expect(std.mem.indexOf(u8, service, "try validateUnique(db, data);") != null);
+            try std.testing.expect(std.mem.indexOf(u8, service, "try validateUnique(db, item.data);") != null);
+        }
+    }.f);
+}
+
+test "codegen: service without @unique emits no-op validateUnique" {
+    const allocator = std.testing.allocator;
+    try withTable(allocator,
+        \\CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT);
+    , struct {
+        fn f(t: *codegen.Table) !void {
+            const code = try codegen.generateService(t.allocator, t);
+            defer t.allocator.free(code);
+            try std.testing.expect(std.mem.indexOf(u8, code, "pub fn validateUnique(db: *zfinal.DB, data: Data) !void") != null);
+            try std.testing.expect(std.mem.indexOf(u8, code, "    _ = data;") != null);
+            try std.testing.expect(std.mem.indexOf(u8, code, "error.DuplicateEntry") == null);
         }
     }.f);
 }

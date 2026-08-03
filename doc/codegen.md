@@ -184,3 +184,26 @@ are compile-time validated by `Model.Query` — typos fail at build time.
 **Requirement:** annotated-mode generated code uses `Model.Query`,
 `Context.bindQuery`, and `Context.renderPage` (ADR-017), so the project must
 depend on a zfinal release that includes them (≥ the release after v0.20.15).
+
+### Validation rules (`-- @required` / `-- @min` / `-- @max` / `-- @email` / `-- @unique`)
+
+Column annotations also drive the generated `validate()` and a uniqueness check:
+
+```sql
+CREATE TABLE products (
+  id    INTEGER PRIMARY KEY AUTOINCREMENT,
+  sku   TEXT NOT NULL,        -- @required @unique
+  price REAL NOT NULL,        -- @required @min(0) @max(10000)
+  email TEXT                  -- @email
+);
+```
+
+| Tag | Generated check |
+|-----|-----------------|
+| `@required` | text → non-empty (`data.x.len == 0` → error); optional → non-null |
+| `@min(N)` / `@max(N)` | numeric bounds → `error.ValidationError` |
+| `@email` | basic format (`@` presence) → `error.InvalidEmail` |
+| `@unique` | `service.validateUnique(db, data)` queries `WHERE col = ?` → `error.DuplicateEntry`; called from generated `create`/`update` |
+
+`validateUnique` is always emitted (no-op when no `@unique` columns), so
+generated services stay consistent.

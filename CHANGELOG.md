@@ -8,6 +8,8 @@
   - `Context.bindQuery(&filters)` — declarative DTO binding from query params (`?i64` / `?i32` / `?f64` / `?bool` / `?[]const u8` / optional enums); missing params keep struct defaults, invalid values respond 400.
   - `Context.renderPage(page, allocator)` — unified `{data, total, page, size}` serialization plus ownership cleanup (per-item `deinit` + list free) in one call.
   - **`zf crud` column annotations**: `-- @filter` / `-- @search` / `-- @sortable` / `-- @hidden` trailing comments in `CREATE TABLE` generate a typed `Filters` struct and a `Model.Query`-based `service.list(db, f, page, size)`; the generated handler switches to `ctx.bindQuery` + `ctx.renderPage`. Un-annotated tables keep the legacy generated shape.
+  - **`Context.bindJson(&dto)`** — declarative JSON-body DTO binding (twin of `bindQuery`): parse + ignore unknown fields + 400 on malformed JSON; string fields owned by a request-scoped arena freed at `Context.deinit`.
+  - **Validation-rule annotations**: `-- @required` / `-- @min(N)` / `-- @max(N)` / `-- @email` / `-- @unique` drive the generated `validate()` and a `service.validateUnique(db, data)` uniqueness check called from `create`/`update` (`@unique` columns only; no-op otherwise).
 
 ## [0.20.15] - 2026-08-02
 

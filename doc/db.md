@@ -211,3 +211,15 @@ pub fn list(ctx: *zfinal.Context) !void {
   `?[]const u8`, optional enums. Missing params keep struct defaults.
 - `renderPage` serializes and frees: per-item `deinit(allocator)` (when the item
   type has one) + `Page.deinit()`.
+
+For write endpoints, `Context.bindJson(&dto)` is the JSON-body twin of
+`bindQuery`: it parses the request body into a struct (unknown fields ignored),
+responds 400 on malformed JSON, and its string fields are owned by a
+request-scoped arena freed at `Context.deinit` — so the DTO stays valid for the
+whole handler with no manual `deinit`:
+
+```zig
+var dto: service.Data = .{};
+try ctx.bindJson(&dto);          // parse + 400 + ownership handled
+const instance = service.create(db, dto);
+```
