@@ -27,9 +27,12 @@ pub fn signUp(ctx: *zfinal.Context) !void {
     defer service.freeAuthResult(ctx.allocator, result);
     try json_api.ok(ctx, .{
         .token = result.token,
+        .refresh_token = result.refresh_token,
+        .dev_verify_token = result.verify_token,
         .user = .{ .id = result.user_id, .email = result.email, .name = result.name },
         .org_id = result.org_id,
         .role = result.role,
+        .email_verified = result.email_verified,
     });
 }
 
@@ -44,9 +47,12 @@ pub fn signIn(ctx: *zfinal.Context) !void {
     defer service.freeAuthResult(ctx.allocator, result);
     try json_api.ok(ctx, .{
         .token = result.token,
+        .refresh_token = result.refresh_token,
+        .dev_verify_token = result.verify_token,
         .user = .{ .id = result.user_id, .email = result.email, .name = result.name },
         .org_id = result.org_id,
         .role = result.role,
+        .email_verified = result.email_verified,
     });
 }
 
@@ -60,11 +66,15 @@ pub fn me(ctx: *zfinal.Context) !void {
         ctx.allocator.free(user.name);
         ctx.allocator.free(user.locale);
     }
+    var vrs = try st.db.queryParams("SELECT email_verified_at FROM users WHERE id = ?", &.{.{ .int = user_id }});
+    defer vrs.deinit();
+    const verified = if (vrs.next()) vrs.getText(0) != null else false;
     try json_api.ok(ctx, .{
         .id = user.id,
         .email = user.email,
         .name = user.name,
         .locale = user.locale,
+        .email_verified = verified,
         .org_id = ctx.getAttr("jwt_org"),
         .role = ctx.getAttr("jwt_role"),
     });
@@ -95,6 +105,52 @@ pub fn confirmReset(ctx: *zfinal.Context) !void {
     service.resetPassword(st.db, ctx.allocator, body.token, body.password) catch |e| {
         return switch (e) {
             error.WeakPassword => json_api.err(ctx, .bad_request, "weak_password"),
+            error.NotFound => json_api.err(ctx, .not_found, "token"),
+            error.Gone => json_api.err(ctx, .gone, "token_used_or_expired"),
+            else => e,
+        };
+    };
+    try json_api.okEmpty(ctx);
+}
+
+const RefreshBody = struct { refresh_token: []const u8 = "" };
+const VerifyBody = struct { token: []const u8 = "" };
+
+/// Rotate refresh token → new access + refresh (P1).
+pub fn refresh(ctx: *zfinal.Context) !void {
+    const st = try state_mod.fromContext(ctx);
+    var body: RefreshBody = .{};
+    try ctx.bindJson(&body);
+    const result = service.refreshSession(st.db, ctx.allocator, body.refresh_token, st.jwt_secret, st.jwt_ttl_sec) catch {
+        return json_api.err(ctx, .unauthorized, "invalid_refresh");
+    };
+    defer service.freeAuthResult(ctx.allocator, result);
+    try json_api.ok(ctx, .{
+        .token = result.token,
+        .refresh_token = result.refresh_token,
+        .user = .{ .id = result.user_id, .email = result.email, .name = result.name },
+        .org_id = result.org_id,
+        .role = result.role,
+        .email_verified = result.email_verified,
+    });
+}
+
+/// Revoke a refresh token (logout).
+pub fn revoke(ctx: *zfinal.Context) !void {
+    const st = try state_mod.fromContext(ctx);
+    var body: RefreshBody = .{};
+    try ctx.bindJson(&body);
+    try service.revokeRefresh(st.db, ctx.allocator, body.refresh_token);
+    try json_api.okEmpty(ctx);
+}
+
+/// Verify email via the token returned at sign-up (P1).
+pub fn verifyEmail(ctx: *zfinal.Context) !void {
+    const st = try state_mod.fromContext(ctx);
+    var body: VerifyBody = .{};
+    try ctx.bindJson(&body);
+    service.verifyEmail(st.db, ctx.allocator, body.token) catch |e| {
+        return switch (e) {
             error.NotFound => json_api.err(ctx, .not_found, "token"),
             error.Gone => json_api.err(ctx, .gone, "token_used_or_expired"),
             else => e,

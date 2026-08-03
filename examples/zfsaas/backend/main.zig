@@ -93,6 +93,9 @@ pub fn main(init: std.process.Init) !void {
 
     try app.post("/api/auth/sign-up", auth_handler.signUp);
     try app.post("/api/auth/sign-in", auth_handler.signIn);
+    try app.post("/api/auth/refresh", auth_handler.refresh);
+    try app.post("/api/auth/revoke", auth_handler.revoke);
+    try app.post("/api/auth/verify-email", auth_handler.verifyEmail);
     try app.post("/api/auth/password-reset/request", auth_handler.requestReset);
     try app.post("/api/auth/password-reset/confirm", auth_handler.confirmReset);
     try app.getWithInterceptors("/api/auth/me", auth_handler.me, &auth_only);

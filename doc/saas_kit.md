@@ -119,3 +119,9 @@ SaaS Kit 后端已切换到声明式新特性（保持 `{ok, data, error}` 信�
 - **健康/指标**：`/health`（探针 JSON）与 `/metrics`（Prometheus）由框架 Metrics 驱动；`/api/health` 保留 SaaS 信封。
 - **审计**：`zfinal.auditLog` 事件集扩展了 `email_sent` / `invite_sent` / `subscription_changed`；zfsaas 在登录失败、重置邮件、邀请、checkout 处埋点（实测登录失败输出 `audit event=auth_fail path=/api/auth/sign-in`）。
 - **定时任务**：`src/task_runner.zig`（固定间隔线程）——订阅过期降级（60s）、未接受邀请清理（1h），实测 60s 周期运行正常。
+
+## P1 认证完整性（v0.20.17+）
+
+- **Refresh token 轮换 + 吊销**：sign-up/sign-in 返回 `refresh_token`（30 天）；`POST /api/auth/refresh` 轮换（旧 token 作废、签发新 access+refresh）；`POST /api/auth/revoke` 吊销；`auth_tokens` 表驱动，全部单次使用。
+- **Email 验证**：sign-up 返回 `dev_verify_token`（mock 邮件）；`POST /api/auth/verify-email` 置 `email_verified_at`；`me` 响应带 `email_verified`；token 24h 单次。
+- **框架修复**：读取请求体后 `getHeader` 会触发 `std.http` 的 `.received_head` 断言崩溃（webhook 先读 body 再取签名头必炸）。`Context.cacheHeaders()` 在 dispatch 时快照请求头，`getHeader` 改走缓存——任何"先读 body 再读 header"的 handler 都安全了。

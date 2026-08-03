@@ -343,6 +343,7 @@ fn dispatch(request: *http.Server.Request, server: *Server) !void {
     }
 
     var ctx = Context.init(request, server.allocator);
+    ctx.cacheHeaders(); // snapshot headers before the body can invalidate them
     ctx.max_body_size = server.config.max_body_size;
     ctx.compress_enabled = server.config.compress_responses;
     ctx.app_state = server.app_state;

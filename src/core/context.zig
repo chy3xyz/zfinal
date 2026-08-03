@@ -37,6 +37,10 @@ pub const Context = struct {
     deadline_ns: ?i128 = null,
     query_params: ?std.StringHashMap([]const u8) = null,
     path_params: ?std.StringHashMap([]const u8) = null,
+    /// Cached request headers (dup'd). Populated by `cacheHeaders` at dispatch
+    /// time — reading the body invalidates the server's header buffer, so
+    /// handlers must not call `getHeader` after body consumption otherwise.
+    header_map: ?std.StringHashMap([]const u8) = null,
     attributes: std.StringHashMap([]const u8),
     session_id: ?[]const u8 = null,
     cookies: ?std.StringHashMap([]const u8) = null,
@@ -148,9 +152,44 @@ pub const Context = struct {
 
         // Request-scoped arena for bindJson-owned DTO strings.
         if (self.arena) |*a| a.deinit();
+
+        // Cached request headers (dup'd in cacheHeaders).
+        if (self.header_map) |*hm| {
+            var it = hm.iterator();
+            while (it.next()) |e| {
+                self.allocator.free(e.key_ptr.*);
+                self.allocator.free(e.value_ptr.*);
+            }
+            hm.deinit();
+        }
+    }
+
+    /// Snapshot request headers into `header_map` (dup'd). Called by the
+    /// server right after `receiveHead`, while the reader is still in
+    /// `.received_head` state. After the body is read, `iterateHeaders` asserts
+    /// on that state, so `getHeader` must use the cache instead.
+    pub fn cacheHeaders(self: *Context) void {
+        if (self.capture != null or self.mock_headers != null) return;
+        if (self.header_map != null) return;
+        var map = std.StringHashMap([]const u8).init(self.allocator);
+        var it = self.req.iterateHeaders();
+        while (it.next()) |header| {
+            const name = self.allocator.dupe(u8, header.name) catch break;
+            errdefer self.allocator.free(name);
+            const value = self.allocator.dupe(u8, header.value) catch break;
+            map.put(name, value) catch {
+                self.allocator.free(name);
+                self.allocator.free(value);
+                break;
+            };
+        }
+        self.header_map = map;
     }
 
     pub fn getHeader(self: *Context, name: []const u8) ?[]const u8 {
+        if (self.header_map) |*hm| {
+            return hm.get(name);
+        }
         if (self.mock_headers) |*mh| {
             var it = mh.iterator();
             while (it.next()) |e| {
