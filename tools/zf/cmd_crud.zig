@@ -133,7 +133,7 @@ pub fn handleCrud(allocator: std.mem.Allocator, db_path: []const u8, table_name:
 
     const sub = try modulePath(allocator, table.name);
     defer allocator.free(sub);
-    try writeGeneratedFiles(allocator, &table, sub, false);
+    try writeGeneratedFiles(allocator, &table, sub, false, null); // no raw DDL available
 }
 
 pub fn handleCrudFromDsn(allocator: std.mem.Allocator, dsn_url: []const u8) !void {
@@ -411,7 +411,7 @@ pub fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8, pro
     for (tables.items) |*table| {
         const mp = try modulePath(allocator, table.name);
         defer allocator.free(mp);
-        try writeGeneratedFiles(allocator, table, mp, force);
+        try writeGeneratedFiles(allocator, table, mp, force, content);
     }
 
     // Step 4: Generate module manifest (auto-aggregates all module routes)
@@ -616,7 +616,7 @@ fn generateModuleManifest(allocator: std.mem.Allocator, tables: []codegen.Table)
     std.debug.print("✅ Generated module manifest: src/modules/manifest.gen.zig\n", .{});
 }
 
-fn writeGeneratedFiles(allocator: std.mem.Allocator, table: *codegen.Table, module_path: []const u8, force_overwrite: bool) !void {
+fn writeGeneratedFiles(allocator: std.mem.Allocator, table: *codegen.Table, module_path: []const u8, force_overwrite: bool, sql_text: ?[]const u8) !void {
     // Shared deps.zig — only written once
     {
         const deps =
@@ -714,6 +714,17 @@ fn writeGeneratedFiles(allocator: std.mem.Allocator, table: *codegen.Table, modu
     const routes_path = try std.fmt.allocPrint(allocator, "{s}/routes.zig", .{module_dir});
     defer allocator.free(routes_path);
     try safeWrite(allocator, routes_path, routes, force_overwrite);
+
+    // ── schema.gen.sql: original CREATE TABLE + annotation-derived indexes ──
+    if (sql_text) |sql| {
+        const raw_ddl = try codegen.findCreateTableSql(allocator, sql, table.name);
+        defer allocator.free(raw_ddl);
+        const schema_sql = try codegen.generateSchemaSql(allocator, raw_ddl, table);
+        defer allocator.free(schema_sql);
+        const schema_path = try std.fmt.allocPrint(allocator, "{s}/schema.gen.sql", .{module_dir});
+        defer allocator.free(schema_path);
+        try safeWrite(allocator, schema_path, schema_sql, force_overwrite);
+    }
 
     // ── test.gen.zig (always overwrite) ──
     try ensureDir(allocator, "test/gen");

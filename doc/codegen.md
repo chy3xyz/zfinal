@@ -226,3 +226,23 @@ pub fn toView(self: *const UsersModel.Instance) View { ... }
 
 `View` fields borrow the instance's strings (valid for the handler scope).
 Tables without `@hidden` columns skip the projection entirely.
+
+### Generated schema file (`schema.gen.sql`) + annotation-derived indexes
+
+Each module now ships a `schema.gen.sql`: the original `CREATE TABLE` verbatim
+plus `CREATE INDEX` statements derived from annotations — `@unique` → unique
+index, `@filter` / `@sortable` → plain index (primary keys skipped):
+
+```sql
+-- src/modules/posts/schema.gen.sql (regenerate: zf crud:sql)
+CREATE TABLE posts ( ... );   -- original DDL preserved
+
+-- Indexes derived from annotations (@filter/@sortable/@unique, ADR-017)
+CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status);
+CREATE INDEX IF NOT EXISTS idx_posts_views ON posts(views);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_sku_u ON posts(sku);
+```
+
+This is what makes the performance guidance actionable: **the filters/sort you
+declare are the indexes you get** — apply `schema.gen.sql` to your DB (or
+`zf migrate`) and the filtered list / `validateUnique` paths go index-driven.

@@ -1083,3 +1083,53 @@ test "codegen: no @hidden columns → no View projection" {
         }
     }.f);
 }
+
+test "codegen: findCreateTableSql + generateIndexesSql from annotations" {
+    const allocator = std.testing.allocator;
+    const sql =
+        \\CREATE TABLE posts (
+        \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+        \\  title TEXT,
+        \\  status TEXT,      -- @filter @in_list
+        \\  views INTEGER,    -- @filter @sortable
+        \\  sku TEXT          -- @unique
+        \\);
+        \\
+    ;
+    var tables = try codegen.parseSqlFile(allocator, sql);
+    defer {
+        for (tables.items) |*t| t.deinit();
+        tables.deinit(allocator);
+    }
+    const t = &tables.items[0];
+
+    const ddl = try codegen.findCreateTableSql(allocator, sql, "posts");
+    defer allocator.free(ddl);
+    try std.testing.expect(std.mem.indexOf(u8, ddl, "CREATE TABLE posts") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ddl, "sku TEXT          -- @unique") != null); // original DDL preserved
+
+    const idx = try codegen.generateIndexesSql(allocator, t);
+    defer allocator.free(idx);
+    try std.testing.expect(std.mem.indexOf(u8, idx, "CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status);") != null);
+    try std.testing.expect(std.mem.indexOf(u8, idx, "CREATE INDEX IF NOT EXISTS idx_posts_views ON posts(views);") != null);
+    try std.testing.expect(std.mem.indexOf(u8, idx, "CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_sku_u ON posts(sku);") != null);
+    try std.testing.expect(std.mem.indexOf(u8, idx, "idx_posts_id") == null); // pk skipped
+
+    const schema = try codegen.generateSchemaSql(allocator, ddl, t);
+    defer allocator.free(schema);
+    try std.testing.expect(std.mem.indexOf(u8, schema, "CREATE TABLE posts") != null);
+    try std.testing.expect(std.mem.indexOf(u8, schema, "CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_sku_u") != null);
+}
+
+test "codegen: generateIndexesSql empty without annotations" {
+    const allocator = std.testing.allocator;
+    try withTable(allocator,
+        \\CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT);
+    , struct {
+        fn f(t: *codegen.Table) !void {
+            const idx = try codegen.generateIndexesSql(std.testing.allocator, t);
+            defer std.testing.allocator.free(idx);
+            try std.testing.expectEqual(@as(usize, 0), idx.len);
+        }
+    }.f);
+}

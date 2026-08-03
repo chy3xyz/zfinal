@@ -502,6 +502,59 @@ pub fn parseSqlFile(allocator: std.mem.Allocator, sql: []const u8) !std.ArrayLis
     return tables;
 }
 
+/// Locate the raw `CREATE TABLE` segment for `table_name` in `sql` (owned copy).
+pub fn findCreateTableSql(allocator: std.mem.Allocator, sql: []const u8, table_name: []const u8) ![]const u8 {
+    var pos: usize = 0;
+    while (std.mem.indexOfPos(u8, sql, pos, "CREATE TABLE")) |real_create| {
+        var p = skipWs(sql, real_create + "CREATE TABLE".len);
+        if (skipKeyword(sql, p, "IF")) |after_if| {
+            const q = skipWs(sql, after_if);
+            if (skipKeyword(sql, q, "NOT")) |after_not| {
+                const r = skipWs(sql, after_not);
+                if (skipKeyword(sql, r, "EXISTS")) |after_exists| p = skipWs(sql, after_exists);
+            }
+        }
+        const name_end = scanIdentifierEnd(sql, p);
+        const name = stripQuotes(sql[p..name_end]);
+        const paren_start = std.mem.indexOfScalarPos(u8, sql, name_end, '(') orelse return error.InvalidSyntax;
+        const close = findClosingParen(sql, paren_start) orelse return error.InvalidSyntax;
+        var end_pos = close + 1;
+        if (end_pos < sql.len and sql[end_pos] == ';') end_pos += 1;
+        if (std.mem.eql(u8, name, table_name)) {
+            return allocator.dupe(u8, sql[real_create..end_pos]);
+        }
+        pos = end_pos;
+    }
+    return error.NoCreateTable;
+}
+
+/// `CREATE [UNIQUE] INDEX` statements derived from column annotations
+/// (ADR-017): `@unique` → unique index; `@filter` / `@sortable` → plain index.
+/// Primary keys are skipped (already auto-indexed). No annotations → empty.
+pub fn generateIndexesSql(allocator: std.mem.Allocator, table: *const Table) ![]const u8 {
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+    for (table.columns.items) |col| {
+        if (col.is_primary_key) continue;
+        if (!col.unique and !col.filter and !col.sortable) continue;
+        const kw = if (col.unique) "CREATE UNIQUE INDEX" else "CREATE INDEX";
+        const suffix = if (col.unique) "_u" else "";
+        const line = try std.fmt.allocPrint(allocator, "{s} IF NOT EXISTS idx_{s}_{s}{s} ON {s}({s});\n", .{ kw, table.name, col.name, suffix, table.name, col.name });
+        defer allocator.free(line);
+        try out.appendSlice(allocator, line);
+    }
+    return out.toOwnedSlice(allocator);
+}
+
+/// Full per-module schema file: original `CREATE TABLE` + annotation-derived
+/// `CREATE INDEX` statements.
+pub fn generateSchemaSql(allocator: std.mem.Allocator, raw_create: []const u8, table: *const Table) ![]const u8 {
+    const indexes = try generateIndexesSql(allocator, table);
+    defer allocator.free(indexes);
+    if (indexes.len == 0) return allocator.dupe(u8, raw_create);
+    return std.fmt.allocPrint(allocator, "{s}\n\n-- Indexes derived from annotations (@filter/@sortable/@unique, ADR-017)\n{s}", .{ raw_create, indexes });
+}
+
 fn toPascalCase(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
     var result = std.ArrayList(u8).empty;
     var cap = true;
