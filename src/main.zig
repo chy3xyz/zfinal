@@ -84,6 +84,7 @@ pub const SqlParam = @import("db/sql_param.zig").SqlParam;
 pub const ParamQuery = @import("db/sql_param.zig").ParamQuery;
 pub const Model = @import("db/model.zig").Model;
 pub const ModelWithPK = @import("db/model.zig").ModelWithPK;
+pub const QueryBuilder = @import("db/model.zig").QueryBuilder;
 pub const ConnectionPool = @import("db/pool.zig").ConnectionPool;
 pub const Page = @import("db/pagination.zig").Page;
 pub const SqlTemplate = @import("db/sql_template.zig").SqlTemplate;

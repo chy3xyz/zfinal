@@ -169,3 +169,45 @@ zig build -Ddriver_pg=true           # Enable PostgreSQL (requires libpq)
 zig build -Ddriver_mysql=true        # Enable MySQL (requires libmysqlclient)
 zig build test -Ddriver_pg=true -Ddriver_mysql=true  # All DB integration tests
 ```
+
+## Declarative List Query + DTO (ADR-017)
+
+Lists no longer need hand-built WHERE strings and `SqlParam[]` arrays. Use
+`Model.Query` (fluent, compile-time column validation), `Context.bindQuery`
+(declarative DTO binding), and `Context.renderPage` (unified paged JSON):
+
+```zig
+const PostModel = zfinal.Model(Post, "posts");
+
+const Filters = struct {
+    status: ?[]const u8 = null,
+    views_min: ?i64 = null,
+    q: ?[]const u8 = null,
+    sort: ?enum { asc, desc } = null,
+};
+
+pub fn list(ctx: *zfinal.Context) !void {
+    const db = try pool.acquire();
+    defer pool.release(db) catch {};
+    var f: Filters = .{};
+    try ctx.bindQuery(&f);                       // ← B: params → struct (400 on bad values)
+    var q = PostModel.Query.init(db, ctx.allocator);
+    defer q.deinit();
+    try q.textEq("status", f.status);            // ← A: comptime-validated columns
+    try q.gte("views", f.views_min);
+    try q.likeAll(&.{ "title", "content" }, f.q);
+    try q.orderBy("id", f.sort orelse .desc);
+    const page = try ctx.getParaToLongDefault("page", 1);
+    try ctx.renderPage(                         // ← C: {data,total,page,size} + frees items
+        try q.paginate(@intCast(page), 20, ctx.allocator),
+        ctx.allocator,
+    );
+}
+```
+
+- Column names in `eq/gt/.../orderBy` are validated against the model's table
+  struct at **compile time** — typos and injection-shaped names fail to build.
+- `bindQuery` supported field types: `?i64`, `?i32`, `?f64`, `?bool`,
+  `?[]const u8`, optional enums. Missing params keep struct defaults.
+- `renderPage` serializes and frees: per-item `deinit(allocator)` (when the item
+  type has one) + `Page.deinit()`.
