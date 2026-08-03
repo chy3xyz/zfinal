@@ -1,0 +1,1249 @@
+openapi: 3.0.3
+info:
+ title: ZFinal API
+ version: 0.1.0
+components:
+ securitySchemes:
+  bearerAuth:
+   type: http
+   scheme: bearer
+   bearerFormat: JWT
+ schemas:
+  HttpError:
+   type: object
+   required: [err, msg]
+   properties:
+    err:
+     type: string
+     description: machine code (bad_request, unauthorized, ...)
+    msg:
+     type: string
+    detail:
+     type: string
+  JsonObject:
+   type: object
+   additionalProperties: true
+   description: Generic JSON object (refine per-route when DTO known)
+  JsonOk:
+   type: object
+   properties:
+    ok:
+     type: boolean
+    data:
+     $ref: '#/components/schemas/JsonObject'
+  Task:
+   type: object
+   properties:
+    name:
+     type: string
+    interval_sec:
+     type: integer
+    last_run_unix:
+     type: integer
+    run:
+     type: string
+  TaskInput:
+   type: object
+   properties:
+    name:
+     type: string
+    interval_sec:
+     type: integer
+    last_run_unix:
+     type: integer
+    run:
+     type: string
+  UserRow:
+   type: object
+   properties:
+    id:
+     type: integer
+    email:
+     type: string
+    name:
+     type: string
+    locale:
+     type: string
+  UserRowInput:
+   type: object
+   properties:
+    email:
+     type: string
+    name:
+     type: string
+    locale:
+     type: string
+  AuthResult:
+   type: object
+   properties:
+    token:
+     type: string
+    refresh_token:
+     type: string
+     nullable: true
+    verify_token:
+     type: string
+     nullable: true
+    user_id:
+     type: integer
+    email:
+     type: string
+    name:
+     type: string
+    org_id:
+     type: string
+     nullable: true
+    role:
+     type: string
+     nullable: true
+    email_verified:
+     type: boolean
+  AuthResultInput:
+   type: object
+   properties:
+    token:
+     type: string
+    refresh_token:
+     type: string
+     nullable: true
+    verify_token:
+     type: string
+     nullable: true
+    user_id:
+     type: integer
+    email:
+     type: string
+    name:
+     type: string
+    org_id:
+     type: string
+     nullable: true
+    role:
+     type: string
+     nullable: true
+    email_verified:
+     type: boolean
+  OrgRow:
+   type: object
+   properties:
+    id:
+     type: string
+    name:
+     type: string
+    role:
+     type: string
+  OrgRowInput:
+   type: object
+   properties:
+    name:
+     type: string
+    role:
+     type: string
+  InviteResult:
+   type: object
+   properties:
+    invite_id:
+     type: integer
+    raw_token:
+     type: string
+  InviteResultInput:
+   type: object
+   properties:
+    invite_id:
+     type: integer
+    raw_token:
+     type: string
+  Todo:
+   type: object
+   properties:
+    id:
+     type: integer
+     nullable: true
+    owner_id:
+     type: string
+    org_id:
+     type: string
+    title:
+     type: string
+    message:
+     type: string
+    updated_at:
+     type: string
+    created_at:
+     type: string
+  TodoInput:
+   type: object
+   properties:
+    owner_id:
+     type: string
+    org_id:
+     type: string
+    title:
+     type: string
+    message:
+     type: string
+  SubRow:
+   type: object
+   properties:
+    org_id:
+     type: string
+    status:
+     type: string
+    stripe_subscription_id:
+     type: string
+     nullable: true
+    stripe_price_id:
+     type: string
+     nullable: true
+    current_period_end:
+     type: string
+     nullable: true
+  SubRowInput:
+   type: object
+   properties:
+    org_id:
+     type: string
+    status:
+     type: string
+    stripe_subscription_id:
+     type: string
+     nullable: true
+    stripe_price_id:
+     type: string
+     nullable: true
+    current_period_end:
+     type: string
+     nullable: true
+  CheckoutResult:
+   type: object
+   properties:
+    url:
+     type: string
+    mock:
+     type: boolean
+  CheckoutResultInput:
+   type: object
+   properties:
+    url:
+     type: string
+    mock:
+     type: boolean
+  AppState:
+   type: object
+   properties:
+    db:
+     type: string
+    allocator:
+     type: string
+    jwt_secret:
+     type: string
+    jwt_ttl_sec:
+     type: integer
+    stripe_secret:
+     type: string
+     nullable: true
+    stripe_webhook_secret:
+     type: string
+     nullable: true
+    stripe_price_id:
+     type: string
+     nullable: true
+    public_base_url:
+     type: string
+    email:
+     type: string
+  AppStateInput:
+   type: object
+   properties:
+    db:
+     type: string
+    allocator:
+     type: string
+    jwt_secret:
+     type: string
+    jwt_ttl_sec:
+     type: integer
+    stripe_secret:
+     type: string
+     nullable: true
+    stripe_webhook_secret:
+     type: string
+     nullable: true
+    stripe_price_id:
+     type: string
+     nullable: true
+    public_base_url:
+     type: string
+    email:
+     type: string
+paths:
+ /api/auth/change-password:
+  post:
+   parameters: []
+   requestBody:
+    required: true
+    content:
+     application/json:
+      schema:
+       $ref: '#/components/schemas/JsonObject'
+   security:
+    - bearerAuth: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/JsonOk'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '401':
+     description: Unauthorized
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+ /api/auth/me:
+  get:
+   parameters: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/JsonOk'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+ /api/auth/password-reset/confirm:
+  post:
+   parameters: []
+   requestBody:
+    required: true
+    content:
+     application/json:
+      schema:
+       $ref: '#/components/schemas/JsonObject'
+   security:
+    - bearerAuth: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/JsonOk'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '401':
+     description: Unauthorized
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+ /api/auth/password-reset/request:
+  post:
+   parameters: []
+   requestBody:
+    required: true
+    content:
+     application/json:
+      schema:
+       $ref: '#/components/schemas/JsonObject'
+   security:
+    - bearerAuth: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/JsonOk'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '401':
+     description: Unauthorized
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+ /api/auth/refresh:
+  post:
+   parameters: []
+   requestBody:
+    required: true
+    content:
+     application/json:
+      schema:
+       $ref: '#/components/schemas/JsonObject'
+   security:
+    - bearerAuth: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/JsonOk'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '401':
+     description: Unauthorized
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+ /api/auth/revoke:
+  post:
+   parameters: []
+   requestBody:
+    required: true
+    content:
+     application/json:
+      schema:
+       $ref: '#/components/schemas/JsonObject'
+   security:
+    - bearerAuth: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/JsonOk'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '401':
+     description: Unauthorized
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+ /api/auth/sign-in:
+  post:
+   parameters: []
+   requestBody:
+    required: true
+    content:
+     application/json:
+      schema:
+       $ref: '#/components/schemas/JsonObject'
+   security:
+    - bearerAuth: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/JsonOk'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '401':
+     description: Unauthorized
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+ /api/auth/sign-up:
+  post:
+   parameters: []
+   requestBody:
+    required: true
+    content:
+     application/json:
+      schema:
+       $ref: '#/components/schemas/JsonObject'
+   security:
+    - bearerAuth: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/JsonOk'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '401':
+     description: Unauthorized
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+ /api/auth/verify-email:
+  post:
+   parameters: []
+   requestBody:
+    required: true
+    content:
+     application/json:
+      schema:
+       $ref: '#/components/schemas/JsonObject'
+   security:
+    - bearerAuth: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/JsonOk'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '401':
+     description: Unauthorized
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+ /api/billing/checkout:
+  post:
+   parameters: []
+   requestBody:
+    required: true
+    content:
+     application/json:
+      schema:
+       $ref: '#/components/schemas/JsonObject'
+   security:
+    - bearerAuth: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/JsonOk'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '401':
+     description: Unauthorized
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+ /api/billing/subscription:
+  get:
+   parameters: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/JsonOk'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+ /api/billing/webhook:
+  post:
+   parameters: []
+   requestBody:
+    required: true
+    content:
+     application/json:
+      schema:
+       $ref: '#/components/schemas/JsonObject'
+   security:
+    - bearerAuth: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/JsonOk'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '401':
+     description: Unauthorized
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+ /api/health:
+  get:
+   parameters: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/JsonOk'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+ /api/invites/accept:
+  post:
+   parameters: []
+   requestBody:
+    required: true
+    content:
+     application/json:
+      schema:
+       $ref: '#/components/schemas/JsonObject'
+   security:
+    - bearerAuth: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/JsonOk'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '401':
+     description: Unauthorized
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+ /api/orgs:
+  get:
+   parameters: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/JsonOk'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+  post:
+   parameters: []
+   requestBody:
+    required: true
+    content:
+     application/json:
+      schema:
+       $ref: '#/components/schemas/JsonObject'
+   security:
+    - bearerAuth: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/JsonOk'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '401':
+     description: Unauthorized
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+ /api/orgs/switch:
+  post:
+   parameters: []
+   requestBody:
+    required: true
+    content:
+     application/json:
+      schema:
+       $ref: '#/components/schemas/JsonObject'
+   security:
+    - bearerAuth: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/JsonOk'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '401':
+     description: Unauthorized
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+ /api/orgs/{id}/invites:
+  post:
+   parameters:
+    - name: id
+     in: path
+     required: true
+     schema:
+      type: string
+   requestBody:
+    required: true
+    content:
+     application/json:
+      schema:
+       $ref: '#/components/schemas/JsonObject'
+   security:
+    - bearerAuth: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/JsonOk'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '401':
+     description: Unauthorized
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '404':
+     description: Not Found
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+ /api/todos:
+  get:
+   parameters: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/Todo'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+  post:
+   parameters: []
+   requestBody:
+    required: true
+    content:
+     application/json:
+      schema:
+       $ref: '#/components/schemas/TodoInput'
+   security:
+    - bearerAuth: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/Todo'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '401':
+     description: Unauthorized
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+ /api/todos/{id}:
+  get:
+   parameters:
+    - name: id
+     in: path
+     required: true
+     schema:
+      type: string
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/Todo'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '404':
+     description: Not Found
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+  put:
+   parameters:
+    - name: id
+     in: path
+     required: true
+     schema:
+      type: string
+   requestBody:
+    required: true
+    content:
+     application/json:
+      schema:
+       $ref: '#/components/schemas/TodoInput'
+   security:
+    - bearerAuth: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/Todo'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '401':
+     description: Unauthorized
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '404':
+     description: Not Found
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+  delete:
+   parameters:
+    - name: id
+     in: path
+     required: true
+     schema:
+      type: string
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/Todo'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '401':
+     description: Unauthorized
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '404':
+     description: Not Found
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+ /health:
+  get:
+   parameters: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/JsonOk'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+ /metrics:
+  get:
+   parameters: []
+   responses:
+    '200':
+     description: OK
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/JsonOk'
+    '400':
+     description: Bad Request
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '422':
+     description: Unprocessable Entity
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'
+    '429':
+     description: Too Many Requests
+     content:
+      application/json:
+       schema:
+        $ref: '#/components/schemas/HttpError'

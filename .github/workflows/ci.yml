@@ -41,6 +41,7 @@ jobs:
         zig build
         zig build test
         zig build test-zf
+        zig build test-zfsaas
 
   drivers-compile:
     name: Compile with PG + MySQL + zent

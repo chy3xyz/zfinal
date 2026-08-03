@@ -130,3 +130,10 @@ SaaS Kit 后端已切换到声明式新特性（保持 `{ok, data, error}` 信�
 
 - **改密**：`POST /api/auth/change-password`（需登录，body `{current_password, new_password}`）；校验当前密码（错 → 401 `wrong_password`），更新哈希并**吊销该用户全部 refresh token**（他端会话强制下线）。
 - **todo 分页（向后兼容）**：`GET /api/todos?page=1&size=20` 返回 `{ok, data:[...], error, meta:{total,page,size}}` —— `data` 仍是数组（前端零改动），`meta` 纯增量；不带 `page` 时保持返回全部（legacy）。size 上限 100。
+
+## P2：越权测试 / OpenAPI / 部署（v0.20.17+）
+
+- **越权测试**：`saas_kit_test` 新增跨 org 访问控制用例——他人 org 的 todo `update/delete` → `error.NotFound`、`list` → 空；本 org 更新正常。修复了 `updateInOrg` 直接把调用方字符串塞进 `Instance.data` 的问题（`Instance.deinit` 会 free 它们，传字面量必崩；现在先 `dupe` 再替换旧值）。
+- **OpenAPI**：`zf openapi` 在 backend 下生成 `openapi.yaml`（25 条路由，含 bearerAuth）；重生成：`cd examples/zfsaas/backend && zf openapi --out openapi.yaml`。
+- **部署**：`Dockerfile` 为运行时镜像（debian-slim + sqlite3，宿主机构建二进制后 COPY）；配合 `SAAS_DB=/data/saas-kit.db` 卷挂载。
+- **CI/gate**：`quality_gate.sh full` 与 `ci.yml`（macOS job）都加入 `zig build test-zfsaas`，示例回归进合并门槛。

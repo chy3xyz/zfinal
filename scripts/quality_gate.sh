@@ -53,6 +53,9 @@ section "zig build test"
 zig build test
 pass "unit tests"
 
+section "zig build test-zfsaas"
+zig build test-zfsaas
+
 section "zig build test-zf"
 zig build test-zf
 pass "codegen regression"

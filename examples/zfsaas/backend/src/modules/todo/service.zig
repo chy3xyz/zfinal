@@ -54,10 +54,19 @@ pub fn createInOrg(db: *zfinal.DB, title: []const u8, message: []const u8, org_i
 
 pub fn updateInOrg(db: *zfinal.DB, allocator: std.mem.Allocator, id: i64, org_id: []const u8, title: ?[]const u8, message: ?[]const u8) !Instance {
     var item = try findByIdInOrg(db, allocator, id, org_id) orelse return error.NotFound;
+    // Instance.deinit frees owned strings, so dupe caller-provided values first.
     if (title) |t| {
-        if (t.len > 0) item.data.title = t;
+        if (t.len > 0) {
+            const owned = try allocator.dupe(u8, t);
+            allocator.free(item.data.title);
+            item.data.title = owned;
+        }
     }
-    if (message) |m| item.data.message = m;
+    if (message) |m| {
+        const owned = try allocator.dupe(u8, m);
+        allocator.free(item.data.message);
+        item.data.message = owned;
+    }
     try item.save(db);
     return item;
 }
