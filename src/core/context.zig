@@ -293,6 +293,32 @@ pub const Context = struct {
         return params.toBoolean(value, default_value) orelse default_value;
     }
 
+    // === Declarative DTO binding ===
+
+    /// Bind query-string params into a struct by field name (declarative DTO
+    /// binding, ADR-017). Supported field types: `?i64`, `?i32`, `?f64`,
+    /// `?bool`, `?[]const u8`, and optionals of enums (`?enum { asc, desc }`).
+    /// Missing params keep the struct's existing defaults; a present-but-invalid
+    /// value responds 400 with a JSON error and returns `error.BadRequest`.
+    /// Text values are borrowed from the request params (valid for the handler).
+    pub fn bindQuery(self: *Context, ptr: anytype) !void {
+        const Getter = struct {
+            ctx: *Context,
+            fn get(ctx: *@This(), name: []const u8) ?[]const u8 {
+                return ctx.ctx.getPara(name) catch null;
+            }
+        };
+        const g = Getter{ .ctx = self };
+        bindStruct(g, ptr) catch |err| {
+            if (err == error.BadRequestValue) {
+                self.res_status = .bad_request;
+                try self.renderJson(.{ .err = "invalid query parameter value" });
+                return error.BadRequest;
+            }
+            return err;
+        };
+    }
+
     // === Path Parameters ===
 
     /// Get path parameter value
@@ -1008,4 +1034,115 @@ test "context: setAttr/setHeader overwrite frees previous value" {
     try ctx.setHeader("X-A", "1");
     try ctx.setHeader("X-A", "2");
     try std.testing.expectEqualStrings("2", ctx.response_headers.get("X-A").?);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Declarative DTO binding helpers (ADR-017) — pure, unit-testable.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Iterate a struct's fields and bind each from `getter.get(field_name)`.
+/// Missing params keep the struct's defaults; invalid values return
+/// `error.BadRequestValue`.
+fn bindStruct(getter: anytype, ptr: anytype) !void {
+    const PtrT = @TypeOf(ptr);
+    const Struct = @typeInfo(PtrT).@"pointer".child;
+    const fields = @typeInfo(Struct).@"struct";
+    inline for (fields.field_names, fields.field_types) |fname, FT| {
+        const raw = getter.get(fname);
+        if (raw) |r| { // param absent — keep the struct's default
+            @field(ptr, fname) = try parseBound(FT, r);
+        }
+    }
+}
+
+fn parseBound(comptime FT: type, raw: ?[]const u8) !FT {
+    const is_opt = @typeInfo(FT) == .optional;
+    const T = if (is_opt) @typeInfo(FT).optional.child else FT;
+    const trimmed = if (raw) |r| std.mem.trim(u8, r, " \t\r\n") else null;
+    if (trimmed == null or trimmed.?.len == 0) {
+        return if (is_opt) @as(FT, null) else std.mem.zeroes(FT);
+    }
+    return switch (@typeInfo(T)) {
+        .int => blk: {
+            const v = std.fmt.parseInt(T, trimmed.?, 10) catch return error.BadRequestValue;
+            break :blk if (is_opt) @as(FT, v) else @as(FT, v);
+        },
+        .float => blk: {
+            const v = std.fmt.parseFloat(T, trimmed.?) catch return error.BadRequestValue;
+            break :blk if (is_opt) @as(FT, v) else @as(FT, v);
+        },
+        .bool => blk: {
+            const v = params.toBoolean(trimmed, null) orelse return error.BadRequestValue;
+            break :blk if (is_opt) @as(FT, v) else @as(FT, v);
+        },
+        .pointer => blk: {
+            if (T != []const u8) @compileError("unsupported bindQuery pointer type: " ++ @typeName(FT));
+            break :blk if (is_opt) @as(FT, trimmed.?) else @as(FT, trimmed.?);
+        },
+        .@"enum" => blk: {
+            const v = std.meta.stringToEnum(T, trimmed.?) orelse return error.BadRequestValue;
+            break :blk if (is_opt) @as(FT, v) else @as(FT, v);
+        },
+        else => @compileError("unsupported bindQuery field type: " ++ @typeName(FT)),
+    };
+}
+
+const QueryStub = struct {
+    map: std.StringHashMap([]const u8),
+    fn get(self: QueryStub, name: []const u8) ?[]const u8 {
+        return self.map.get(name);
+    }
+};
+
+test "bindStruct: parses typed fields with defaults preserved" {
+    const a = std.testing.allocator;
+    var map = std.StringHashMap([]const u8).init(a);
+    defer map.deinit();
+    try map.put("status", "pub");
+    try map.put("views", "42");
+    try map.put("active", "true");
+    try map.put("q", "hello");
+    try map.put("sort", "desc");
+    const stub = QueryStub{ .map = map };
+
+    const Filters = struct {
+        status: ?[]const u8 = null,
+        views: ?i64 = null,
+        active: ?bool = null,
+        q: ?[]const u8 = null,
+        sort: ?enum { asc, desc } = null,
+        min_views: ?i64 = null,
+        limit: i64 = 20,
+    };
+    var f: Filters = .{};
+    try bindStruct(stub, &f);
+    try std.testing.expectEqualStrings("pub", f.status.?);
+    try std.testing.expectEqual(@as(?i64, 42), f.views);
+    try std.testing.expectEqual(@as(?bool, true), f.active);
+    try std.testing.expectEqualStrings("hello", f.q.?);
+    try std.testing.expect(f.sort != null and f.sort.? == .desc);
+    try std.testing.expectEqual(@as(?i64, null), f.min_views);
+    try std.testing.expectEqual(@as(i64, 20), f.limit); // missing param keeps default
+}
+
+test "bindStruct: invalid int → BadRequestValue" {
+    const a = std.testing.allocator;
+    var map = std.StringHashMap([]const u8).init(a);
+    defer map.deinit();
+    try map.put("views", "abc");
+    const stub = QueryStub{ .map = map };
+    const Filters = struct { views: ?i64 = null };
+    var f: Filters = .{};
+    try std.testing.expectError(error.BadRequestValue, bindStruct(stub, &f));
+}
+
+test "bindStruct: invalid enum tag → BadRequestValue" {
+    const a = std.testing.allocator;
+    var map = std.StringHashMap([]const u8).init(a);
+    defer map.deinit();
+    try map.put("sort", "sideways");
+    const stub = QueryStub{ .map = map };
+    const Filters = struct { sort: ?enum { asc, desc } = null };
+    var f: Filters = .{};
+    try std.testing.expectError(error.BadRequestValue, bindStruct(stub, &f));
 }
