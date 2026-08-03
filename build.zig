@@ -414,6 +414,28 @@ pub fn build(b: *std.Build) void {
         run_db_bench_step.dependOn(&run_db_bench_cmd.step);
     }
 
+    // ADR-017 declarative list query / DTO micro-benchmark
+    {
+        const adr_bench_mod = b.createModule(.{
+            .root_source_file = b.path("benchmark/adr017_bench.zig"),
+            .target = target,
+            .optimize = .ReleaseFast, // bench must be optimized to be meaningful
+            .imports = &.{.{ .name = "zfinal", .module = zfinal_mod }},
+        });
+        adr_bench_mod.link_libc = true;
+        adr_bench_mod.linkSystemLibrary("sqlite3", .{});
+        linkOptionalDbDrivers(adr_bench_mod, driver_mysql, driver_pg);
+        const adr_bench_exe = b.addExecutable(.{
+            .name = "zbench-adr017",
+            .root_module = adr_bench_mod,
+        });
+        b.installArtifact(adr_bench_exe);
+        const run_adr_bench_cmd = b.addRunArtifact(adr_bench_exe);
+        run_adr_bench_cmd.step.dependOn(b.getInstallStep());
+        const run_adr_bench_step = b.step("run-adr017-bench", "Run ADR-017 declarative query/DTO benchmark");
+        run_adr_bench_step.dependOn(&run_adr_bench_cmd.step);
+    }
+
     // sockread / HttpClient isolation micro-benchmark
     {
         const sr_bench_mod = b.createModule(.{
