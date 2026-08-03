@@ -1,4 +1,4 @@
-## [Unreleased]
+## [0.20.16] - 2026-08-03
 
 ### Added
 - **Module marketplace phase 2 (ADR-016)**: `zf market update` syncs the remote catalog (`https://raw.githubusercontent.com/chy3xyz/zfinal/main/marketplace/catalog.json`) to `~/.cache/zf/marketplace-catalog.json`; `zf market list|search|info` prefer the cache and fall back to the repo-local catalog; `zf market install <id>` downloads the entry's `url` tarball, extracts its `path` (skipping the GitHub archive prefix), and places plugins into `src/plugin/` or examples/modules into `vendor/marketplace/<id>/`. Supports `--dir`, `--dry-run`, `--verify`, `--registry`, `--json`.
