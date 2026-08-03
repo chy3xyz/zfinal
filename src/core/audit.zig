@@ -8,6 +8,10 @@ pub const Event = enum {
     rate_limited,
     csrf_reject,
     jwt_ok,
+    /// Business events (SaaS-style apps): email sent, invite issued, subscription state change.
+    email_sent,
+    invite_sent,
+    subscription_changed,
 };
 
 /// Emit a one-line structured audit record via the global logger.
@@ -17,6 +21,9 @@ pub fn log(event: Event, path: []const u8, detail: []const u8) void {
         .rate_limited => "rate_limited",
         .csrf_reject => "csrf_reject",
         .jwt_ok => "jwt_ok",
+        .email_sent => "email_sent",
+        .invite_sent => "invite_sent",
+        .subscription_changed => "subscription_changed",
     };
     getLogger().warnFmt("audit event={s} path={s} detail={s}", .{ name, path, detail });
 }

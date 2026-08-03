@@ -112,3 +112,10 @@ SaaS Kit 后端已切换到声明式新特性（保持 `{ok, data, error}` 信�
 - **body 结构体必填字段给默认值**（`email: []const u8 = ""`），使 `bindJson` 缺失字段走默认值，再由 `validate()` / 业务校验兜底成 400。
 
 收益：每个 create/update handler 少 3 行样板且无泄漏路径；todo 列表获得声明式搜索/排序（列名编译期校验）。
+
+## P0 生产底座（v0.20.17+）
+
+- **全局限流**：`RateLimitHandler` 全局拦截器（默认 300 req/min/IP），超限返回 429 + `audit event=rate_limited`，分配失败 fail-open。
+- **健康/指标**：`/health`（探针 JSON）与 `/metrics`（Prometheus）由框架 Metrics 驱动；`/api/health` 保留 SaaS 信封。
+- **审计**：`zfinal.auditLog` 事件集扩展了 `email_sent` / `invite_sent` / `subscription_changed`；zfsaas 在登录失败、重置邮件、邀请、checkout 处埋点（实测登录失败输出 `audit event=auth_fail path=/api/auth/sign-in`）。
+- **定时任务**：`src/task_runner.zig`（固定间隔线程）——订阅过期降级（60s）、未接受邀请清理（1h），实测 60s 周期运行正常。

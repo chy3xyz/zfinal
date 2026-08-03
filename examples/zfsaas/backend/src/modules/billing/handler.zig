@@ -22,6 +22,7 @@ pub fn subscription(ctx: *zfinal.Context) !void {
 pub fn checkout(ctx: *zfinal.Context) !void {
     const st = try state_mod.fromContext(ctx);
     const org_id = try requireOrg(ctx);
+    zfinal.auditLog(.subscription_changed, "/api/billing/checkout", org_id);
     const result = try service.createCheckout(
         ctx.allocator,
         org_id,

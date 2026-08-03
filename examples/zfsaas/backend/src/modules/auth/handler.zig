@@ -38,6 +38,7 @@ pub fn signIn(ctx: *zfinal.Context) !void {
     var body: SignBody = .{};
     try ctx.bindJson(&body);
     const result = service.signIn(st.db, ctx.allocator, body.email, body.password, st.jwt_secret, st.jwt_ttl_sec) catch {
+        zfinal.auditLog(.auth_fail, "/api/auth/sign-in", body.email);
         return json_api.err(ctx, .unauthorized, "invalid_credentials");
     };
     defer service.freeAuthResult(ctx.allocator, result);
@@ -77,6 +78,7 @@ pub fn requestReset(ctx: *zfinal.Context) !void {
     var body: ResetRequestBody = .{};
     try ctx.bindJson(&body);
     // Always ok (no email enumeration); mock returns token in data when found (dev).
+    zfinal.auditLog(.email_sent, "/api/auth/password-reset/request", body.email);
     const raw = try service.requestPasswordReset(st.db, ctx.allocator, body.email, &st.email);
     if (raw) |t| {
         defer ctx.allocator.free(t);

@@ -70,6 +70,7 @@ pub fn invite(ctx: *zfinal.Context) !void {
 
     var body: InviteBody = .{};
     try ctx.bindJson(&body);
+    zfinal.auditLog(.invite_sent, "/api/orgs/:id/invites", body.email);
     const role = body.role orelse "member";
     const inv = service.createInvite(st.db, ctx.allocator, org_id, body.email, role, uid, &st.email) catch |e| {
         return switch (e) {
