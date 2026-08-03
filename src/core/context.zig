@@ -308,7 +308,7 @@ pub const Context = struct {
     pub fn bindQuery(self: *Context, ptr: anytype) !void {
         const Getter = struct {
             ctx: *Context,
-            fn get(ctx: *@This(), name: []const u8) ?[]const u8 {
+            fn get(ctx: *const @This(), name: []const u8) ?[]const u8 {
                 return ctx.ctx.getPara(name) catch null;
             }
         };
