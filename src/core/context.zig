@@ -1,5 +1,6 @@
 const std = @import("std");
 const params = @import("params.zig");
+const Page = @import("../db/pagination.zig").Page;
 
 /// Monotonic nanosecond timestamp. Zig 0.17 removed
 /// `std.time.Instant.now()` / `nanoTimestamp()` in favor of
@@ -614,7 +615,6 @@ pub const Context = struct {
             self.markResponded();
             return;
         }
-
         const compressed = try self.compressBody(json);
         defer if (compressed.is_compressed) self.allocator.free(compressed.data);
 
@@ -646,6 +646,23 @@ pub const Context = struct {
             .keep_alive = self.req.head.keep_alive,
         });
         self.markResponded();
+    }
+
+    /// Serialize a `Page(T)`-shaped value as `{data, total, page, size}`, then
+    /// free it: per-item `deinit(allocator)` (when the item type has one) and
+    /// the list slice. One call replaces the render + free dance in list handlers.
+    pub fn renderPage(self: *Context, page: anytype, allocator: std.mem.Allocator) !void {
+        var p = page;
+        const items = p.list;
+        const Item = @TypeOf(items[0]);
+        const total: i64 = @intCast(p.total_row);
+        const page_num: i64 = @intCast(p.page_number);
+        const size: i64 = @intCast(p.page_size);
+
+        errdefer deinitPageItems(items, Item, allocator);
+        try self.renderJson(.{ .data = items, .total = total, .page = page_num, .size = size });
+        deinitPageItems(items, Item, allocator);
+        p.deinit();
     }
 
     pub fn renderHtml(self: *Context, html: []const u8) !void {
@@ -1145,4 +1162,49 @@ test "bindStruct: invalid enum tag → BadRequestValue" {
     const Filters = struct { sort: ?enum { asc, desc } = null };
     var f: Filters = .{};
     try std.testing.expectError(error.BadRequestValue, bindStruct(stub, &f));
+}
+
+/// Free a Page's items (calling `deinit(allocator)` when the item type has one).
+/// The list slice itself is freed by `Page.deinit`.
+fn deinitPageItems(items: anytype, comptime Item: type, allocator: std.mem.Allocator) void {
+    if (@hasDecl(Item, "deinit")) {
+        for (items) |*it| it.deinit(allocator);
+    }
+}
+
+test "context: renderPage serializes and frees items" {
+    const a = std.testing.allocator;
+    var cap: Context.CapturedResponse = .{ .allocator = a };
+    defer cap.deinit();
+    var ctx: Context = .{
+        .req = undefined,
+        .allocator = a,
+        .attributes = .init(a),
+        .response_cookies = .empty,
+        .response_headers = .init(a),
+        .capture = &cap,
+        .compress_enabled = false,
+    };
+    defer {
+        ctx.attributes.deinit();
+        ctx.response_headers.deinit();
+        ctx.response_cookies.deinit(a);
+    }
+
+    const Item = struct {
+        name: []const u8,
+        fn deinit(self: *const @This(), allocator: std.mem.Allocator) void {
+            allocator.free(self.name);
+        }
+    };
+    const list = try a.alloc(Item, 2);
+    list[0] = .{ .name = try a.dupe(u8, "x") };
+    list[1] = .{ .name = try a.dupe(u8, "y") };
+    const page = Page(Item).init(a, list, 1, 2, 2);
+    try ctx.renderPage(page, a);
+    try std.testing.expect(ctx.response_started);
+    try std.testing.expectEqualStrings(
+        "{\"data\":[{\"name\":\"x\"},{\"name\":\"y\"}],\"total\":2,\"page\":1,\"size\":2}",
+        cap.body.items,
+    );
 }
