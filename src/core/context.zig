@@ -145,6 +145,9 @@ pub const Context = struct {
             self.allocator.free(ck.path);
         }
         self.response_cookies.deinit(self.allocator);
+
+        // Request-scoped arena for bindJson-owned DTO strings.
+        if (self.arena) |*a| a.deinit();
     }
 
     pub fn getHeader(self: *Context, name: []const u8) ?[]const u8 {
@@ -789,6 +792,32 @@ pub const Context = struct {
         return std.json.parseFromSlice(T, self.allocator, body, .{ .ignore_unknown_fields = true, .allocate = .alloc_always });
     }
 
+    /// Declarative JSON-body DTO binding (ADR-017). Parses the request body
+    /// into `ptr` (unknown fields ignored); the struct's string fields are
+    /// owned by a request-scoped arena freed at `Context.deinit`, so they stay
+    /// valid for the whole handler. Parse failure responds 400 and returns
+    /// `error.BadRequest`.
+    pub fn bindJson(self: *Context, ptr: anytype) !void {
+        const body = self.getBodyText() catch {
+            self.res_status = .bad_request;
+            try self.renderJson(.{ .err = "cannot read request body" });
+            return error.BadRequest;
+        };
+        defer self.allocator.free(body);
+        if (self.arena == null) {
+            self.arena = std.heap.ArenaAllocator.init(self.allocator);
+        }
+        const arena = &self.arena.?;
+        bindJsonInto(arena, body, ptr) catch |err| {
+            if (err == error.BadRequest) {
+                self.res_status = .bad_request;
+                try self.renderJson(.{ .err = "invalid JSON body" });
+                return error.BadRequest;
+            }
+            return err;
+        };
+    }
+
     // === File Upload ===
 
     /// Get uploaded file by field name
@@ -1207,4 +1236,43 @@ test "context: renderPage serializes and frees items" {
         "{\"data\":[{\"name\":\"x\"},{\"name\":\"y\"}],\"total\":2,\"page\":1,\"size\":2}",
         cap.body.items,
     );
+}
+
+/// Parse `body` as JSON into `ptr` (unknown fields ignored; missing fields keep
+/// struct defaults). String fields are allocated from `arena` — the caller
+/// (request-scoped arena) owns them until the arena is deinit'd. Parse failure
+/// → `error.BadRequest`.
+fn bindJsonInto(arena: *std.heap.ArenaAllocator, body: []const u8, ptr: anytype) !void {
+    const T = @typeInfo(@TypeOf(ptr)).@"pointer".child;
+    const parsed = std.json.parseFromSlice(T, arena.allocator(), body, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch {
+        return error.BadRequest;
+    };
+    defer parsed.deinit(); // arena free is a no-op; memory lives until arena.deinit
+    ptr.* = parsed.value;
+}
+
+test "bindJsonInto: parses struct, ignores unknown fields, keeps defaults" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const Input = struct {
+        title: []const u8 = "",
+        views: i64 = 0,
+        tags: ?[]const u8 = null,
+    };
+    var dto: Input = .{};
+    try bindJsonInto(&arena, "{\"title\":\"hi\",\"views\":3,\"unknown\":true}", &dto);
+    try std.testing.expectEqualStrings("hi", dto.title);
+    try std.testing.expectEqual(@as(i64, 3), dto.views);
+    try std.testing.expect(dto.tags == null); // missing optional keeps default
+    // arena-owned string is readable after the helper returns
+    try std.testing.expectEqualStrings("hi", dto.title);
+}
+
+test "bindJsonInto: malformed JSON → BadRequest" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const Input = struct { title: []const u8 = "" };
+    var dto: Input = .{};
+    try std.testing.expectError(error.BadRequest, bindJsonInto(&arena, "{not json", &dto));
 }
