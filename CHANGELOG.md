@@ -11,6 +11,7 @@
   - **`Context.bindJson(&dto)`** — declarative JSON-body DTO binding (twin of `bindQuery`): parse + ignore unknown fields + 400 on malformed JSON; string fields owned by a request-scoped arena freed at `Context.deinit`.
   - **Validation-rule annotations**: `-- @required` / `-- @min(N)` / `-- @max(N)` / `-- @email` / `-- @unique` drive the generated `validate()` and a `service.validateUnique(db, data)` uniqueness check called from `create`/`update` (`@unique` columns only; no-op otherwise).
   - **Response shortcuts + lookups**: `ctx.ok(data)` (200 `{data}`), `ctx.created(id)` (201 `{ok,id}`), and generated `service.getOr404(db, id, allocator)` (throws `error.NotFound` → 404 envelope); generated `show`/`delete` handlers now use `getOr404` (and `delete` frees the fetched instance).
+  - **API view projection**: tables with a `-- @hidden` column generate a `View` struct + `Instance.toView()`; the generated `show` handler returns `item.toView()` so hidden columns never reach the API. Tables without `@hidden` skip it.
 
 ## [0.20.15] - 2026-08-02
 

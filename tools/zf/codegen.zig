@@ -1136,7 +1136,7 @@ pub fn generateModel(allocator: std.mem.Allocator, table: *const Table, naming: 
     }
     defer validation.deinit(allocator);
 
-    return std.fmt.allocPrint(allocator,
+    const base = try std.fmt.allocPrint(allocator,
         \\// @generated — DO NOT EDIT. AI: edit directly.
         \\// Regenerate: zf crud:sql <schema.sql> — runs zf check after
         \\const std = @import("std");
@@ -1177,6 +1177,55 @@ pub fn generateModel(allocator: std.mem.Allocator, table: *const Table, naming: 
         \\// ─────────────────────────────────────────────────────────────────
         \\
     , .{ table.pascal_name, table.name, table.pascal_name, fields.items, table.pascal_name, table.pascal_name, table.name, pk_name, naming_str, json_map.items, safe_fields.items, table.pascal_name, table.pascal_name, validation.items });
+
+    // API view projection (ADR-017) — only when `-- @hidden` columns exist.
+    if (!hasHidden(table)) return base; // caller owns `base`
+    const view = try buildViewBlock(allocator, table);
+    defer allocator.free(view);
+    const combined = try std.fmt.allocPrint(allocator, "{s}\n{s}", .{ base, view });
+    allocator.free(base);
+    return combined;
+}
+
+/// `View` struct + `toView()` projection for tables with `-- @hidden` columns.
+/// View fields borrow the instance's strings — valid while the instance lives.
+fn buildViewBlock(allocator: std.mem.Allocator, table: *const Table) ![]const u8 {
+    var view_fields = std.ArrayList(u8).empty;
+    defer view_fields.deinit(allocator);
+    var view_init = std.ArrayList(u8).empty;
+    defer view_init.deinit(allocator);
+    for (table.columns.items) |col| {
+        if (col.hidden) continue;
+        try view_fields.appendSlice(allocator, "    ");
+        try view_fields.appendSlice(allocator, col.name);
+        try view_fields.appendSlice(allocator, ": ");
+        try view_fields.appendSlice(allocator, zigType(col));
+        try view_fields.appendSlice(allocator, ",\n");
+        try view_init.appendSlice(allocator, "        .");
+        try view_init.appendSlice(allocator, col.name);
+        try view_init.appendSlice(allocator, " = self.data.");
+        try view_init.appendSlice(allocator, col.name);
+        try view_init.appendSlice(allocator, ",\n");
+    }
+    return std.fmt.allocPrint(allocator,
+        \\
+        \\/// API view of {s} — columns not marked `-- @hidden` (ADR-017).
+        \\pub const View = struct {{
+        \\{s}
+        \\}};
+        \\
+        \\/// Project to the API view (borrows string fields from the instance).
+        \\pub fn toView(self: *const {s}Model.Instance) View {{
+        \\    return .{{
+        \\{s}
+        \\    }};
+        \\}}
+    , .{ table.pascal_name, view_fields.items, table.pascal_name, view_init.items });
+}
+
+fn hasHidden(table: *const Table) bool {
+    for (table.columns.items) |c| if (c.hidden) return true;
+    return false;
 }
 
 pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_prefix: []const u8) ![]const u8 {
@@ -1257,6 +1306,9 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
     const list_body = try list_buf.toOwnedSlice(allocator);
     defer allocator.free(list_body);
 
+    // show() projects to the API view when `-- @hidden` columns exist.
+    const show_data_expr: []const u8 = if (hasHidden(table)) "item.toView()" else "item";
+
     return std.fmt.allocPrint(allocator,
         \\// @generated — DO NOT EDIT. AI: edit directly.
         \\// Regenerate: zf crud:sql <schema.sql> — runs zf check after
@@ -1286,7 +1338,7 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\    defer pool.release(db) catch {{}};
         \\    const item = try service.getOr404(db, id, ctx.allocator);
         \\    defer item.deinit(ctx.allocator);
-        \\    try ctx.renderJson(.{{ .data = item }});
+        \\    try ctx.renderJson(.{{ .data = {s} }});
         \\}}
         \\
         \\/// Create {s} record (CSRF-protected).
@@ -1351,7 +1403,7 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\//   pub fn show(ctx) -> then add eager-load fields
         \\// Keep hooks small; promote complex logic to a new business.zig.
         \\// ────────────────────────────────────────────────────────────────
-    , .{ deps_prefix, deps_prefix, deps_prefix, list_body, name, name, create_fields.items, name, create_fields.items, name, name, create_fields.items });
+    , .{ deps_prefix, deps_prefix, deps_prefix, list_body, name, show_data_expr, name, create_fields.items, name, create_fields.items, name, name, create_fields.items });
 }
 
 pub fn generateRoutes(allocator: std.mem.Allocator, table: *const Table) ![]const u8 {

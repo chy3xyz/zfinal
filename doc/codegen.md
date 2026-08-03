@@ -207,3 +207,22 @@ CREATE TABLE products (
 
 `validateUnique` is always emitted (no-op when no `@unique` columns), so
 generated services stay consistent.
+
+### API view projection (`-- @hidden` → `View` + `toView`)
+
+A table with any `-- @hidden` column also generates a `View` struct (all
+non-hidden columns) and `Instance.toView()`; the generated `show` handler
+returns `item.toView()` so hidden columns never leave the API:
+
+```zig
+pub const View = struct {
+    id:    ?i64,
+    name:  []const u8,
+    email: ?[]const u8,   // `secret` excluded — marked -- @hidden
+};
+
+pub fn toView(self: *const UsersModel.Instance) View { ... }
+```
+
+`View` fields borrow the instance's strings (valid for the handler scope).
+Tables without `@hidden` columns skip the projection entirely.

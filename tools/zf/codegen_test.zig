@@ -1044,3 +1044,42 @@ test "codegen: service emits getOr404; handler show/delete use it" {
         }
     }.f);
 }
+
+test "codegen: @hidden columns → View + toView; handler show projects" {
+    const allocator = std.testing.allocator;
+    try withTable(allocator,
+        \\CREATE TABLE users (
+        \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+        \\  name TEXT,
+        \\  secret TEXT   -- @hidden
+        \\);
+    , struct {
+        fn f(t: *codegen.Table) !void {
+            const model = try codegen.generateModel(t.allocator, t, .snake_case);
+            defer t.allocator.free(model);
+            try std.testing.expect(std.mem.indexOf(u8, model, "pub const View = struct") != null);
+            try std.testing.expect(std.mem.indexOf(u8, model, "pub fn toView(self: *const UsersModel.Instance) View") != null);
+            try std.testing.expect(std.mem.indexOf(u8, model, ".secret") == null); // hidden col excluded from View
+
+            const handler = try codegen.generateHandler(t.allocator, t, "../");
+            defer t.allocator.free(handler);
+            try std.testing.expect(std.mem.indexOf(u8, handler, ".data = item.toView()") != null);
+        }
+    }.f);
+}
+
+test "codegen: no @hidden columns → no View projection" {
+    const allocator = std.testing.allocator;
+    try withTable(allocator,
+        \\CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT);
+    , struct {
+        fn f(t: *codegen.Table) !void {
+            const model = try codegen.generateModel(t.allocator, t, .snake_case);
+            defer t.allocator.free(model);
+            try std.testing.expect(std.mem.indexOf(u8, model, "pub const View") == null);
+            const handler = try codegen.generateHandler(t.allocator, t, "../");
+            defer t.allocator.free(handler);
+            try std.testing.expect(std.mem.indexOf(u8, handler, "toView") == null);
+        }
+    }.f);
+}
