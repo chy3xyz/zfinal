@@ -4,9 +4,10 @@
 - **Module marketplace phase 2 (ADR-016)**: `zf market update` syncs the remote catalog (`https://raw.githubusercontent.com/chy3xyz/zfinal/main/marketplace/catalog.json`) to `~/.cache/zf/marketplace-catalog.json`; `zf market list|search|info` prefer the cache and fall back to the repo-local catalog; `zf market install <id>` downloads the entry's `url` tarball, extracts its `path` (skipping the GitHub archive prefix), and places plugins into `src/plugin/` or examples/modules into `vendor/marketplace/<id>/`. Supports `--dir`, `--dry-run`, `--verify`, `--registry`, `--json`.
 - **Marketplace catalog schema v2**: entries now carry a `url` artifact field; `market_util.zig` provides pure, unit-tested helpers (path resolution, strip computation, cache path, query matching).
 - **Declarative list query + DTO (ADR-017)**:
-  - `Model.Query` — fluent, comptime-validated query builder (`eq/gt/gte/lt/lte/textEq/like/likeAll/orderBy/page/list/count/paginate`); column names are checked against the model's table struct at compile time, so WHERE fragments and `SqlParam[]` can never go out of sync.
+  - `Model.Query` — fluent, comptime-validated query builder (`eq/gt/gte/lt/lte/textEq/floatEq/boolEq/like/likeAll/orderBy/page/list/count/paginate`); column names are checked against the model's table struct at compile time, so WHERE fragments and `SqlParam[]` can never go out of sync.
   - `Context.bindQuery(&filters)` — declarative DTO binding from query params (`?i64` / `?i32` / `?f64` / `?bool` / `?[]const u8` / optional enums); missing params keep struct defaults, invalid values respond 400.
   - `Context.renderPage(page, allocator)` — unified `{data, total, page, size}` serialization plus ownership cleanup (per-item `deinit` + list free) in one call.
+  - **`zf crud` column annotations**: `-- @filter` / `-- @search` / `-- @sortable` / `-- @hidden` trailing comments in `CREATE TABLE` generate a typed `Filters` struct and a `Model.Query`-based `service.list(db, f, page, size)`; the generated handler switches to `ctx.bindQuery` + `ctx.renderPage`. Un-annotated tables keep the legacy generated shape.
 
 ## [0.20.15] - 2026-08-02
 

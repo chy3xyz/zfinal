@@ -397,7 +397,7 @@ test "codegen regression: routes.zig tokenizes without error" {
     }.f);
 }
 
-test "codegen regression: all templates tokenize across 5 schemas" {
+test "codegen regression: all templates tokenize across 6 schemas (incl. annotated)" {
     const allocator = std.testing.allocator;
     const schemas = [_][]const u8{
         \\CREATE TABLE simple (id INTEGER PRIMARY KEY, x TEXT);
@@ -411,6 +411,14 @@ test "codegen regression: all templates tokenize across 5 schemas" {
         \\CREATE TABLE many_cols (
         \\  id INTEGER PRIMARY KEY, a INT, b INT, c INT, d INT, e INT,
         \\  f INT, g INT, h INT, i INT, j INT, k INT
+        \\);
+        \\CREATE TABLE annotated_posts (
+        \\  id INTEGER PRIMARY KEY,
+        \\  title TEXT,
+        \\  status TEXT,      -- @filter @in_list
+        \\  views INT,        -- @filter @sortable
+        \\  content TEXT,     -- @search
+        \\  secret TEXT       /* @hidden */
         \\);
     };
     for (schemas) |sql| {
@@ -827,4 +835,143 @@ test "openapi: irregular plurals map to singular DTO $ref" {
     try std.testing.expect(std.mem.indexOf(u8, input_block, "\n    name:") != null);
     try std.testing.expect(std.mem.indexOf(u8, input_block, "\n    id:") == null);
     try std.testing.expect(std.mem.indexOf(u8, input_block, "\n    created_at:") == null);
+}
+
+// ── ADR-017: declarative list query — column annotations ─────────────────────
+
+/// Apply `-- @tag` column annotations from `sql` onto the parsed table.
+fn annotateTable(allocator: std.mem.Allocator, sql: []const u8, t: *codegen.Table) !void {
+    var list = std.ArrayList(codegen.Table).empty;
+    defer list.deinit(allocator);
+    try list.append(allocator, t.*); // shallow copy — shares column items
+    codegen.applyColumnAnnotations(sql, &list);
+}
+
+test "codegen: column annotations parsed from CREATE TABLE comments" {
+    const allocator = std.testing.allocator;
+    try withTable(allocator,
+        \\CREATE TABLE posts (
+        \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+        \\  title TEXT NOT NULL,
+        \\  status TEXT,          -- @filter @in_list
+        \\  views INTEGER,        -- @filter @sortable
+        \\  content TEXT,         -- @search
+        \\  secret TEXT           /* @hidden */
+        \\);
+    , struct {
+        fn f(t: *codegen.Table) !void {
+            try annotateTable(t.allocator,
+                \\CREATE TABLE posts (
+                \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                \\  title TEXT NOT NULL,
+                \\  status TEXT,          -- @filter @in_list
+                \\  views INTEGER,        -- @filter @sortable
+                \\  content TEXT,         -- @search
+                \\  secret TEXT           /* @hidden */
+                \\);
+            , t);
+            for (t.columns.items) |*c| {
+                if (std.mem.eql(u8, c.name, "status")) {
+                    try std.testing.expect(c.filter);
+                    try std.testing.expect(!c.hidden);
+                }
+                if (std.mem.eql(u8, c.name, "views")) {
+                    try std.testing.expect(c.filter);
+                    try std.testing.expect(c.sortable);
+                }
+                if (std.mem.eql(u8, c.name, "content")) {
+                    try std.testing.expect(c.searchable);
+                }
+                if (std.mem.eql(u8, c.name, "secret")) {
+                    try std.testing.expect(c.hidden);
+                }
+                if (std.mem.eql(u8, c.name, "title")) {
+                    try std.testing.expect(!c.filter);
+                    try std.testing.expect(!c.searchable);
+                }
+            }
+        }
+    }.f);
+}
+
+test "codegen: annotated service emits Filters + Query.list (ADR-017)" {
+    const allocator = std.testing.allocator;
+    try withTable(allocator,
+        \\CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, status TEXT, views INTEGER, content TEXT);
+    , struct {
+        fn f(t: *codegen.Table) !void {
+            try annotateTable(t.allocator,
+                \\CREATE TABLE posts (
+                \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                \\  title TEXT,
+                \\  status TEXT,        -- @filter @in_list
+                \\  views INTEGER,      -- @filter @sortable
+                \\  content TEXT        -- @search
+                \\);
+            , t);
+            const code = try codegen.generateService(t.allocator, t);
+            defer t.allocator.free(code);
+            try std.testing.expect(std.mem.indexOf(u8, code, "pub const Filters = struct") != null);
+            try std.testing.expect(std.mem.indexOf(u8, code, "status: ?[]const u8 = null") != null);
+            try std.testing.expect(std.mem.indexOf(u8, code, "views: ?i64 = null") != null);
+            try std.testing.expect(std.mem.indexOf(u8, code, "sort: ?[]const u8 = null") != null);
+            try std.testing.expect(std.mem.indexOf(u8, code, "Query.init(db, allocator)") != null);
+            try std.testing.expect(std.mem.indexOf(u8, code, "try q.textEq(\"status\", f.status)") != null);
+            try std.testing.expect(std.mem.indexOf(u8, code, "try q.eq(\"views\", f.views)") != null);
+            try std.testing.expect(std.mem.indexOf(u8, code, "try q.likeAll(&.{\"content\"}, f.q)") != null);
+            try std.testing.expect(std.mem.indexOf(u8, code, "fn applySort") != null);
+            try std.testing.expect(std.mem.indexOf(u8, code, "pub fn list(db: *zfinal.DB, f: Filters, page: usize, size: usize, allocator: std.mem.Allocator) !zfinal.Page(Instance)") != null);
+        }
+    }.f);
+}
+
+test "codegen: un-annotated service keeps legacy shape" {
+    const allocator = std.testing.allocator;
+    try withTable(allocator,
+        \\CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT);
+    , struct {
+        fn f(t: *codegen.Table) !void {
+            const code = try codegen.generateService(t.allocator, t);
+            defer t.allocator.free(code);
+            try std.testing.expect(std.mem.indexOf(u8, code, "pub const Filters") == null);
+            try std.testing.expect(std.mem.indexOf(u8, code, "pub fn search") != null);
+            try std.testing.expect(std.mem.indexOf(u8, code, "searchable_columns") != null);
+        }
+    }.f);
+}
+
+test "codegen: annotated handler uses bindQuery + renderPage (ADR-017)" {
+    const allocator = std.testing.allocator;
+    try withTable(allocator,
+        \\CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, status TEXT);
+    , struct {
+        fn f(t: *codegen.Table) !void {
+            try annotateTable(t.allocator,
+                \\CREATE TABLE posts (
+                \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                \\  title TEXT,
+                \\  status TEXT   -- @filter
+                \\);
+            , t);
+            const code = try codegen.generateHandler(t.allocator, t, "../");
+            defer t.allocator.free(code);
+            try std.testing.expect(std.mem.indexOf(u8, code, "ctx.bindQuery(&f)") != null);
+            try std.testing.expect(std.mem.indexOf(u8, code, "ctx.renderPage(") != null);
+            try std.testing.expect(std.mem.indexOf(u8, code, "service.list(db, f,") != null);
+        }
+    }.f);
+}
+
+test "codegen: un-annotated handler keeps legacy list" {
+    const allocator = std.testing.allocator;
+    try withTable(allocator,
+        \\CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT);
+    , struct {
+        fn f(t: *codegen.Table) !void {
+            const code = try codegen.generateHandler(t.allocator, t, "../");
+            defer t.allocator.free(code);
+            try std.testing.expect(std.mem.indexOf(u8, code, "bindQuery") == null);
+            try std.testing.expect(std.mem.indexOf(u8, code, "service.search(db, q, ctx.allocator)") != null);
+        }
+    }.f);
 }

@@ -97,6 +97,10 @@ pub fn extractFromSql(allocator: std.mem.Allocator, sql: []const u8) !std.ArrayL
         });
     }
 
+    // Apply `-- @filter` / `-- @search` / `-- @sortable` / `-- @hidden`
+    // column annotations from the raw CREATE TABLE statements.
+    @import("codegen").applyColumnAnnotations(sql, &tables);
+
     std.debug.print("Extracted {d} tables from database introspection\n", .{tables.items.len});
     return tables;
 }

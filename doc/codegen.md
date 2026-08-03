@@ -136,3 +136,51 @@ zf crud:dsn postgresql://user:pass@host/db
 # From MySQL (SHOW TABLES/COLUMNS)
 zf crud:dsn mysql://user:pass@host/db
 ```
+
+## Declarative List Filters (ADR-017) — `-- @filter` column annotations
+
+Annotate columns in the source schema to generate a typed `Filters` struct and
+a `Model.Query`-based `service.list(db, f, page, size)`:
+
+```sql
+CREATE TABLE posts (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  title   TEXT,
+  status  TEXT,          -- @filter @in_list
+  views   INTEGER,       -- @filter @sortable
+  content TEXT,          -- @search
+  secret  TEXT           /* @hidden */
+);
+```
+
+| Tag | Effect |
+|-----|--------|
+| `@filter` | Add an `eq` filter to `service.Filters` (`?i64` / `?f64` / `?bool` / `?[]const u8` by column type) |
+| `@search` | Add the column to the generated `LIKE` search (`f.q`) |
+| `@sortable` | Whitelist the column for the `sort` query param (matched against constants only) |
+| `@hidden` | Exclude the column from list output (like existing sensitive-field exclusions) |
+| `@in_list` | No-op (columns are in the list by default) |
+
+When any annotation is present, the generated handler uses the declarative
+pipeline instead of the legacy `q`-only search:
+
+```zig
+pub fn list(ctx: *zfinal.Context) !void {
+    try rateLimiter.handle(ctx);
+    const db = try pool.acquire();
+    defer pool.release(db) catch {};
+    var f: service.Filters = .{};
+    try ctx.bindQuery(&f);
+    const page = try ctx.getParaToLongDefault("page", 1);
+    const size = try ctx.getParaToLongDefault("size", 20);
+    try ctx.renderPage(try service.list(db, f, @intCast(page), @intCast(size), ctx.allocator), ctx.allocator);
+}
+```
+
+Generated `Filters` also carries `q` (search), `sort`, and `order`
+(`?enum { asc, desc }`) when applicable. Column names in the generated query
+are compile-time validated by `Model.Query` — typos fail at build time.
+
+**Requirement:** annotated-mode generated code uses `Model.Query`,
+`Context.bindQuery`, and `Context.renderPage` (ADR-017), so the project must
+depend on a zfinal release that includes them (≥ the release after v0.20.15).

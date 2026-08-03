@@ -8,6 +8,14 @@ pub const Column = struct {
     is_auto_increment: bool,
     default_value: ?[]const u8,
     max_length: ?usize,
+    /// `-- @filter` — include in generated `Filters` (eq / textEq / floatEq).
+    filter: bool = false,
+    /// `-- @search` — include in generated LIKE search columns.
+    searchable: bool = false,
+    /// `-- @sortable` — allow ORDER BY on this column (whitelist).
+    sortable: bool = false,
+    /// `-- @hidden` — exclude from list/JSON output.
+    hidden: bool = false,
 };
 
 pub const Table = struct {
@@ -90,6 +98,181 @@ pub fn defaultZigValue(col: Column) []const u8 {
     };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Column annotations (`-- @filter` / `-- @search` / `-- @sortable` / `-- @hidden`)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Best-effort parse of trailing column comments inside CREATE TABLE bodies and
+/// apply them to already-introspected `tables` (matched by table + column name).
+/// Tags: `@filter`, `@search`, `@sortable`, `@hidden` (`@in_list` is a no-op —
+/// columns are in the list response by default).
+pub fn applyColumnAnnotations(sql: []const u8, tables: *std.ArrayList(Table)) void {
+    var pos: usize = 0;
+    while (std.mem.indexOfPos(u8, sql, pos, "CREATE TABLE")) |ct| {
+        pos = ct + "CREATE TABLE".len;
+        var p = skipWs(sql, pos);
+        // Optional "IF NOT EXISTS"
+        if (skipKeyword(sql, p, "IF")) |after_if| {
+            const q = skipWs(sql, after_if);
+            if (skipKeyword(sql, q, "NOT")) |after_not| {
+                const r = skipWs(sql, after_not);
+                if (skipKeyword(sql, r, "EXISTS")) |after_exists| p = skipWs(sql, after_exists);
+            }
+        }
+        const name_end = scanIdentifierEnd(sql, p);
+        if (name_end == p) continue; // malformed CREATE TABLE
+        const table_name = stripQuotes(sql[p..name_end]);
+        const open = std.mem.indexOfScalarPos(u8, sql, name_end, '(') orelse continue;
+        const close = findClosingParen(sql, open) orelse continue;
+        applyTableBodyAnnotations(sql[open + 1 .. close], tables, table_name);
+    }
+}
+
+fn applyTableBodyAnnotations(body: []const u8, tables: *std.ArrayList(Table), table_name: []const u8) void {
+    for (tables.items) |*t| {
+        if (!std.mem.eql(u8, t.name, table_name)) continue;
+        for (t.columns.items) |*c| {
+            var tags_buf: [4][]const u8 = undefined;
+            const n = lineTags(body, c.name, &tags_buf);
+            for (tags_buf[0..n]) |tag| {
+                if (std.mem.eql(u8, tag, "filter")) {
+                    c.filter = true;
+                } else if (std.mem.eql(u8, tag, "search")) {
+                    c.searchable = true;
+                } else if (std.mem.eql(u8, tag, "sortable")) {
+                    c.sortable = true;
+                } else if (std.mem.eql(u8, tag, "hidden")) {
+                    c.hidden = true;
+                }
+            }
+        }
+    }
+}
+
+/// Find `col_name` as a word in `body`, then collect `@tag`s from the rest of
+/// that line (`--` comments run to end-of-line; `/* */` block comments end there too).
+fn lineTags(body: []const u8, col_name: []const u8, out: *[4][]const u8) usize {
+    var p: usize = 0;
+    while (std.mem.indexOfPos(u8, body, p, col_name)) |idx| {
+        const after = idx + col_name.len;
+        const ok_before = idx == 0 or isWs(body[idx - 1]) or body[idx - 1] == '(' or body[idx - 1] == ',' or body[idx - 1] == '`' or body[idx - 1] == '"';
+        const ok_after = after >= body.len or isWs(body[after]) or body[after] == '(' or body[after] == ',' or body[after] == '`' or body[after] == '"';
+        if (ok_before and ok_after) {
+            const line_end = std.mem.indexOfScalarPos(u8, body, idx, '\n') orelse body.len;
+            return collectTags(body[idx..line_end], out);
+        }
+        p = idx + col_name.len;
+    }
+    return 0;
+}
+
+fn collectTags(seg: []const u8, out: *[4][]const u8) usize {
+    var n: usize = 0;
+    const known = [_][]const u8{ "filter", "search", "sortable", "hidden" };
+    for (known) |tag| {
+        var p: usize = 0;
+        while (std.mem.indexOfPos(u8, seg, p, tag)) |idx| {
+            if (idx > 0 and seg[idx - 1] == '@') {
+                out[n] = tag;
+                n += 1;
+                break;
+            }
+            p = idx + tag.len;
+        }
+    }
+    return n;
+}
+
+fn firstIdentifier(seg: []const u8) ?[]const u8 {
+    const p = skipWs(seg, 0);
+    if (p >= seg.len) return null;
+    const end = scanIdentifierEnd(seg, p);
+    const name = stripQuotes(seg[p..end]);
+    if (name.len == 0) return null;
+    return name;
+}
+
+fn findClosingParen(sql: []const u8, open: usize) ?usize {
+    var depth: usize = 0;
+    var in_line = false;
+    var in_block = false;
+    var i = open;
+    while (i < sql.len) : (i += 1) {
+        const c = sql[i];
+        if (in_line) {
+            if (c == '\n') in_line = false;
+            continue;
+        }
+        if (in_block) {
+            if (c == '*' and i + 1 < sql.len and sql[i + 1] == '/') {
+                in_block = false;
+                i += 1;
+            }
+            continue;
+        }
+        if (c == '-' and i + 1 < sql.len and sql[i + 1] == '-') {
+            in_line = true;
+            i += 1;
+            continue;
+        }
+        if (c == '/' and i + 1 < sql.len and sql[i + 1] == '*') {
+            in_block = true;
+            i += 1;
+            continue;
+        }
+        if (c == '(') {
+            depth += 1;
+            continue;
+        }
+        if (c == ')') {
+            if (depth == 0) return null;
+            depth -= 1;
+            if (depth == 0) return i;
+        }
+    }
+    return null;
+}
+
+fn skipWs(sql: []const u8, pos: usize) usize {
+    var p = pos;
+    while (p < sql.len and isWs(sql[p])) p += 1;
+    return p;
+}
+
+fn isWs(c: u8) bool {
+    return c == ' ' or c == '\t' or c == '\r' or c == '\n';
+}
+
+fn skipKeyword(sql: []const u8, pos: usize, kw: []const u8) ?usize {
+    const end = pos + kw.len;
+    if (end > sql.len) return null;
+    if (!std.ascii.eqlIgnoreCase(sql[pos..end], kw)) return null;
+    return end;
+}
+
+fn scanIdentifierEnd(sql: []const u8, pos: usize) usize {
+    if (pos < sql.len and (sql[pos] == '"' or sql[pos] == '`' or sql[pos] == '[')) {
+        const quote = sql[pos];
+        var p = pos + 1;
+        while (p < sql.len and sql[p] != quote) p += 1;
+        return @min(p + 1, sql.len);
+    }
+    var p = pos;
+    while (p < sql.len and !isWs(sql[p]) and sql[p] != '(' and sql[p] != ')') p += 1;
+    return p;
+}
+
+fn stripQuotes(name: []const u8) []const u8 {
+    if (name.len >= 2) {
+        const a = name[0];
+        const b = name[name.len - 1];
+        if ((a == '"' and b == '"') or (a == '`' and b == '`') or (a == '[' and b == ']')) {
+            return name[1 .. name.len - 1];
+        }
+    }
+    return name;
+}
+
 // ============================================================
 // SQL Parser
 // ============================================================
@@ -128,6 +311,16 @@ pub fn parseCreateTable(allocator: std.mem.Allocator, sql: []const u8) !Table {
     while (pos < sql.len) {
         pos = skipWhitespace(sql, pos);
         if (pos >= sql.len or sql[pos] == ')') break;
+        // Skip SQL comments so `-- @tag` annotations are not parsed as columns.
+        if (sql[pos] == '-' and pos + 1 < sql.len and sql[pos + 1] == '-') {
+            pos = std.mem.indexOfScalarPos(u8, sql, pos, '\n') orelse sql.len;
+            continue;
+        }
+        if (sql[pos] == '/' and pos + 1 < sql.len and sql[pos + 1] == '*') {
+            const end = std.mem.indexOfPos(u8, sql, pos + 2, "*/") orelse sql.len;
+            pos = end + 2;
+            continue;
+        }
         if (sql[pos] == ',') {
             pos += 1;
             continue;
@@ -276,6 +469,8 @@ pub fn parseSqlFile(allocator: std.mem.Allocator, sql: []const u8) !std.ArrayLis
         try tables.append(allocator, table);
         pos += end_pos;
     }
+    // Apply `-- @filter/@search/@sortable/@hidden` column annotations (ADR-017).
+    applyColumnAnnotations(sql, &tables);
     return tables;
 }
 
@@ -467,7 +662,7 @@ pub fn generateService(allocator: std.mem.Allocator, table: *const Table) ![]con
     const searchable_cols_text = try searchable.toOwnedSlice(allocator);
     defer allocator.free(searchable_cols_text);
 
-    return std.fmt.allocPrint(allocator,
+    const base = try std.fmt.allocPrint(allocator,
         \\// @generated — DO NOT EDIT. AI: edit directly.
         \\// Regenerate: zf crud:sql <schema.sql> — runs zf check after
         \\const std = @import("std");
@@ -580,6 +775,172 @@ pub fn generateService(allocator: std.mem.Allocator, table: *const Table) ![]con
         searchable_cols_text, // 9: searchable columns body
         name, name, name, name, name, name, name, name, name, // 10-18
     });
+    if (!hasAnnotations(table)) return base; // caller owns `base`
+
+    const extra = try buildAnnotatedList(allocator, table, name);
+    defer allocator.free(extra);
+    const combined = try std.fmt.allocPrint(allocator, "{s}\n{s}", .{ base, extra });
+    allocator.free(base);
+    return combined;
+}
+
+/// True when the table carries any `-- @filter/@search/@sortable/@hidden` annotation.
+fn hasAnnotations(table: *const Table) bool {
+    for (table.columns.items) |c| {
+        if (c.filter or c.searchable or c.sortable or c.hidden) return true;
+    }
+    return false;
+}
+
+/// Annotated-mode service additions: `Filters` struct + `list()` built on
+/// `Model.Query` (ADR-017). Columns referenced here were compile-time validated
+/// by the query builder itself.
+fn buildAnnotatedList(allocator: std.mem.Allocator, table: *const Table, name: []const u8) ![]const u8 {
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    const pk_name = blk: {
+        for (table.columns.items) |c| {
+            if (c.is_primary_key) break :blk c.name;
+        }
+        break :blk "id";
+    };
+
+    // Filters struct fields + per-filter query lines.
+    var filters_buf = std.ArrayList(u8).empty;
+    defer filters_buf.deinit(allocator);
+    var filter_lines = std.ArrayList(u8).empty;
+    defer filter_lines.deinit(allocator);
+    for (table.columns.items) |col| {
+        if (!col.filter) continue;
+        const zt = zigType(col);
+        var opt_buf: [32]u8 = undefined;
+        const opt: []const u8 = if (zt.len > 0 and zt[0] == '?') zt else blk: {
+            const s = try std.fmt.bufPrint(&opt_buf, "?{s}", .{zt});
+            break :blk s;
+        };
+        try filters_buf.appendSlice(allocator, "    ");
+        try filters_buf.appendSlice(allocator, col.name);
+        try filters_buf.appendSlice(allocator, ": ");
+        try filters_buf.appendSlice(allocator, opt);
+        try filters_buf.appendSlice(allocator, " = null,\n");
+
+        const kind = filterKind(zt);
+        const line = try std.fmt.allocPrint(allocator, "    try q.{s}(\"{s}\", f.{s});\n", .{
+            switch (kind) {
+                .int => "eq",
+                .float => "floatEq",
+                .boolean => "boolEq",
+                .text => "textEq",
+            },
+            col.name,
+            col.name,
+        });
+        defer allocator.free(line);
+        try filter_lines.appendSlice(allocator, line);
+    }
+
+    // LIKE-search columns: explicit @search marks, falling back to all string columns.
+    var search_names = std.ArrayList(u8).empty;
+    defer search_names.deinit(allocator);
+    var search_marked = false;
+    for (table.columns.items) |col| {
+        if (col.searchable and isStringType(col.sql_type)) search_marked = true;
+    }
+    for (table.columns.items) |col| {
+        if (col.is_primary_key) continue;
+        if (!isStringType(col.sql_type)) continue;
+        if (search_marked and !col.searchable) continue;
+        if (search_names.items.len > 0) try search_names.appendSlice(allocator, ", ");
+        try search_names.appendSlice(allocator, "\"");
+        try search_names.appendSlice(allocator, col.name);
+        try search_names.appendSlice(allocator, "\"");
+    }
+
+    // Sort whitelist lines.
+    var sort_lines = std.ArrayList(u8).empty;
+    defer sort_lines.deinit(allocator);
+    var sort_count: usize = 0;
+    for (table.columns.items) |col| {
+        if (!col.sortable) continue;
+        const line = try std.fmt.allocPrint(allocator, "        if (std.mem.eql(u8, sort, \"{s}\")) return q.orderBy(\"{s}\", dir);\n", .{ col.name, col.name });
+        defer allocator.free(line);
+        try sort_lines.appendSlice(allocator, line);
+        sort_count += 1;
+    }
+
+    try out.appendSlice(allocator,
+        \\// ── Declarative list query (ADR-017) ─────────────────────────────
+        \\/// Query-string filters. Bound via `ctx.bindQuery(&f)`; columns are
+        \\/// validated against the model at compile time by `Model.Query`.
+        \\pub const Filters = struct {
+        \\
+    );
+    try out.appendSlice(allocator, filters_buf.items);
+    if (search_names.items.len > 0) {
+        try out.appendSlice(allocator, "    q: ?[]const u8 = null,\n");
+    }
+    if (sort_count > 0) {
+        try out.appendSlice(allocator, "    sort: ?[]const u8 = null,\n    order: ?enum { asc, desc } = null,\n");
+    }
+    const list_head = try std.fmt.allocPrint(allocator,
+        \\}};
+        \\
+        \\/// Paginated, filtered list. `page`/`size` are 1-based / positive.
+        \\pub fn list(db: *zfinal.DB, f: Filters, page: usize, size: usize, allocator: std.mem.Allocator) !zfinal.Page(Instance) {{
+        \\    var q = {s}Model.Query.init(db, allocator);
+        \\    defer q.deinit();
+        \\
+    , .{name});
+    defer allocator.free(list_head);
+    try out.appendSlice(allocator, list_head);
+    try out.appendSlice(allocator, filter_lines.items);
+    if (search_names.items.len > 0) {
+        try out.appendSlice(allocator, "    try q.likeAll(&.{");
+        try out.appendSlice(allocator, search_names.items);
+        try out.appendSlice(allocator, "}, f.q);\n");
+    }
+    if (sort_count > 0) {
+        const sort_head = try std.fmt.allocPrint(allocator,
+            \\    if (f.sort) |s| try applySort(&q, s, f.order orelse .desc) else try q.orderBy("{s}", .desc);
+            \\    return q.paginate(page, size, allocator);
+            \\}}
+            \\
+            \\/// Sort whitelist — `sort` param is matched against constants only.
+            \\fn applySort(q: *{s}Model.Query, sort: []const u8, dir: {s}Model.Query.Order) !void {{
+            \\
+        , .{ pk_name, name, name });
+        defer allocator.free(sort_head);
+        try out.appendSlice(allocator, sort_head);
+        try out.appendSlice(allocator, sort_lines.items);
+        const tail = try std.fmt.allocPrint(allocator, "    try q.orderBy(\"{s}\", dir);\n}}\n", .{pk_name});
+        defer allocator.free(tail);
+        try out.appendSlice(allocator, tail);
+    } else {
+        const tail = try std.fmt.allocPrint(allocator, "    try q.orderBy(\"{s}\", .desc);\n    return q.paginate(page, size, allocator);\n}}\n", .{pk_name});
+        defer allocator.free(tail);
+        try out.appendSlice(allocator, tail);
+    }
+    return out.toOwnedSlice(allocator);
+}
+
+const FilterKind = enum { int, float, boolean, text };
+
+fn filterKind(zt: []const u8) FilterKind {
+    if (std.mem.indexOf(u8, zt, "i64") != null) return .int;
+    if (std.mem.indexOf(u8, zt, "f64") != null) return .float;
+    if (std.mem.indexOf(u8, zt, "bool") != null) return .boolean;
+    return .text;
+}
+
+fn isStringType(sql_type: []const u8) bool {
+    var buf: [32]u8 = undefined;
+    const n = @min(sql_type.len, buf.len);
+    for (0..n) |i| buf[i] = std.ascii.toUpper(sql_type[i]);
+    const upper = buf[0..n];
+    return std.mem.eql(u8, upper, "TEXT") or
+        std.mem.eql(u8, upper, "VARCHAR") or
+        std.mem.eql(u8, upper, "CHAR");
 }
 
 // ============================================================
@@ -730,6 +1091,57 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
     }
     defer create_fields.deinit(allocator);
 
+    // List handler body: annotated tables get the declarative ADR-017 list
+    // (bindQuery + renderPage); un-annotated tables keep the legacy search list.
+    var list_buf = std.ArrayList(u8).empty;
+    defer list_buf.deinit(allocator);
+    if (hasAnnotations(table)) {
+        const doc = try std.fmt.allocPrint(allocator, "/// List {s} records with declarative filters (ADR-017).\n", .{name});
+        defer allocator.free(doc);
+        try list_buf.appendSlice(allocator, doc);
+        try list_buf.appendSlice(allocator,
+            \\/// Query params: page, size — pagination; filters — see service.Filters.
+            \\pub fn list(ctx: *zfinal.Context) !void {
+            \\    try rateLimiter.handle(ctx);
+            \\    const db = try pool.acquire();
+            \\    defer pool.release(db) catch {};
+            \\    var f: service.Filters = .{};
+            \\    try ctx.bindQuery(&f);
+            \\    const page = try ctx.getParaToLongDefault("page", 1);
+            \\    const size = try ctx.getParaToLongDefault("size", 20);
+            \\    try ctx.renderPage(try service.list(db, f, @intCast(page), @intCast(size), ctx.allocator), ctx.allocator);
+            \\}
+            \\
+        );
+    } else {
+        const doc = try std.fmt.allocPrint(allocator, "/// List {s} records with pagination + rate limiting + search.\n", .{name});
+        defer allocator.free(doc);
+        try list_buf.appendSlice(allocator, doc);
+        try list_buf.appendSlice(allocator,
+            \\/// Query params:
+            \\///   page, size — pagination
+            \\///   q          — search term (LIKE-searches all string columns)
+            \\pub fn list(ctx: *zfinal.Context) !void {
+            \\    try rateLimiter.handle(ctx);
+            \\    const db = try pool.acquire();
+            \\    defer pool.release(db) catch {};
+            \\    const page = try ctx.getParaToIntDefault("page", 1);
+            \\    const size = try ctx.getParaToIntDefault("size", 20);
+            \\    const q = ctx.getPara("q") orelse "";
+            \\    const items = if (q.len > 0)
+            \\        try service.search(db, q, ctx.allocator)
+            \\    else
+            \\        try service.paginate(db, @intCast(page), @intCast(size), ctx.allocator);
+            \\    defer { for (items) |*it| it.deinit(ctx.allocator); ctx.allocator.free(items); }
+            \\    const total = try service.count(db);
+            \\    try ctx.renderJson(.{ .data = items, .total = total, .page = page, .size = size });
+            \\}
+            \\
+        );
+    }
+    const list_body = try list_buf.toOwnedSlice(allocator);
+    defer allocator.free(list_body);
+
     return std.fmt.allocPrint(allocator,
         \\// @generated — DO NOT EDIT. AI: edit directly.
         \\// Regenerate: zf crud:sql <schema.sql> — runs zf check after
@@ -751,26 +1163,7 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\    if (!try tokenMgr.validate(token)) return failHttp(ctx, error.Forbidden, "csrf_token");
         \\}}
         \\
-        \\/// List {s} records with pagination + rate limiting + search.
-        \\/// Query params:
-        \\///   page, size — pagination
-        \\///   q          — search term (LIKE-searches all string columns)
-        \\pub fn list(ctx: *zfinal.Context) !void {{
-        \\    try rateLimiter.handle(ctx);
-        \\    const db = try pool.acquire();
-        \\    defer pool.release(db) catch {{}};
-        \\    const page = try ctx.getParaToIntDefault("page", 1);
-        \\    const size = try ctx.getParaToIntDefault("size", 20);
-        \\    const q = ctx.getPara("q") orelse "";
-        \\    const items = if (q.len > 0)
-        \\        try service.search(db, q, ctx.allocator)
-        \\    else
-        \\        try service.paginate(db, @intCast(page), @intCast(size), ctx.allocator);
-        \\    defer {{ for (items) |*it| it.deinit(ctx.allocator); ctx.allocator.free(items); }}
-        \\    const total = try service.count(db);
-        \\    try ctx.renderJson(.{{ .data = items, .total = total, .page = page, .size = size }});
-        \\}}
-        \\
+        \\{s}
         \\/// Show {s} by ID.
         \\pub fn show(ctx: *zfinal.Context) !void {{
         \\    const id = try parseId(ctx);
@@ -841,7 +1234,7 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\//   pub fn show(ctx) -> then add eager-load fields
         \\// Keep hooks small; promote complex logic to a new business.zig.
         \\// ────────────────────────────────────────────────────────────────
-    , .{ deps_prefix, deps_prefix, deps_prefix, name, name, name, create_fields.items, name, create_fields.items, name, name, create_fields.items });
+    , .{ deps_prefix, deps_prefix, deps_prefix, list_body, name, name, create_fields.items, name, create_fields.items, name, name, create_fields.items });
 }
 
 pub fn generateRoutes(allocator: std.mem.Allocator, table: *const Table) ![]const u8 {
