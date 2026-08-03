@@ -342,6 +342,16 @@ pub fn QueryBuilder(comptime M: type, comptime table_name: []const u8) type {
             if (value) |v| try self.addClause(col, "=", .{ .text = v });
         }
 
+        /// `col = ?` (float) when `value` is non-null.
+        pub fn floatEq(self: *Self, comptime col: []const u8, value: ?f64) !void {
+            if (value) |v| try self.addClause(col, "=", .{ .real = v });
+        }
+
+        /// `col = ?` (bool as 0/1) when `value` is non-null.
+        pub fn boolEq(self: *Self, comptime col: []const u8, value: ?bool) !void {
+            if (value) |v| try self.addClause(col, "=", .{ .int = if (v) 1 else 0 });
+        }
+
         /// `col LIKE ?` when `value` is non-null.
         pub fn like(self: *Self, comptime col: []const u8, value: ?[]const u8) !void {
             if (value) |v| try self.addClause(col, "LIKE", .{ .text = v });

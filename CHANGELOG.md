@@ -10,6 +10,7 @@
   - **`zf crud` column annotations**: `-- @filter` / `-- @search` / `-- @sortable` / `-- @hidden` trailing comments in `CREATE TABLE` generate a typed `Filters` struct and a `Model.Query`-based `service.list(db, f, page, size)`; the generated handler switches to `ctx.bindQuery` + `ctx.renderPage`. Un-annotated tables keep the legacy generated shape.
   - **`Context.bindJson(&dto)`** — declarative JSON-body DTO binding (twin of `bindQuery`): parse + ignore unknown fields + 400 on malformed JSON; string fields owned by a request-scoped arena freed at `Context.deinit`.
   - **Validation-rule annotations**: `-- @required` / `-- @min(N)` / `-- @max(N)` / `-- @email` / `-- @unique` drive the generated `validate()` and a `service.validateUnique(db, data)` uniqueness check called from `create`/`update` (`@unique` columns only; no-op otherwise).
+  - **Response shortcuts + lookups**: `ctx.ok(data)` (200 `{data}`), `ctx.created(id)` (201 `{ok,id}`), and generated `service.getOr404(db, id, allocator)` (throws `error.NotFound` → 404 envelope); generated `show`/`delete` handlers now use `getOr404` (and `delete` frees the fetched instance).
 
 ## [0.20.15] - 2026-08-02
 

@@ -651,6 +651,17 @@ pub const Context = struct {
         self.markResponded();
     }
 
+    /// 200 response shortcut: `{"data": ...}`.
+    pub fn ok(self: *Context, data: anytype) !void {
+        try self.renderJson(.{ .data = data });
+    }
+
+    /// 201 response shortcut: `{"ok": true, "id": ...}`.
+    pub fn created(self: *Context, id: anytype) !void {
+        self.res_status = .created;
+        try self.renderJson(.{ .ok = true, .id = id });
+    }
+
     /// Serialize a `Page(T)`-shaped value as `{data, total, page, size}`, then
     /// free it: per-item `deinit(allocator)` (when the item type has one) and
     /// the list slice. One call replaces the render + free dance in list handlers.
@@ -1275,4 +1286,52 @@ test "bindJsonInto: malformed JSON → BadRequest" {
     const Input = struct { title: []const u8 = "" };
     var dto: Input = .{};
     try std.testing.expectError(error.BadRequest, bindJsonInto(&arena, "{not json", &dto));
+}
+
+test "context: ok() and created() response shortcuts" {
+    const a = std.testing.allocator;
+    // ok()
+    {
+        var cap: Context.CapturedResponse = .{ .allocator = a };
+        defer cap.deinit();
+        var ctx: Context = .{
+            .req = undefined,
+            .allocator = a,
+            .attributes = .init(a),
+            .response_cookies = .empty,
+            .response_headers = .init(a),
+            .capture = &cap,
+            .compress_enabled = false,
+        };
+        defer {
+            ctx.attributes.deinit();
+            ctx.response_headers.deinit();
+            ctx.response_cookies.deinit(a);
+        }
+        try ctx.ok(.{ .name = "x" });
+        try std.testing.expectEqualStrings("{\"data\":{\"name\":\"x\"}}", cap.body.items);
+        try std.testing.expectEqual(std.http.Status.ok, cap.status);
+    }
+    // created()
+    {
+        var cap: Context.CapturedResponse = .{ .allocator = a };
+        defer cap.deinit();
+        var ctx: Context = .{
+            .req = undefined,
+            .allocator = a,
+            .attributes = .init(a),
+            .response_cookies = .empty,
+            .response_headers = .init(a),
+            .capture = &cap,
+            .compress_enabled = false,
+        };
+        defer {
+            ctx.attributes.deinit();
+            ctx.response_headers.deinit();
+            ctx.response_cookies.deinit(a);
+        }
+        try ctx.created(@as(i64, 7));
+        try std.testing.expectEqualStrings("{\"ok\":true,\"id\":7}", cap.body.items);
+        try std.testing.expectEqual(std.http.Status.created, cap.status);
+    }
 }

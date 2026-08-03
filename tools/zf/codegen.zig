@@ -778,6 +778,12 @@ pub fn generateService(allocator: std.mem.Allocator, table: *const Table) ![]con
         \\    return {s}Model.findById(db, id, allocator);
         \\}}
         \\
+        \\/// Find by ID or throw `error.NotFound` (mapped to 404 by http_error).
+        \\pub fn getOr404(db: *zfinal.DB, id: i64, allocator: std.mem.Allocator) !Instance {{
+        \\    const item = try {s}Model.findById(db, id, allocator) orelse return error.NotFound;
+        \\    return item;
+        \\}}
+        \\
         \\/// Paginated list.
         \\pub fn paginate(db: *zfinal.DB, page: u32, size: u32, allocator: std.mem.Allocator) ![]Instance {{
         \\    return {s}Model.paginate(db, page, size, allocator);
@@ -839,6 +845,7 @@ pub fn generateService(allocator: std.mem.Allocator, table: *const Table) ![]con
         searchable_cols_text, // 9: searchable columns body
         name, name, name, name, name, name, name, name, name, // 10-18
         unique_lines_text, // 19: validateUnique body (no-op when no @unique)
+        name, // 20: getOr404 model
     });
     if (!hasAnnotations(table)) return base; // caller owns `base`
 
@@ -1277,7 +1284,7 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\    const id = try parseId(ctx);
         \\    const db = try pool.acquire();
         \\    defer pool.release(db) catch {{}};
-        \\    const item = try service.findById(db, id, ctx.allocator) orelse return failHttp(ctx, error.NotFound, "id");
+        \\    const item = try service.getOr404(db, id, ctx.allocator);
         \\    defer item.deinit(ctx.allocator);
         \\    try ctx.renderJson(.{{ .data = item }});
         \\}}
@@ -1314,7 +1321,8 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\    const id = try parseId(ctx);
         \\    const db = try pool.acquire();
         \\    defer pool.release(db) catch {{}};
-        \\    var item = try service.findById(db, id, ctx.allocator) orelse return failHttp(ctx, error.NotFound, "id");
+        \\    var item = try service.getOr404(db, id, ctx.allocator);
+        \\    defer item.deinit(ctx.allocator);
         \\    try item.delete(db);
         \\    try ctx.renderJson(.{{ .ok = true }});
         \\}}

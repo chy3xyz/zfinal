@@ -223,3 +223,12 @@ var dto: service.Data = .{};
 try ctx.bindJson(&dto);          // parse + 400 + ownership handled
 const instance = service.create(db, dto);
 ```
+
+Response shortcuts and lookups:
+
+- `ctx.ok(data)` → `200 {"data": ...}`
+- `ctx.created(id)` → `201 {"ok": true, "id": ...}`
+- Generated `service.getOr404(db, id, allocator)` — returns the `Instance` or
+  throws `error.NotFound`, which `http_error` maps to a `404` envelope; the
+  generated `show`/`delete` handlers use it (and `delete` now `deinit`s the
+  fetched instance).
