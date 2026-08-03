@@ -93,6 +93,12 @@ pub fn create(ctx: *zfinal.Context) !void {
     billing.requireActiveSubscription(st.db, org_id) catch {
         return json_api.err(ctx, .payment_required, "subscription_required");
     };
+    if (st.todo_monthly_quota > 0) {
+        billing.checkMeterQuota(st.db, org_id, "todos", st.todo_monthly_quota) catch |e| {
+            if (e == error.QuotaExceeded) return json_api.err(ctx, .payment_required, "todo_quota_exceeded");
+            return e;
+        };
+    }
     var body: CreateBody = .{};
     try ctx.bindJson(&body);
     const msg = body.message orelse "";
@@ -102,6 +108,7 @@ pub fn create(ctx: *zfinal.Context) !void {
             else => e,
         };
     };
+    if (st.todo_monthly_quota > 0) billing.recordMeterUsage(st.db, org_id, "todos") catch {};
     try json_api.ok(ctx, .{ .id = instance.id, .org_id = org_id, .title = body.title });
 }
 

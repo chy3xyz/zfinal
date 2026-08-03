@@ -39,6 +39,68 @@ pub fn isActiveStatus(status: []const u8) bool {
     return std.mem.eql(u8, status, "active") or std.mem.eql(u8, status, "trialing");
 }
 
+/// Days → civil date (Howard Hinnant's algorithm; no libc `tm` needed).
+fn civilFromDays(z: i64) struct { year: i64, month: i64, day: i64 } {
+    const z2 = z + 719468;
+    const era = @divFloor(z2, 146097);
+    const doe = z2 - era * 146097; // [0, 146096]
+    const yoe = @divFloor(doe - @divFloor(doe, 1460) + @divFloor(doe, 36524) - @divFloor(doe, 146096), 365);
+    const y = yoe + era * 400;
+    const doy = doe - (365 * yoe + @divFloor(yoe, 4) - @divFloor(yoe, 100));
+    const mp = @divFloor(5 * doy + 2, 153);
+    const d = doy - @divFloor(153 * mp + 2, 5) + 1;
+    const m = if (mp < 10) mp + 3 else mp - 9;
+    return .{ .year = if (m <= 2) y + 1 else y, .month = m, .day = d };
+}
+
+/// Current period key "YYYY-MM" (UTC) written into `buf` (≥ 8 bytes).
+pub fn currentPeriod(buf: *[8]u8) []const u8 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+    const civil = civilFromDays(@divFloor(ts.sec, 86400));
+    const year: u32 = @intCast(civil.year);
+    const mon: u32 = @intCast(civil.month);
+    return std.fmt.bufPrint(buf, "{d:0>4}-{d:0>2}", .{ year, mon }) catch buf[0..7];
+}
+
+/// Increment a usage counter (upsert on org/meter/period).
+pub fn recordUsage(db: *zfinal.DB, allocator: std.mem.Allocator, org_id: []const u8, meter: []const u8, period: []const u8, n: i64) !void {
+    _ = allocator;
+    _ = try db.execParams(
+        \\INSERT INTO usage_meter (org_id, meter, period, count) VALUES (?, ?, ?, ?)
+        \\ON CONFLICT(org_id, meter, period) DO UPDATE SET count = count + ?, updated_at = datetime('now')
+    , &.{ .{ .text = org_id }, .{ .text = meter }, .{ .text = period }, .{ .int = n }, .{ .int = n } });
+}
+
+/// Current usage for a meter in `period` (0 when none).
+pub fn getUsage(db: *zfinal.DB, allocator: std.mem.Allocator, org_id: []const u8, meter: []const u8, period: []const u8) !i64 {
+    _ = allocator;
+    var rs = try db.queryParams(
+        "SELECT count FROM usage_meter WHERE org_id = ? AND meter = ? AND period = ?",
+        &.{ .{ .text = org_id }, .{ .text = meter }, .{ .text = period } },
+    );
+    defer rs.deinit();
+    if (!rs.next()) return 0;
+    return (try rs.getInt(0)).?;
+}
+
+/// Metered quota check: returns error.QuotaExceeded when `meter` already at
+/// `quota` for the current period. Call BEFORE the billable action.
+pub fn checkMeterQuota(db: *zfinal.DB, org_id: []const u8, meter: []const u8, quota: i64) !void {
+    var period_buf: [8]u8 = undefined;
+    const period = currentPeriod(&period_buf);
+    const used = try getUsage(db, db.allocator, org_id, meter, period);
+    if (used >= quota) return error.QuotaExceeded;
+}
+
+/// Record one unit of `meter` usage for the current period (call after the
+/// quota check passes, i.e. after the billable action succeeds).
+pub fn recordMeterUsage(db: *zfinal.DB, org_id: []const u8, meter: []const u8) !void {
+    var period_buf: [8]u8 = undefined;
+    const period = currentPeriod(&period_buf);
+    try recordUsage(db, db.allocator, org_id, meter, period, 1);
+}
+
 /// Gate for premium routes — true when org has active/trialing subscription.
 pub fn requireActiveSubscription(db: *zfinal.DB, org_id: []const u8) !void {
     var rs = try db.queryParams("SELECT status FROM subscriptions WHERE org_id = ?", &.{.{ .text = org_id }});

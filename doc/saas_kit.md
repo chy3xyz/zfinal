@@ -137,3 +137,9 @@ SaaS Kit 后端已切换到声明式新特性（保持 `{ok, data, error}` 信�
 - **OpenAPI**：`zf openapi` 在 backend 下生成 `openapi.yaml`（25 条路由，含 bearerAuth）；重生成：`cd examples/zfsaas/backend && zf openapi --out openapi.yaml`。
 - **部署**：`Dockerfile` 为运行时镜像（debian-slim + sqlite3，宿主机构建二进制后 COPY）；配合 `SAAS_DB=/data/saas-kit.db` 卷挂载。
 - **CI/gate**：`quality_gate.sh full` 与 `ci.yml`（macOS job）都加入 `zig build test-zfsaas`，示例回归进合并门槛。
+
+## P3：Admin 面板 + 计量计费（v0.20.17+）
+
+- **Super-admin**：`SUPER_ADMIN_EMAILS` 环境变量（逗号分隔）白名单。`/api/admin/overview`（users/orgs/active_subs/todos 计数）、`/api/admin/users` 与 `/api/admin/subscriptions`（分页 + `meta`）、`/api/admin`（最小 HTML 面板，纯计数无用户数据）。非白名单 → 403 `admin_required`。
+- **计量计费**：`usage_meter` 表（org/meter/period 唯一，按月计数，UTC）。`billing.checkMeterQuota`（超限 → `error.QuotaExceeded`）+ `recordMeterUsage`；todo 创建前查配额、成功后计量；配额来自 `TODO_MONTHLY_QUOTA` env（默认 100，0=不限）。超限 → 402 `todo_quota_exceeded`。`GET /api/billing/usage` 返回 `{todos:{used,quota,period}}`。
+- 说明：`backend/schema.sql` 与 `backend/src/schema.sql` 两份 DDL 需同步（migrate 用 src 下那份）。

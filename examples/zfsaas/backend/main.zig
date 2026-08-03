@@ -39,6 +39,8 @@ pub fn main(init: std.process.Init) !void {
     if (std.c.getenv("STRIPE_WEBHOOK_SECRET")) |s| app_state.stripe_webhook_secret = std.mem.span(s);
     if (std.c.getenv("STRIPE_PRICE_ID")) |s| app_state.stripe_price_id = std.mem.span(s);
     if (std.c.getenv("PUBLIC_BASE_URL")) |s| app_state.public_base_url = std.mem.span(s);
+    if (std.c.getenv("TODO_MONTHLY_QUOTA")) |q| app_state.todo_monthly_quota = std.fmt.parseInt(i64, std.mem.span(q), 10) catch 100;
+    if (std.c.getenv("SUPER_ADMIN_EMAILS")) |s| app_state.super_admin_csv = std.mem.span(s);
 
     var app = zfinal.ZFinal.init(allocator);
     defer app.deinit();
@@ -109,7 +111,14 @@ pub fn main(init: std.process.Init) !void {
 
     try app.getWithInterceptors("/api/billing/subscription", billing_handler.subscription, &protected);
     try app.postWithInterceptors("/api/billing/checkout", billing_handler.checkout, &protected);
+    try app.getWithInterceptors("/api/billing/usage", billing_handler.usage, &protected);
     try app.post("/api/billing/webhook", billing_handler.webhook);
+
+    const admin = @import("src/modules/admin/handler.zig");
+    try app.getWithInterceptors("/api/admin", admin.dashboard, &auth_only);
+    try app.getWithInterceptors("/api/admin/overview", admin.overview, &auth_only);
+    try app.getWithInterceptors("/api/admin/users", admin.users, &auth_only);
+    try app.getWithInterceptors("/api/admin/subscriptions", admin.subscriptions, &auth_only);
 
     try todo_routes.register(&app, &protected);
 

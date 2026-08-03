@@ -35,6 +35,17 @@ pub fn checkout(ctx: *zfinal.Context) !void {
     try json_api.ok(ctx, .{ .url = result.url, .mock = result.mock });
 }
 
+pub fn usage(ctx: *zfinal.Context) !void {
+    const st = try state_mod.fromContext(ctx);
+    const org_id = try requireOrg(ctx);
+    var period_buf: [8]u8 = undefined;
+    const period = service.currentPeriod(&period_buf);
+    const used = try service.getUsage(st.db, ctx.allocator, org_id, "todos", period);
+    try json_api.ok(ctx, .{
+        .todos = .{ .used = used, .quota = st.todo_monthly_quota, .period = period },
+    });
+}
+
 const MockWebhook = struct {
     id: []const u8,
     type: []const u8,

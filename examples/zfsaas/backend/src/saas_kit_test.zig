@@ -140,3 +140,28 @@ test "saas-kit: cross-org access control (update/delete/list)" {
     defer upd.deinit(a);
     try std.testing.expectEqualStrings("t1-updated", upd.data.title);
 }
+
+test "saas-kit: metered billing — quota enforced" {
+    const a = std.testing.allocator;
+    var db = try openDb();
+    defer db.destroy();
+
+    const u = try auth.signUp(db, a, "quota@ex.com", "Quota", "password1", secret, 3600);
+    defer auth.freeAuthResult(a, u);
+    try db.execParams("UPDATE subscriptions SET status = 'active' WHERE org_id = ?", &.{.{ .text = u.org_id.? }});
+
+    const quota: i64 = 3;
+    var i: i64 = 0;
+    while (i < quota) : (i += 1) {
+        try billing.checkMeterQuota(db, u.org_id.?, "todos", quota);
+        const t = try todo.createInOrg(db, "t", "m", u.org_id.?, "1");
+        try std.testing.expect(t.id != null);
+        try billing.recordMeterUsage(db, u.org_id.?, "todos");
+    }
+    // 4th create exceeds quota
+    try std.testing.expectError(error.QuotaExceeded, billing.checkMeterQuota(db, u.org_id.?, "todos", quota));
+
+    var period_buf: [8]u8 = undefined;
+    const period = billing.currentPeriod(&period_buf);
+    try std.testing.expectEqual(@as(i64, quota), try billing.getUsage(db, a, u.org_id.?, "todos", period));
+}
