@@ -344,6 +344,32 @@ pub fn refreshSession(
     };
 }
 
+/// Change password for an authenticated user. Verifies the current password,
+/// then updates the hash and revokes all outstanding refresh tokens (sessions).
+pub fn changePassword(db: *zfinal.DB, allocator: std.mem.Allocator, user_id: i64, current_pw: []const u8, new_pw: []const u8) !void {
+    if (isWeak(new_pw)) return error.WeakPassword;
+    var rs = try db.queryParams("SELECT password_hash FROM users WHERE id = ?", &.{.{ .int = user_id }});
+    defer rs.deinit();
+    if (!rs.next()) return error.Unauthorized;
+    const hash = rs.getText(0).?;
+    if (!password.verify(allocator, hash, current_pw)) return error.Unauthorized;
+
+    const new_hash = try password.hash(allocator, new_pw);
+    defer allocator.free(new_hash);
+    try db.begin();
+    errdefer db.rollback() catch {};
+    try db.execParams("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?", &.{
+        .{ .text = new_hash },
+        .{ .int = user_id },
+    });
+    // Invalidate all refresh tokens so other sessions must re-authenticate.
+    _ = try db.execParams(
+        "UPDATE auth_tokens SET used_at = datetime('now') WHERE user_id = ? AND type = ? AND used_at IS NULL",
+        &.{ .{ .int = user_id }, .{ .text = "refresh" } },
+    );
+    try db.commit();
+}
+
 /// Revoke a refresh token (logout elsewhere).
 pub fn revokeRefresh(db: *zfinal.DB, allocator: std.mem.Allocator, raw_refresh: []const u8) !void {
     const th = try util.sha256Hex(allocator, raw_refresh);

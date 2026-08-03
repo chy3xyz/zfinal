@@ -17,6 +17,16 @@ pub fn listByOrg(db: *zfinal.DB, allocator: std.mem.Allocator, org_id: []const u
     return query.list(allocator);
 }
 
+/// Paginated org-scoped list (P1). Page is 1-based; size clamped by caller.
+pub fn paginateByOrg(db: *zfinal.DB, allocator: std.mem.Allocator, org_id: []const u8, q: ?[]const u8, page: usize, size: usize) !zfinal.Page(Instance) {
+    var query = TodoModel.Query.init(db, allocator);
+    defer query.deinit();
+    try query.textEq("org_id", org_id);
+    try query.likeAll(&.{ "title", "message" }, q);
+    try query.orderBy("id", .desc);
+    return query.paginate(page, size, allocator);
+}
+
 pub fn findByIdInOrg(db: *zfinal.DB, allocator: std.mem.Allocator, id: i64, org_id: []const u8) !?Instance {
     var rs = try db.queryParams(
         "SELECT id FROM todo WHERE id = ? AND org_id = ?",

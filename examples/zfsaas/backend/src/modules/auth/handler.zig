@@ -144,6 +144,28 @@ pub fn revoke(ctx: *zfinal.Context) !void {
     try json_api.okEmpty(ctx);
 }
 
+const ChangePasswordBody = struct {
+    current_password: []const u8 = "",
+    new_password: []const u8 = "",
+};
+
+/// Change password for the authenticated user; revokes all refresh tokens.
+pub fn changePassword(ctx: *zfinal.Context) !void {
+    const st = try state_mod.fromContext(ctx);
+    const sub = ctx.getAttr("jwt_sub") orelse return json_api.err(ctx, .unauthorized, "jwt");
+    const user_id = std.fmt.parseInt(i64, sub, 10) catch return json_api.err(ctx, .unauthorized, "jwt");
+    var body: ChangePasswordBody = .{};
+    try ctx.bindJson(&body);
+    service.changePassword(st.db, ctx.allocator, user_id, body.current_password, body.new_password) catch |e| {
+        return switch (e) {
+            error.Unauthorized => json_api.err(ctx, .unauthorized, "wrong_password"),
+            error.WeakPassword => json_api.err(ctx, .bad_request, "weak_password"),
+            else => e,
+        };
+    };
+    try json_api.okEmpty(ctx);
+}
+
 /// Verify email via the token returned at sign-up (P1).
 pub fn verifyEmail(ctx: *zfinal.Context) !void {
     const st = try state_mod.fromContext(ctx);

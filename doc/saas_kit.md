@@ -125,3 +125,8 @@ SaaS Kit 后端已切换到声明式新特性（保持 `{ok, data, error}` 信�
 - **Refresh token 轮换 + 吊销**：sign-up/sign-in 返回 `refresh_token`（30 天）；`POST /api/auth/refresh` 轮换（旧 token 作废、签发新 access+refresh）；`POST /api/auth/revoke` 吊销；`auth_tokens` 表驱动，全部单次使用。
 - **Email 验证**：sign-up 返回 `dev_verify_token`（mock 邮件）；`POST /api/auth/verify-email` 置 `email_verified_at`；`me` 响应带 `email_verified`；token 24h 单次。
 - **框架修复**：读取请求体后 `getHeader` 会触发 `std.http` 的 `.received_head` 断言崩溃（webhook 先读 body 再取签名头必炸）。`Context.cacheHeaders()` 在 dispatch 时快照请求头，`getHeader` 改走缓存——任何"先读 body 再读 header"的 handler 都安全了。
+
+## P1 续：账号管理 + todo 分页（v0.20.17+）
+
+- **改密**：`POST /api/auth/change-password`（需登录，body `{current_password, new_password}`）；校验当前密码（错 → 401 `wrong_password`），更新哈希并**吊销该用户全部 refresh token**（他端会话强制下线）。
+- **todo 分页（向后兼容）**：`GET /api/todos?page=1&size=20` 返回 `{ok, data:[...], error, meta:{total,page,size}}` —— `data` 仍是数组（前端零改动），`meta` 纯增量；不带 `page` 时保持返回全部（legacy）。size 上限 100。

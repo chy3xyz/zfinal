@@ -33,8 +33,12 @@ fn todoJson(it: service.Instance) TodoView {
 }
 
 /// Declarative list filters (ADR-017) — bound from query params.
+/// `page` opt-in: when present, returns `{data, meta:{total,page,size}}`
+/// (backward compatible — `data` stays an array).
 const ListFilters = struct {
     q: ?[]const u8 = null,
+    page: ?i64 = null,
+    size: ?i64 = null,
 };
 
 pub fn list(ctx: *zfinal.Context) !void {
@@ -42,6 +46,19 @@ pub fn list(ctx: *zfinal.Context) !void {
     const org_id = try requireOrg(ctx);
     var f: ListFilters = .{};
     try ctx.bindQuery(&f);
+    if (f.page) |p| {
+        const size: usize = @intCast(@min(f.size orelse 20, 100));
+        var page = try service.paginateByOrg(st.db, ctx.allocator, org_id, f.q, @intCast(p), size);
+        defer {
+            for (page.list) |*it| it.deinit(ctx.allocator);
+            page.deinit();
+        }
+        var out: std.ArrayList(TodoView) = .empty;
+        defer out.deinit(ctx.allocator);
+        for (page.list) |it| try out.append(ctx.allocator, todoJson(it));
+        try json_api.okMeta(ctx, out.items, .{ .total = page.total_row, .page = page.page_number, .size = page.page_size });
+        return;
+    }
     const items = try service.listByOrg(st.db, ctx.allocator, org_id, f.q);
     defer {
         for (items) |*it| it.deinit(ctx.allocator);

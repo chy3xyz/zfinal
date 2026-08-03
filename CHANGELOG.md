@@ -17,6 +17,7 @@
   - **SaaS Kit P0 production base**: `examples/zfsaas` gains a global per-IP rate limiter (429 + audit), framework `/health` + `/metrics` endpoints, audit logging (login failures, password-reset emails, invites, checkout — `audit.Event` extended with `email_sent` / `invite_sent` / `subscription_changed`), and a fixed-interval task runner (`src/task_runner.zig`) that downgrades expired subscriptions and cleans up unaccepted invites.
   - **SaaS Kit P1 auth completeness**: `examples/zfsaas` adds rotating refresh tokens (`POST /api/auth/refresh` rotates + `revoke` invalidates, all single-use via `auth_tokens`) and email verification (`dev_verify_token` at sign-up + `POST /api/auth/verify-email`, `me` reports `email_verified`). Service-level tests cover verify/rotation/revoke.
   - **Framework fix — header cache**: reading a request body invalidates `std.http`'s header buffer, so `Context.getHeader` after body consumption crashed (`iterateHeaders` asserts `.received_head`). `Context.cacheHeaders()` snapshots request headers at dispatch and `getHeader` now reads the cache — safe for webhook-style handlers that read the body before headers.
+  - **SaaS Kit P1 follow-ups**: authenticated `POST /api/auth/change-password` (verifies current password, then revokes all refresh tokens) and backward-compatible todo pagination (`GET /api/todos?page=&size=` adds a top-level `meta:{total,page,size}`; `data` stays an array, no `page` keeps the legacy full-list behavior).
 
 ## [0.20.15] - 2026-08-02
 

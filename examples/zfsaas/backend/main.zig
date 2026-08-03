@@ -99,6 +99,7 @@ pub fn main(init: std.process.Init) !void {
     try app.post("/api/auth/password-reset/request", auth_handler.requestReset);
     try app.post("/api/auth/password-reset/confirm", auth_handler.confirmReset);
     try app.getWithInterceptors("/api/auth/me", auth_handler.me, &auth_only);
+    try app.postWithInterceptors("/api/auth/change-password", auth_handler.changePassword, &auth_only);
 
     try app.getWithInterceptors("/api/orgs", org_handler.list, &auth_only);
     try app.postWithInterceptors("/api/orgs", org_handler.create, &auth_only);
