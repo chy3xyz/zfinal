@@ -1025,3 +1025,22 @@ test "codegen: service without @unique emits no-op validateUnique" {
         }
     }.f);
 }
+
+test "codegen: service emits getOr404; handler show/delete use it" {
+    const allocator = std.testing.allocator;
+    try withTable(allocator,
+        \\CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT);
+    , struct {
+        fn f(t: *codegen.Table) !void {
+            const service = try codegen.generateService(t.allocator, t);
+            defer t.allocator.free(service);
+            try std.testing.expect(std.mem.indexOf(u8, service, "pub fn getOr404(db: *zfinal.DB, id: i64, allocator: std.mem.Allocator) !Instance") != null);
+            try std.testing.expect(std.mem.indexOf(u8, service, "orelse return error.NotFound") != null);
+
+            const handler = try codegen.generateHandler(t.allocator, t, "../");
+            defer t.allocator.free(handler);
+            try std.testing.expect(std.mem.indexOf(u8, handler, "try service.getOr404(db, id, ctx.allocator)") != null);
+            try std.testing.expect(std.mem.indexOf(u8, handler, "orelse return failHttp(ctx, error.NotFound") == null);
+        }
+    }.f);
+}

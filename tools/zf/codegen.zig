@@ -1333,7 +1333,8 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
         \\    const id = try parseId(ctx);
         \\    const db = try pool.acquire();
         \\    defer pool.release(db) catch {{}};
-        \\    var item = try service.findById(db, id, ctx.allocator) orelse return failHttp(ctx, error.NotFound, "id");
+        \\    var item = try service.getOr404(db, id, ctx.allocator);
+        \\    defer item.deinit(ctx.allocator);
         \\{s}    try item.save(db);
         \\    try ctx.renderJson(.{{ .ok = true }});
         \\}}
