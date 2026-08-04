@@ -1,3 +1,8 @@
+## [0.21.1] - 2026-08-04
+
+### Fixed
+- **`Context.getHeader` case-insensitivity (RFC 9110)**: the cached `header_map` lookup used a case-sensitive `StringHashMap.get`, while the mock/fallback paths already used `eqlIgnoreCase`. HTTP/2 and many proxies send lowercase header names, so `getHeader("Origin")` returned `null` for an `origin:` header — CORS allow-list then treated the request as origin-less and (with a single configured origin) silently allowed any cross-origin request. `getHeader` now matches header names ignoring case on every path; regression test added.
+
 ## [0.21.0] - 2026-08-04
 
 ### Changed

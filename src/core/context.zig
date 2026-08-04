@@ -188,7 +188,14 @@ pub const Context = struct {
 
     pub fn getHeader(self: *Context, name: []const u8) ?[]const u8 {
         if (self.header_map) |*hm| {
-            return hm.get(name);
+            // cacheHeaders stores header names verbatim (HTTP/2 and many
+            // proxies send lowercase); HTTP field names are case-insensitive
+            // per RFC 9110, so match ignoring case.
+            var it = hm.iterator();
+            while (it.next()) |e| {
+                if (std.ascii.eqlIgnoreCase(e.key_ptr.*, name)) return e.value_ptr.*;
+            }
+            return null;
         }
         if (self.mock_headers) |*mh| {
             var it = mh.iterator();
@@ -1058,6 +1065,30 @@ test "context: isSafeDownloadPath rejects traversal" {
     try std.testing.expect(!Context.isSafeDownloadPath("foo/../../etc"));
     try std.testing.expect(Context.isSafeDownloadPath("static/app.js"));
     try std.testing.expect(Context.isSafeDownloadPath("ok/file.txt"));
+}
+
+test "context: getHeader is case-insensitive over cached header_map" {
+    const a = std.testing.allocator;
+    var ctx: Context = undefined;
+    ctx.allocator = a;
+    ctx.header_map = std.StringHashMap([]const u8).init(a);
+    defer {
+        var it = ctx.header_map.?.iterator();
+        while (it.next()) |e| {
+            a.free(e.key_ptr.*);
+            a.free(e.value_ptr.*);
+        }
+        ctx.header_map.?.deinit();
+    }
+    // HTTP/2 + some proxies send lowercase header names; cacheHeaders stores
+    // them verbatim, so lookups must be RFC 9110 case-insensitive.
+    try ctx.header_map.?.put(try a.dupe(u8, "origin"), try a.dupe(u8, "https://app.example.com"));
+    try ctx.header_map.?.put(try a.dupe(u8, "x-requested-with"), try a.dupe(u8, "fetch"));
+
+    try std.testing.expectEqualStrings("https://app.example.com", ctx.getHeader("Origin").?);
+    try std.testing.expectEqualStrings("https://app.example.com", ctx.getHeader("ORIGIN").?);
+    try std.testing.expectEqualStrings("fetch", ctx.getHeader("X-Requested-With").?);
+    try std.testing.expect(ctx.getHeader("Origin2") == null);
 }
 
 test "context: setCookie defaults HttpOnly+SameSite" {
