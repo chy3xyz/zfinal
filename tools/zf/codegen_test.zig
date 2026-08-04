@@ -570,6 +570,70 @@ test "zent_codegen: parse JSON schema" {
     try std.testing.expectEqual(@as(usize, 1), schema.entities.items.len);
 }
 
+test "zent_codegen: field constraints @unique/@sensitive/@required/@email/@positive" {
+    const allocator = std.testing.allocator;
+    const dsl =
+        \\module shop
+        \\api_prefix /api/v1
+        \\
+        \\entity User {
+        \\  name: string @required
+        \\  handle: string @unique @index
+        \\  email: string @email
+        \\  phone: string @sensitive
+        \\}
+        \\
+        \\entity Product {
+        \\  sku: string @unique
+        \\  price_cents: int @positive
+        \\  stock: int = 0 @unique
+        \\}
+    ;
+    var schema = try zent_codegen.parseZentDsl(allocator, dsl);
+    defer schema.deinit();
+
+    const user = &schema.entities.items[0];
+    try std.testing.expect(user.fields.items[0].required);
+    try std.testing.expect(user.fields.items[1].unique);
+    try std.testing.expect(user.fields.items[1].indexed);
+    try std.testing.expect(user.fields.items[2].email);
+    try std.testing.expect(user.fields.items[3].sensitive);
+    const prod = &schema.entities.items[1];
+    try std.testing.expect(prod.fields.items[0].unique);
+    try std.testing.expect(prod.fields.items[1].positive);
+    try std.testing.expect(prod.fields.items[2].unique);
+    try std.testing.expectEqualStrings("0", prod.fields.items[2].default_value.?);
+
+    const model = try zent_codegen.generateModel(allocator, &schema);
+    defer allocator.free(model);
+    try std.testing.expect(std.mem.indexOf(u8, model, "field.String(\"handle\").Unique()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, model, "field.String(\"phone\").Sensitive()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, model, "field.String(\"name\").NotEmpty()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, model, "field.String(\"email\").Email()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, model, "field.Int(\"price_cents\").Positive()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, model, "field.Int(\"stock\").Default(\"0\").Unique()") != null);
+    try expectZigSyntax(model);
+
+    const persist = try zent_codegen.generatePersistence(allocator, &schema);
+    defer allocator.free(persist);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "findByUniqueHandle") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "preds.handleEQ(.{ .string = handle })") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "findByUniqueSku") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "findByUniqueStock") != null);
+    try expectZigSyntax(persist);
+
+    const service = try zent_codegen.generateService(allocator, &schema);
+    defer allocator.free(service);
+    try std.testing.expect(std.mem.indexOf(u8, service, "error.Duplicate") != null);
+    try std.testing.expect(std.mem.indexOf(u8, service, "self.store.findByUniqueHandle(handle)") != null);
+    try expectZigSyntax(service);
+
+    const manifest = try zent_codegen.emitJsonManifest(allocator, "schema.zent", &schema);
+    defer allocator.free(manifest);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "\"unique\": true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "\"sensitive\": true") != null);
+}
+
 // ============================================================
 // openapi — minimal OpenAPI 3.0.3 spec generator from Zig source
 // ============================================================

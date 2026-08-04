@@ -3,11 +3,19 @@
 //! Recognizes Zig (`// ── ai-edit-zone: name`) and HTML
 //! (`<!-- ── ai-edit-zone: name`) markers. Zone *names* must match between
 //! the existing file and the newly generated content; bodies from the
-//! existing file win.
+//! existing file win. Duplicate zone names (e.g. one `business rules` zone
+//! per generated create method) are matched **by order of appearance**, so
+//! hand-written bodies stay attached to the same slot after regeneration.
 const std = @import("std");
 
 const zone_open = "ai-edit-zone:";
 const zone_close = "end ai-edit-zone";
+
+/// One hand-edited zone, in file order.
+const ZoneEntry = struct {
+    name: []const u8, // owned (caller frees)
+    block: []const u8, // borrowed from the source slice
+};
 
 /// Merge hand-edited zones from `existing` into `generated`.
 /// Returns owned merged text when ≥1 zone was preserved; otherwise `null`
@@ -17,14 +25,17 @@ pub fn mergeAiEditZones(
     existing: []const u8,
     generated: []const u8,
 ) !?[]u8 {
-    var old_zones = std.StringHashMap([]const u8).init(allocator);
+    var old_zones: std.ArrayList(ZoneEntry) = .empty;
     defer {
-        var it = old_zones.iterator();
-        while (it.next()) |e| allocator.free(e.key_ptr.*);
-        old_zones.deinit();
+        for (old_zones.items) |e| allocator.free(e.name);
+        old_zones.deinit(allocator);
     }
     try collectZones(allocator, existing, &old_zones);
-    if (old_zones.count() == 0) return null;
+    if (old_zones.items.len == 0) return null;
+
+    // name → how many zones with this name we already consumed in `generated`.
+    var name_idx = std.StringHashMap(usize).init(allocator);
+    defer name_idx.deinit();
 
     var out = std.ArrayList(u8).empty;
     errdefer out.deinit(allocator);
@@ -52,7 +63,7 @@ pub fn mergeAiEditZones(
             break;
         };
         const end_line = lineEnd(generated, end);
-        if (old_zones.get(name)) |old_block| {
+        if (findZoneMatch(&old_zones, &name_idx, name)) |old_block| {
             try out.appendSlice(allocator, old_block);
             preserved += 1;
         } else {
@@ -68,10 +79,31 @@ pub fn mergeAiEditZones(
     return try out.toOwnedSlice(allocator);
 }
 
+/// Return the next unconsumed `block` for `name` from `old_zones` (order of
+/// appearance), or null when no more matches exist.
+fn findZoneMatch(
+    old_zones: *const std.ArrayList(ZoneEntry),
+    name_idx: *std.StringHashMap(usize),
+    name: []const u8,
+) ?[]const u8 {
+    const gop = name_idx.getOrPut(name) catch return null;
+    if (!gop.found_existing) gop.value_ptr.* = 0;
+    const want = gop.value_ptr.*;
+    gop.value_ptr.* += 1;
+    var seen: usize = 0;
+    for (old_zones.items) |e| {
+        if (std.mem.eql(u8, e.name, name)) {
+            if (seen == want) return e.block;
+            seen += 1;
+        }
+    }
+    return null;
+}
+
 fn collectZones(
     allocator: std.mem.Allocator,
     src: []const u8,
-    map: *std.StringHashMap([]const u8),
+    list: *std.ArrayList(ZoneEntry),
 ) !void {
     var pos: usize = 0;
     while (pos < src.len) {
@@ -86,13 +118,7 @@ fn collectZones(
         const block = src[start..end_line];
         const key = try allocator.dupe(u8, name);
         errdefer allocator.free(key);
-        const gop = try map.getOrPut(key);
-        if (gop.found_existing) {
-            allocator.free(key);
-            gop.value_ptr.* = block;
-        } else {
-            gop.value_ptr.* = block;
-        }
+        try list.append(allocator, .{ .name = key, .block = block });
         pos = end_line;
     }
 }
@@ -206,4 +232,35 @@ test "mergeAiEditZones keeps new zones from generated" {
     try std.testing.expect(merged != null);
     try std.testing.expect(std.mem.indexOf(u8, merged.?, "HAND") != null);
     try std.testing.expect(std.mem.indexOf(u8, merged.?, "FRESH") != null);
+}
+
+test "mergeAiEditZones pairs duplicate zone names by order" {
+    const allocator = std.testing.allocator;
+    const existing =
+        \\// ── ai-edit-zone: business rules ──
+        \\    check(follower_id);
+        \\// ── end ai-edit-zone ──
+        \\// ── ai-edit-zone: business rules ──
+        \\    check(user_id);
+        \\// ── end ai-edit-zone ──
+        \\
+    ;
+    const generated =
+        \\// ── ai-edit-zone: business rules ──
+        \\    // TODO A
+        \\// ── end ai-edit-zone ──
+        \\// ── ai-edit-zone: business rules ──
+        \\    // TODO B
+        \\// ── end ai-edit-zone ──
+        \\
+    ;
+    const merged = try mergeAiEditZones(allocator, existing, generated);
+    defer if (merged) |m| allocator.free(m);
+    try std.testing.expect(merged != null);
+    // first slot gets the first old body, second slot the second old body
+    const first_pos = std.mem.indexOf(u8, merged.?, "check(follower_id);").?;
+    const second_pos = std.mem.indexOf(u8, merged.?, "check(user_id);").?;
+    try std.testing.expect(first_pos < second_pos);
+    try std.testing.expect(std.mem.indexOf(u8, merged.?, "// TODO A") == null);
+    try std.testing.expect(std.mem.indexOf(u8, merged.?, "// TODO B") == null);
 }

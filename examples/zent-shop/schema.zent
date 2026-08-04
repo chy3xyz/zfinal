@@ -1,31 +1,81 @@
-# zf crud:zent — shop domain (e-commerce + social)
+# zf crud:zent — shop domain (e-commerce + social), zent v0.27.0+
 # Generate: zf crud:zent examples/zent-shop/schema.zent --json
-# Or:       zf crud:zent schema.zent --force
+# Field constraints: @index @unique @sensitive @required @email @positive [= default]
+# Relations:        ref: <edge_name>: <TargetEntity> via <fk_field>  → zent From edge
 
 module shop
 api_prefix /api/v1
 
 entity User {
-  name: string
-  handle: string @index
+  name: string @required
+  handle: string @unique @index
+  email: string @email @unique
 }
 
 entity Product {
   seller_id: int
-  name: string
-  price_cents: int
-  stock: int = 0
+  name: string @required
+  price_cents: int @positive
+  stock: int = 0 @positive
+  ref: seller: User via seller_id
   list_by: seller_id
+}
+
+entity CartItem {
+  user_id: int
+  product_id: int
+  qty: int = 1 @positive
+  ref: user: User via user_id
+  ref: product: Product via product_id
+  list_by: user_id
+}
+
+entity Order {
+  buyer_id: int
+  status: string = "pending"
+  total_cents: int = 0 @positive
+  ref: buyer: User via buyer_id
+  policy: data_scope
+}
+
+entity OrderItem {
+  order_id: int
+  product_id: int
+  qty: int @positive
+  price_cents: int @positive
+  ref: order: Order via order_id
+  ref: product: Product via product_id
+  list_by: order_id
 }
 
 entity Follow {
   follower_id: int
   followee_id: int
+  ref: follower: User via follower_id
+  ref: followee: User via followee_id
   list_by: follower_id
+}
+
+entity Like {
+  user_id: int
+  post_id: int
+  ref: user: User via user_id
+  ref: post: Post via post_id
+  list_by: post_id
 }
 
 entity Post {
   author_id: int
-  body: string
+  body: text @required
+  ref: author: User via author_id
   list_by: author_id
+}
+
+entity Comment {
+  post_id: int
+  author_id: int
+  body: text @required
+  ref: post: Post via post_id
+  ref: author: User via author_id
+  list_by: post_id
 }

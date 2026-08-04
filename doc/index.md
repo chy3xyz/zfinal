@@ -39,6 +39,7 @@ Walkthrough: [ai-quickstart.md](ai-quickstart.md) · Demo: `examples/ai-blog-5mi
 | zent / e-commerce | [`.claude/skills/zfinal-zent-ai.md`](../.claude/skills/zfinal-zent-ai.md) |
 | Health / CI | [`.claude/skills/zfinal-health.md`](../.claude/skills/zfinal-health.md) |
 | Architecture layers | [architecture_best_practices.md](architecture_best_practices.md) |
+| SaaS Kit / SolidStart API | [saas_kit.md](saas_kit.md) |
 | Envelopes / smart routing / HTTP | [api_envelope.md](api_envelope.md) · [smart_routing.md](smart_routing.md) · [http_ergonomics.md](http_ergonomics.md) |
 | L0→L3 / Outbox→Bus / millions | [progressive_architecture.md](progressive_architecture.md) · [outbox.md](outbox.md) · [bus.md](bus.md) · [scale_to_millions.md](scale_to_millions.md) |
 | Keep-alive / reverse proxy | [reverse_proxy.md](reverse_proxy.md) |
@@ -50,7 +51,8 @@ Walkthrough: [ai-quickstart.md](ai-quickstart.md) · Demo: `examples/ai-blog-5mi
 |--------------|------|
 | Best practices index + timeline | [best_practices.md](best_practices.md) |
 | Architecture / progressive / scale | [architecture_best_practices.md](architecture_best_practices.md) · [progressive_architecture.md](progressive_architecture.md) · [scale_to_millions.md](scale_to_millions.md) |
-| Data: `DB` **or** `zent` | [zent.md](zent.md) · [database.md](database.md) |
+| Data: `DB` **or** `zent` | [zent.md](zent.md) · [zent-commerce-social.md](zent-commerce-social.md) · [database.md](database.md) |
+| SaaS Kit (org auth / Stripe / todo) | [saas_kit.md](saas_kit.md) · `examples/zfsaas/` |
 | L3 async: Outbox + Bus | [outbox.md](outbox.md) · [bus.md](bus.md) |
 | Messaging connectors | [nats.md](nats.md) · [robustmq.md](robustmq.md) |
 | WebSocket / OAuth2 | [websocket.md](websocket.md) · [oauth2.md](oauth2.md) |

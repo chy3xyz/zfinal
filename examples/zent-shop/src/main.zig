@@ -13,6 +13,14 @@ const zent = zfinal.zent; // peer data layer to zfinal.DB / Model
 const persist = @import("modules/shop/persistence.zig");
 const service = @import("modules/shop/service.zig");
 const handler = @import("modules/shop/handler.zig");
+const routes = @import("modules/shop/routes.zig");
+
+/// migrateSchema takes comptime `infos`; a dense 9-entity edge graph exceeds
+/// zent's default 5000-branch quota, so raise it for this module.
+fn migrateSchema(allocator: std.mem.Allocator, driver: zent.sql_driver.Driver, comptime infos: []const zent.codegen.graph.TypeInfo) !void {
+    @setEvalBranchQuota(500_000);
+    try zent.sql_schema.migrateSchema(allocator, driver, infos);
+}
 
 pub fn main(init: std.process.Init) !void {
     zfinal.io_instance.init(init);
@@ -21,7 +29,7 @@ pub fn main(init: std.process.Init) !void {
     const sqlite_path = if (std.c.getenv("ZENT_SQLITE")) |p| std.mem.span(p) else "zent-shop.db";
     var drv = try zent.sql_sqlite.SQLiteDriver.open(allocator, sqlite_path);
     defer drv.close();
-    try zent.sql_schema.migrateSchema(allocator, drv.asDriver(), persist.infos);
+    try migrateSchema(allocator, drv.asDriver(), persist.infos);
     std.log.info("[zent] migrated schema at {s}", .{sqlite_path});
 
     var store = persist.ShopStore.init(allocator, drv.asDriver());
@@ -40,12 +48,15 @@ pub fn main(init: std.process.Init) !void {
     app.setPort(port);
 
     try app.get("/health", health);
-    try handler.register(&app);
+    try routes.register(&app);
 
     std.log.info("[zent-shop] listening http://127.0.0.1:{d}", .{port});
-    std.log.info("[zent-shop] POST /api/v1/users?name=&handle=", .{});
+    std.log.info("[zent-shop] POST /api/v1/users?name=&handle=&email=", .{});
     std.log.info("[zent-shop] POST /api/v1/products?seller_id=&name=&price_cents=&stock=", .{});
-    std.log.info("[zent-shop] POST /api/v1/follows?follower_id=&followee_id=", .{});
+    std.log.info("[zent-shop] POST /api/v1/cartItems?user_id=&product_id=&qty=", .{});
+    std.log.info("[zent-shop] POST /api/v1/orders/checkout?user_id=  (tx: cart→order, stock--)", .{});
+    std.log.info("[zent-shop] POST /api/v1/follows?follower_id=&followee_id=  (dedup)", .{});
+    std.log.info("[zent-shop] POST /api/v1/likes?user_id=&post_id=  (dedup)", .{});
     std.log.info("[zent-shop] POST /api/v1/posts?author_id=&body=", .{});
     try app.start();
 }

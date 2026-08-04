@@ -1,7 +1,7 @@
 # ZFinal × zent：`DB` 的并列方案（可作主力）— **AI-first**
 
 **zent**: [chy3xyz/zent](https://github.com/chy3xyz/zent) — Zig 版 [ent](https://entgo.io/)（schema-as-code ORM）  
-**版本口径**: zent **v0.12.0+** · ZFinal **v0.20.9+** · Zig **≥ 0.17**  
+**版本口径**: zent **v0.27.0+** · ZFinal **v0.21.0+** · Zig **≥ 0.17**  
 **参考实现**: [`examples/zent-shop/`](../examples/zent-shop/)  
 **决策**: [ADR-007](../.life/decisions/007-zent-peer-data-layer.md)  
 **AI skill**: [`.claude/skills/zfinal-zent-ai.md`](../.claude/skills/zfinal-zent-ai.md)
@@ -208,13 +208,18 @@ api_prefix /api/v1
 
 entity Product {
   seller_id: int
-  name: string
-  stock: int = 0
+  name: string @required
+  price_cents: int @positive
+  stock: int = 0 @positive @index
   list_by: seller_id   # 生成 GET list + Query Where
 }
 ```
 
-字段类型：`string` / `text` / `int` / `bool` / `float` / `time`；修饰 `@index`、`= default`。
+字段类型：`string` / `text` / `int` / `bool` / `float` / `time`。
+字段修饰：`@index`（索引）、`@unique`（→ `.Unique()` + 生成 `findByUnique*` 防重）、
+`@sensitive`（→ `.Sensitive()`）、`@required`（→ `.NotEmpty()`）、`@email`（→ `.Email()`）、
+`@positive`（→ `.Positive()`）、`= default`（→ `.Default()`）。JSON schema 同字段名
+（`{"unique": true, ...}`）。详见 `doc/zent-commerce-social.md` §2。
 
 Agent：电商/社交优先 **`zf crud:zent`**，不要默认拆成一堆裸 JOIN 的 `zf` Model。
 

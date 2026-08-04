@@ -1,3 +1,22 @@
+## [0.21.0] - 2026-08-04
+
+### Changed
+- **zent upgraded `v0.12.1` → `v0.27.0`** (root + `examples/zent-shop` pins; API backward compatible — demo builds & runs unchanged, `zig build` / `zig build test-zf` green). New upstream surface the e-commerce/social stack can now use: `field.Unique()`/`Sensitive()` + validation chain (`NotEmpty`/`Email`/`Range`/…), `field.JSON(T)`/`Enum`/`UUID`, `Client.Update()/Delete()/Bulk*` + `TxClient` (`commit`/`rollback`/`afterCommit`/`enqueueEvent`), `QueryEdge`, `crud.CrudService` + `CrudEvent`, transactional `outbox`, RBAC-style `privacy/data_scope` row-level security, `core.id.uuidv4/uuidv7`, `shard`.
+
+### Added
+- **`zf crud:zent` field-constraint DSL** (`@unique` / `@sensitive` / `@required` / `@email` / `@positive`): maps to zent field chains (`.Unique()/.Sensitive()/.NotEmpty()/.Email()/.Positive()`), generates `store.findByUnique<Field>` + service create dedup (`error.Duplicate`) for `@unique` fields, and reports constraints in the JSON manifest. DSL + JSON schema both supported.
+- **`zf crud:zent` relation DSL** (`ref: <edge>: <Target> via <fk>`): generates zent `From` edges in `model.zig` (batch `QueryEdge` loading), with FK columns auto-supplied by zent `addEdgeFields` (generator skips duplicate columns and `orelse 0` on optional FKs). Dense edge graphs get a `@setEvalBranchQuota` `zentBuildGraph` wrapper (and a matching `migrateSchema` wrapper pattern in `main.zig`).
+- **`zf crud:zent` row-level security** (`policy: data_scope`): emits `.policy = zent.data_scope.Policy`; generated ops attach an empty `PrivacyContext` (allow-all) so stock CRUD keeps working — production passes a real per-request `DataScopeFilter`.
+- **`zf crud:zent` full CRUD**: every entity now generates `update`/`delete` (persistence + service + handler + PUT/DELETE routes), generated outside `ai-edit-zone` so merge order stays stable; new `uuid` / `bytes` field types.
+- **Lifecycle hooks skeleton**: `persistence.zig` `init` gains a hook-wiring `ai-edit-zone` + example callback (`orderBeforeCreate`) showing `client.order.withHooks(...)`.
+- **handler generator top-level `ai-edit-zone: extra handlers`** for hand-written handlers; custom routes flow `handler.zig` → `actions.zig` (extra actions) → `zf routes`.
+- **`examples/zent-shop` rebuilt as a 9-entity e-commerce + social reference** (User/Product/CartItem/Order/OrderItem/Follow/Like/Post/Comment) on zent v0.27.0: transactional checkout (`beginTx` → verify stock → Order+OrderItem snapshot pricing → atomic `setExprArgs("stock","stock - ?")` decrement → clear cart → commit; `InsufficientStock` rolls back cleanly), `@unique` dedup (handle/email), composite-unique dedup for Follow/Like (hand-written `findFollowPair`/`findLikePair`), feed endpoint via `QueryEdge` batch author load, 2-hop friend recommendations, `data_scope` own-orders-only endpoint (`/api/v1/orders/mine`), generated update/delete.
+- **`doc/zent-commerce-social.md`**: e-commerce/social architecture guide (domain modeling DSL incl. `ref:`/`policy: data_scope`, TxClient checkout pattern, `data_scope` row-level security, feed/graph queries, full CRUD + hooks, ai-edit-zone contract, anti-patterns, checklist).
+
+### Fixed
+- **`zf` zone-merge duplicate-name misattribution**: `zone_merge.zig` kept only the last zone per name in a `StringHashMap`, so files with several same-named `ai-edit-zone` blocks (e.g. one `business rules` per generated create method) merged the wrong body into every slot. Zones are now collected in order and matched **by order of appearance**; new unit test covers pairing.
+- **`zf crud:zent` multi-word entity client name**: `CartItem` → `cart_item` (was `cartItem`), matching zent's snake_case `Client` field names; empty `free*` loops for all-numeric rows no longer emit `unused capture`.
+
 ## [0.20.18] - 2026-08-03
 
 ### Added

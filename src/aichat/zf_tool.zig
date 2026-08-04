@@ -178,6 +178,11 @@ pub const ZfTool = struct {
             name: []const u8,
             type: []const u8,
             index: ?bool = null,
+            unique: ?bool = null,
+            sensitive: ?bool = null,
+            required: ?bool = null,
+            email: ?bool = null,
+            positive: ?bool = null,
         };
         const JsonEntity = struct {
             name: []const u8,
@@ -199,6 +204,11 @@ pub const ZfTool = struct {
             name: []const u8,
             type: []const u8,
             index: ?bool = null,
+            unique: ?bool = null,
+            sensitive: ?bool = null,
+            required: ?bool = null,
+            email: ?bool = null,
+            positive: ?bool = null,
         };
         const JsonEntity = struct {
             name: []const u8,
@@ -257,10 +267,20 @@ pub const ZfTool = struct {
             const rhs = std.mem.trim(u8, line[colon + 1 ..], " \t");
             var typ: []const u8 = rhs;
             var indexed = false;
+            var unique = false;
+            var sensitive = false;
+            var required = false;
+            var email = false;
+            var positive = false;
             var tok_it = std.mem.tokenizeAny(u8, rhs, " \t");
             if (tok_it.next()) |first| typ = first;
             while (tok_it.next()) |tok| {
                 if (std.mem.eql(u8, tok, "@index")) indexed = true;
+                if (std.mem.eql(u8, tok, "@unique")) unique = true;
+                if (std.mem.eql(u8, tok, "@sensitive")) sensitive = true;
+                if (std.mem.eql(u8, tok, "@required")) required = true;
+                if (std.mem.eql(u8, tok, "@email")) email = true;
+                if (std.mem.eql(u8, tok, "@positive")) positive = true;
             }
             if (std.mem.indexOfScalar(u8, typ, '=')) |eq| typ = typ[0..eq];
             if (field_counts[ci] >= fields_storage[ci].len) continue;
@@ -268,6 +288,11 @@ pub const ZfTool = struct {
                 .name = fname,
                 .type = typ,
                 .index = if (indexed) true else null,
+                .unique = if (unique) true else null,
+                .sensitive = if (sensitive) true else null,
+                .required = if (required) true else null,
+                .email = if (email) true else null,
+                .positive = if (positive) true else null,
             };
             field_counts[ci] += 1;
         }
@@ -390,6 +415,11 @@ fn emitZentManifest(allocator: std.mem.Allocator, module: []const u8, api_prefix
             try appendJsonString(allocator, &buf, f.type);
             try buf.appendSlice(allocator, "\"");
             if (f.index orelse false) try buf.appendSlice(allocator, ", \"index\": true");
+            if (f.unique orelse false) try buf.appendSlice(allocator, ", \"unique\": true");
+            if (f.sensitive orelse false) try buf.appendSlice(allocator, ", \"sensitive\": true");
+            if (f.required orelse false) try buf.appendSlice(allocator, ", \"required\": true");
+            if (f.email orelse false) try buf.appendSlice(allocator, ", \"email\": true");
+            if (f.positive orelse false) try buf.appendSlice(allocator, ", \"positive\": true");
             try buf.appendSlice(allocator, " }");
         }
         try buf.appendSlice(allocator, "\n      ]\n    }");

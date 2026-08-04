@@ -69,11 +69,22 @@ module <name>
 api_prefix /api/v1
 
 entity EntityName {
-  field: string|text|int|bool|float|time [@index] [= default]
+  field: string|text|int|bool|float|time|uuid|bytes [@index] [@unique] [@sensitive] [@required] [@email] [@positive] [= default]
+  ref: <edge_name>: <TargetEntity> via <fk_field>   # → zent From edge + QueryEdge
+  policy: data_scope                                 # → 行级权限（Schema .policy）
   list_by: field_name    # optional GET list + Query Where
 }
 ```
 
+Constraints map to zent field chains: `@unique → .Unique()` (+ generated
+`findByUnique*` + create dedup `error.Duplicate`), `@sensitive → .Sensitive()`,
+`@required → .NotEmpty()` (string/text), `@email → .Email()`, `@positive →
+.Positive()` (int/float). `ref:` generates `edge.From(name, Target).Field(fk)`
+(+ batch `QueryEdge` usage); `policy: data_scope` attaches
+`zent.data_scope.Policy` (every op needs a PrivacyContext — generator defaults
+to empty ctx = allow-all). Composite-unique (e.g. Follow (a_id,b_id)) is written
+by hand in `persistence.zig` custom queries + `service.zig` business rules
+zones. Every entity also gets generated `update`/`delete` (PUT/DELETE routes).
 JSON equivalent: see `examples/zent-shop/schema.json`.
 
 ## References
