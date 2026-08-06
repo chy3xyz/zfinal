@@ -355,7 +355,7 @@ fn dispatch(request: *http.Server.Request, server: *Server, peer_addr: ?std.Io.n
     if (server.config.access_log) {
         var ip_buf: [64]u8 = undefined;
         const remote_str: ?[]const u8 = if (peer_addr) |addr|
-            std.fmt.bufPrint(&ip_buf, "{}", .{addr}) catch null
+            IpExt.formatIpAddress(addr, &ip_buf)
         else
             null;
         access_log = RequestLogger.begin(getLog(), @tagName(request.head.method), path, remote_str);

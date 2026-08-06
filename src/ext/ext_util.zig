@@ -25,8 +25,11 @@ pub const IpExt = struct {
         return switch (sa.family) {
             std.posix.AF.INET => blk: {
                 const sin: *const std.posix.sockaddr.in = @ptrCast(@alignCast(sa));
+                // sin.addr is in_addr.s_addr in network byte order; @bitCast
+                // takes the in-memory octets directly (127.0.0.1 → {127,0,0,1}).
+                // Do NOT bigToNative here — it would byte-swap on LE hosts.
                 break :blk std.Io.net.IpAddress{ .ip4 = .{
-                    .bytes = @bitCast(std.mem.bigToNative(u32, sin.addr)),
+                    .bytes = @bitCast(sin.addr),
                     .port = std.mem.bigToNative(u16, sin.port),
                 } };
             },
@@ -41,6 +44,33 @@ pub const IpExt = struct {
         };
     }
 
+    /// Format an IpAddress as a dotted-quad / colon-hex string ("127.0.0.1").
+    /// `buf` must outlive the return (must be ≥ INET6_ADDRSTRLEN-ish; 64 is fine).
+    /// Unlike `"{}"` (which prints the Debug struct), this produces a string
+    /// comparable against `trusted_proxies` allow-lists.
+    pub fn formatIpAddress(addr: std.Io.net.IpAddress, buf: []u8) []const u8 {
+        return switch (addr) {
+            .ip4 => |a| std.fmt.bufPrint(buf, "{d}.{d}.{d}.{d}", .{ a.bytes[0], a.bytes[1], a.bytes[2], a.bytes[3] }) catch return "?",
+            .ip6 => |a| {
+                // 8 groups of 4 hex digits, colon-separated (no compression).
+                var out: [std.fmt.count("{x}:{x}:{x}:{x}:{x}:{x}:{x}:{x}", .{ @as(u16, 0), @as(u16, 0), @as(u16, 0), @as(u16, 0), @as(u16, 0), @as(u16, 0), @as(u16, 0), @as(u16, 0) })]u8 = undefined;
+                const s = std.fmt.bufPrint(&out, "{x}:{x}:{x}:{x}:{x}:{x}:{x}:{x}", .{
+                    (@as(u16, a.bytes[0]) << 8) | a.bytes[1],
+                    (@as(u16, a.bytes[2]) << 8) | a.bytes[3],
+                    (@as(u16, a.bytes[4]) << 8) | a.bytes[5],
+                    (@as(u16, a.bytes[6]) << 8) | a.bytes[7],
+                    (@as(u16, a.bytes[8]) << 8) | a.bytes[9],
+                    (@as(u16, a.bytes[10]) << 8) | a.bytes[11],
+                    (@as(u16, a.bytes[12]) << 8) | a.bytes[13],
+                    (@as(u16, a.bytes[14]) << 8) | a.bytes[15],
+                }) catch return "?";
+                if (s.len > buf.len) return "?";
+                @memcpy(buf[0..s.len], s);
+                return buf[0..s.len];
+            },
+        };
+    }
+
     /// Secure default: never trust client-controlled proxy headers.
     /// Prefer `resolveClientIp` with an explicit `ClientIpOptions` behind a reverse proxy.
     pub fn getRealIp(ctx: *zfinal.Context) []const u8 {
@@ -52,7 +82,7 @@ pub const IpExt = struct {
     /// `buf` is used to format `ctx.remote_addr` when present (must outlive the return).
     pub fn resolveClientIp(ctx: *zfinal.Context, buf: []u8, opts: ClientIpOptions) ![]const u8 {
         const remote_str: ?[]const u8 = if (ctx.remote_addr) |addr|
-            try std.fmt.bufPrint(buf, "{}", .{addr})
+            formatIpAddress(addr, buf)
         else
             null;
 
@@ -210,3 +240,38 @@ pub const SecurityExt = struct {
         return std.mem.eql(u8, token, session_token);
     }
 };
+
+test "IpExt.formatIpAddress renders dotted-quad / hex string" {
+    var buf: [64]u8 = undefined;
+    const ip4 = std.Io.net.IpAddress{ .ip4 = .{ .bytes = .{ 127, 0, 0, 1 }, .port = 0 } };
+    try std.testing.expectEqualStrings("127.0.0.1", IpExt.formatIpAddress(ip4, &buf));
+    const ip6 = std.Io.net.IpAddress{ .ip6 = .{ .port = 0, .bytes = .{ 0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 8 } } };
+    try std.testing.expectEqualStrings("1:2:3:4:5:6:7:8", IpExt.formatIpAddress(ip6, &buf));
+}
+
+test "IpExt.resolveClientIp trusts proxy only when peer matches allow-list" {
+    const a = std.testing.allocator;
+    var ctx: zfinal.Context = undefined;
+    ctx.allocator = a;
+    ctx.remote_addr = std.Io.net.IpAddress{ .ip4 = .{ .bytes = .{ 127, 0, 0, 1 }, .port = 54321 } };
+    ctx.mock_headers = std.StringHashMap([]const u8).init(a);
+    defer ctx.mock_headers.?.deinit();
+    try ctx.mock_headers.?.put("x-real-ip", "203.0.113.9");
+    try ctx.mock_headers.?.put("x-forwarded-for", "198.51.100.4");
+
+    var buf: [64]u8 = undefined;
+    // trusted peer (127.0.0.1 in allow-list) → proxy headers win.
+    const trusted = try IpExt.resolveClientIp(&ctx, &buf, .{
+        .trust_proxy_headers = true,
+        .trusted_proxies = &.{"127.0.0.1"},
+    });
+    try std.testing.expectEqualStrings("203.0.113.9", trusted); // X-Real-IP preferred
+
+    // untrusted peer (allow-list excludes us) → real socket address wins.
+    ctx.remote_addr = std.Io.net.IpAddress{ .ip4 = .{ .bytes = .{ 10, 0, 0, 5 }, .port = 54321 } };
+    const untrusted = try IpExt.resolveClientIp(&ctx, &buf, .{
+        .trust_proxy_headers = true,
+        .trusted_proxies = &.{"127.0.0.1"},
+    });
+    try std.testing.expectEqualStrings("10.0.0.5", untrusted);
+}

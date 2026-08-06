@@ -1,3 +1,9 @@
+## [0.22.1] - 2026-08-04
+
+### Fixed
+- **`IpExt.resolveClientIp` trusted_proxies allow-list never matched**: `ctx.remote_addr` was formatted with `"{}"` (Debug struct output like `.{ .ip4 = .{ .bytes = {...} } }`) instead of a dotted-quad string, so `trusted_proxies` entries like `"127.0.0.1"` never matched — proxy-header trust silently failed for everyone using an allow-list, and **`RateLimitHandler` (which keys off `resolveClientIp`) rate-limited by nothing → unlimited 200s under flood** (23 logins all 200, no 429). New `IpExt.formatIpAddress` (IPv4 dotted-quad / IPv6 colon-hex) is used by `resolveClientIp` and the access-log `ip` field; regression tests cover formatting + allow-list matching (trusted → X-Real-IP wins, untrusted → real socket address) + a `RateLimitHandler` window test (peer key from `remote_addr`, 3rd request → `TooManyRequests`).
+- **`IpExt.peerIpAddress` IPv4 byte order**: `sin.addr` is network-order octets; the old `@bitCast(bigToNative(u32, ...))` byte-swapped on little-endian hosts (`127.0.0.1` read as `{1,0,0,127}`). Now `@bitCast(sin.addr)` yields the correct `{127,0,0,1}`.
+
 ## [0.22.0] - 2026-08-04
 
 ### Added

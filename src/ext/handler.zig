@@ -213,3 +213,19 @@ pub const RateLimitHandler = struct {
         }
     }
 };
+
+test "RateLimitHandler enforces window (peer key from remote_addr)" {
+    const a = std.testing.allocator;
+    var rl = RateLimitHandler.init(a);
+    rl.max_requests = 2;
+    rl.window_seconds = 60;
+    defer rl.deinit();
+
+    var ctx: zfinal.Context = undefined;
+    ctx.allocator = a;
+    ctx.remote_addr = std.Io.net.IpAddress{ .ip4 = .{ .bytes = .{ 127, 0, 0, 1 }, .port = 1 } };
+
+    try rl.handle(&ctx);
+    try rl.handle(&ctx);
+    try std.testing.expectError(error.TooManyRequests, rl.handle(&ctx));
+}
