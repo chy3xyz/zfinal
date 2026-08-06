@@ -1,3 +1,8 @@
+## [0.23.1] - 2026-08-07
+
+### Changed
+- **zent upgraded `v0.29.0` → `v0.29.3`** (root + `examples/zent-shop` pins; API backward compatible). v0.29.3 **fixes our upstream issue #1**: `WhereIn` now compiles on Zig 0.17 (1-arg `Managed.append`; `or_in_chunks` stays `ArrayListUnmanaged`), with single/multi/>500-chunk/empty-value tests. zfinal's `sql.In` workaround is **removed** — feed/recommend use `WhereIn` again. Also: PG/MySQL boolean scan fix, `All()`/`paged()` ownership docs. **Issue #2 (`addEdgeFields` From-edge FK dedup) still open** — `isRefFk` workaround stays.
+
 ## [0.23.0] - 2026-08-07
 
 ### Changed

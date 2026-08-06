@@ -59,7 +59,7 @@ pub const build_zig_zon =
     \\    .minimum_zig_version = "0.17.0",
     \\    .dependencies = .{{
     \\        .zfinal = .{{
-    \\            .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.23.0.tar.gz",
+    \\            .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.23.1.tar.gz",
     \\            .hash = "...", // run `zig fetch <url>` to fill the actual hash
     \\        }},
     \\    }},

@@ -4,7 +4,7 @@
 > 内容电商 / 社区电商。**决策**：这类系统以 **zent 作数据层主力**（见
 > [doc/zent.md](zent.md)），ZFinal 只做 HTTP / 插件 / Queue。
 >
-> **版本**：zent **v0.29.0+** · ZFinal **v0.21.0+** · Zig ≥ 0.17
+> **版本**：zent **v0.29.3+** · ZFinal **v0.21.0+** · Zig ≥ 0.17
 > **参考实现**：[`examples/zent-shop`](../examples/zent-shop/)（9 实体完整可跑）
 
 相关：[zent.md](zent.md)（定位/选型）· [architecture_best_practices.md](architecture_best_practices.md)（分层）·
@@ -334,4 +334,4 @@ schema.zent ──zf crud:zent --json──▶ model/persistence/service/handler
 
 - [`examples/zent-shop`](../examples/zent-shop/) —— 可运行的 9 实体参考实现（本指南同源）
 - [`doc/zent.md`](zent.md) —— zent 定位、选型、反模式
-- [chy3xyz/zent](https://github.com/chy3xyz/zent) —— v0.29.0 API（core/edge、privacy/data_scope、codegen/client、crud、outbox、shard）
+- [chy3xyz/zent](https://github.com/chy3xyz/zent) —— v0.29.3 API（core/edge、privacy/data_scope、codegen/client、crud、outbox、shard）

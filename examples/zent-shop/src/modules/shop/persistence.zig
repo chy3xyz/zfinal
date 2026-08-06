@@ -939,13 +939,11 @@ pub const ShopStore = struct {
         }
 
         // 2. posts by those authors (IN query), newest first
-        // NB: zent WhereIn() still uses the 2-arg append in v0.28 (Zig 0.17
-        //     incompatible); sql.In() builds the same predicate without it.
         var values_buf: [64]zent.sql.Value = undefined;
         for (followee_ids[0..followee_count], 0..) |id, i| values_buf[i] = .{ .int = id };
         var pq = self.client.post.Query();
         defer pq.deinit();
-        _ = try pq.Where(.{zent.sql.In("author_id", values_buf[0..followee_count])});
+        _ = try pq.WhereIn("author_id", values_buf[0..followee_count]);
         _ = try pq.OrderBy(&.{.{ .column = .{ .name = "id", .desc = true } }});
         _ = pq.Limit(limit);
         var posts = try pq.All();
@@ -1052,12 +1050,12 @@ pub const ShopStore = struct {
             }
         }
 
-        // batch-load candidate users (sql.In, see feed note re: WhereIn)
+        // batch-load candidate users
         var user_values: [64]zent.sql.Value = undefined;
         for (cand_ids[0..cand_count], 0..) |cid, i| user_values[i] = .{ .int = cid };
         var uq = self.client.user.Query();
         defer uq.deinit();
-        _ = try uq.Where(.{zent.sql.In("id", user_values[0..cand_count])});
+        _ = try uq.WhereIn("id", user_values[0..cand_count]);
         var users = try uq.All();
         defer {
             for (users.items) |*u| zent.codegen.deinitEntity(infos, UserInfo, u, alloc);

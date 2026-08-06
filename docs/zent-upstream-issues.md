@@ -4,11 +4,10 @@ Integration report from [zfinal](https://github.com/chy3xyz/zfinal) v0.22.x × z
 (a 9-entity e-commerce + social schema: edges, data_scope, QueryEdge, TxClient, Enum fields).
 All findings verified against `v0.28.0` source; numbered by impact.
 
-> **v0.29.0 status update** (2026-08-06): several recommendations were adopted
-> upstream (`field.JSONValue`, `examples/advanced` composite-UNIQUE/paged-total/
-> masking/outbox, `docs/UPGRADING.md`, constraint error taxonomy, comptime edge
-> lowering). **#1 (WhereIn 2-arg append) and #2 (From-edge FK dedup) are NOT yet
-> fixed** — zfinal keeps its workarounds (`sql.In` predicate, `isRefFk` skip).
+> **v0.29.3 status update** (2026-08-07): **#1 (WhereIn 2-arg append) is FIXED**
+> upstream (v0.29.3) — zfinal removed its `sql.In` workaround and restored
+> `WhereIn` (feed/recommend), all tests green. **#2 (From-edge FK dedup) is NOT
+> yet fixed** — zfinal keeps the `isRefFk` skip.
 
 ## 1. `WhereIn()` still doesn't compile on Zig 0.17 (`append` 2-arg) — since v0.27
 
