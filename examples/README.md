@@ -96,6 +96,17 @@ PocketBase-style admin on top of ZFinal.
 | `main.zig` | ✅ YES | Server entry. |
 | `src/**/*.gen.zig` | ⚠️ REGEN | Regenerate via `zf crud:sql`. |
 
+### `zfsaas/`
+Full-stack SaaS — `zig build run-zfsaas` + `examples/zfsaas/frontend` · [`doc/saas_kit.md`](../doc/saas_kit.md).
+
+| File | AI Edit? | Purpose |
+|------|----------|---------|
+| `backend/main.zig` | ✅ YES | Routes + JWT/org/CORS interceptors |
+| `backend/schema.sql` / `todo.sql` | ✅ YES | DDL; regen todo via `zf crud:sql todo.sql` |
+| `backend/src/modules/{auth,org,billing,todo}/**` | ✅ YES | Domain services |
+| `frontend/src/**` | ✅ YES | SolidStart UI; `libs/zfinalClient.ts` for API |
+| `scripts/dev.sh` | ✅ YES | Dual-process local launcher |
+
 ---
 
 ## Universal Rule

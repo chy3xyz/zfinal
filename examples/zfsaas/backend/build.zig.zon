@@ -1,0 +1,7 @@
+.{
+    .name = .saas_kit,
+    .version = "0.0.0",
+    .fingerprint = 0x0,
+    .minimum_zig_version = "0.17.0-dev.1422+e863bf3be",
+    .paths = .{""},
+}

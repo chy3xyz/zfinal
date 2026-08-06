@@ -22,6 +22,7 @@
 | 模块市场（本地目录 phase 1） | [module_marketplace.md](module_marketplace.md) |
 | 反代 + `force_connection_close` | [reverse_proxy.md](reverse_proxy.md) |
 | 数据层 A `DB` / 数据层 B `zent` | [database.md](database.md) · [zent.md](zent.md) |
+| Org SaaS 业务框（auth/billing/todo） | [saas_kit.md](saas_kit.md) · `examples/zfsaas/` · `zig build run-zfsaas` |
 | L3 异步：同 TX Outbox → Bus | [outbox.md](outbox.md) · [bus.md](bus.md) · [progressive_architecture.md](progressive_architecture.md) |
 | Messaging 连接器 | [nats.md](nats.md) · [robustmq.md](robustmq.md) |
 | WebSocket / OAuth2 / AI runtime | [websocket.md](websocket.md) · [oauth2.md](oauth2.md) · [ai.md](ai.md) |
