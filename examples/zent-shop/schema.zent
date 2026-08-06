@@ -32,7 +32,7 @@ entity CartItem {
 
 entity Order {
   buyer_id: int
-  status: string = "pending"
+  status: enum(pending,paid,canceled) = pending
   total_cents: int = 0 @positive
   ref: buyer: User via buyer_id
   policy: data_scope

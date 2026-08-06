@@ -1,3 +1,10 @@
+## [0.23.0] - 2026-08-07
+
+### Changed
+- **zent upgraded `v0.28.0` → `v0.29.0`** (root + `examples/zent-shop` pins; API backward compatible — build/tests/smoke green, no zfinal code changes needed). v0.29 adopts several of our upstream recommendations: untyped `field.JSONValue(name)` (`std.json.Value`), `examples/advanced` with composite UNIQUE index + paged listing with total + sensitive masking + outbox, `docs/UPGRADING.md` (v0.12→v0.28+), constraint error taxonomy (`UniqueViolation`/`NotNullViolation`/`ForeignKeyViolation`), comptime edge-lowering optimization (`buildIncomingTable`), 30-table stress + cross-driver tests. **Not yet fixed** (our workarounds stay): `WhereIn` 2-arg `append` (Zig 0.17), `addEdgeFields` From-edge FK dedup (see `docs/zent-upstream-issues.md` #1/#2).
+- **`zf crud:zent` composite unique → DB-level UNIQUE index**: `unique: a, b` now also emits `index.Fields(&.{"a","b"}).Unique()` (guards concurrent create races beyond the `findUnique` pre-check).
+- **`zf crud:zent` list pagination via `paged()` + total**: generated `listBy` returns `{Ent}Page{rows, total}` (`paged(page, size)` when `size>0`; `Count`+`All` when `size=0` legacy); handlers return `meta:{total,page,size}`.
+
 ## [0.22.1] - 2026-08-04
 
 ### Fixed

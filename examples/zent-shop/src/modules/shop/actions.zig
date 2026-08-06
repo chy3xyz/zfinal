@@ -45,6 +45,7 @@ pub const actions = .{
     .{ .name = "checkout", .method = .POST, .action_key = "/api/v1/orders/checkout", .handler = handler.checkout },
     .{ .name = "feed", .method = .GET, .action_key = "/api/v1/feed", .handler = handler.feed },
     .{ .name = "recommend", .method = .GET, .action_key = "/api/v1/recommend", .handler = handler.recommend },
+    .{ .name = "login", .method = .POST, .action_key = "/api/v1/auth/login", .handler = handler.login },
     .{ .name = "listMyOrders", .method = .GET, .action_key = "/api/v1/orders/mine", .handler = handler.listMyOrders },
     // ── end ai-edit-zone ──────────────────────────────────────────
 };

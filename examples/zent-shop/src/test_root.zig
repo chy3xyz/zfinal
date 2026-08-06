@@ -11,13 +11,6 @@ const zent = zfinal.zent;
 const persist = @import("modules/shop/persistence.zig");
 const service = @import("modules/shop/service.zig");
 
-/// migrateSchema takes comptime `infos`; the dense 9-entity edge graph exceeds
-/// zent's default 5000-branch quota (same wrapper as src/main.zig).
-fn migrateSchema(allocator: std.mem.Allocator, driver: zent.sql_driver.Driver, comptime infos: []const zent.codegen.graph.TypeInfo) !void {
-    @setEvalBranchQuota(500_000);
-    try zent.sql_schema.migrateSchema(allocator, driver, infos);
-}
-
 /// Open an in-memory driver and migrate the shop schema.
 /// NOTE: `asDriver()` points at the caller's instance, so the returned driver
 /// must outlive any Store/Service built from it (keep it on the test stack).
@@ -25,7 +18,7 @@ fn setupDrv() !zent.sql_sqlite.SQLiteDriver {
     const a = std.testing.allocator;
     var drv = try zent.sql_sqlite.SQLiteDriver.open(a, ":memory:");
     errdefer drv.close();
-    try migrateSchema(a, drv.asDriver(), persist.infos);
+    try zent.sql_schema.migrateSchema(a, drv.asDriver(), persist.infos);
     return drv;
 }
 
@@ -63,8 +56,8 @@ test "zent-shop: transactional checkout (stock--, cart cleared, rollback)" {
     defer store.freeProduct(prod);
     try std.testing.expectEqual(@as(i64, 3), prod.stock);
     const cart = try store.listCartItemByUserId(bob, 0, 0);
-    defer store.freeCartItems(cart);
-    try std.testing.expectEqual(@as(usize, 0), cart.len);
+    defer store.freeCartItems(cart.rows);
+    try std.testing.expectEqual(@as(usize, 0), cart.rows.len);
 
     // insufficient stock → whole tx rolls back (no order, stock untouched)
     _ = try store.createCartItem(alice, pid, 99);
@@ -73,8 +66,8 @@ test "zent-shop: transactional checkout (stock--, cart cleared, rollback)" {
     defer store.freeProduct(prod2);
     try std.testing.expectEqual(@as(i64, 3), prod2.stock); // unchanged after rollback
     const cart2 = try store.listCartItemByUserId(alice, 0, 0);
-    defer store.freeCartItems(cart2);
-    try std.testing.expectEqual(@as(usize, 1), cart2.len); // cart kept on failure
+    defer store.freeCartItems(cart2.rows);
+    try std.testing.expectEqual(@as(usize, 1), cart2.rows.len); // cart kept on failure
 }
 
 test "zent-shop: follow/like composite-unique dedup" {
@@ -140,4 +133,16 @@ test "zent-shop: data_scope row-level security (own orders only)" {
     defer svc.freeScopedOrders(bob_orders);
     try std.testing.expectEqual(@as(usize, 1), bob_orders.len);
     try std.testing.expectEqual(bob, bob_orders[0].buyer_id);
+}
+
+test "zent-shop: loginByHandle resolves user (JWT auth path)" {
+    const a = std.testing.allocator;
+    var drv = try setupDrv();
+    defer drv.close();
+    var store = persist.ShopStore.init(a, drv.asDriver());
+    var svc = service.ShopService.init(&store);
+
+    const alice = try svc.createUser("Alice", "alice", "a@x.com");
+    try std.testing.expectEqual(alice, try svc.loginByHandle("alice"));
+    try std.testing.expectError(error.UserNotFound, svc.loginByHandle("nobody"));
 }

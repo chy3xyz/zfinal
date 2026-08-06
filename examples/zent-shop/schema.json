@@ -98,8 +98,13 @@
         },
         {
           "name": "status",
-          "type": "string",
-          "default": "pending"
+          "type": "enum",
+          "default": "pending",
+          "enum_values": [
+            "pending",
+            "paid",
+            "canceled"
+          ]
         },
         {
           "name": "total_cents",

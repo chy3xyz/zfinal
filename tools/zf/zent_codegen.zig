@@ -417,6 +417,7 @@ const JsonField = struct {
     required: ?bool = null,
     email: ?bool = null,
     positive: ?bool = null,
+    enum_values: ?[]const []const u8 = null,
 };
 
 const JsonRef = struct {
@@ -492,6 +493,17 @@ pub fn parseZentJson(allocator: std.mem.Allocator, src: []const u8) !Schema {
         }
         for (je.fields) |jf| {
             const typ = FieldType.fromToken(jf.type) orelse return error.UnknownFieldType;
+            var enum_vals: []const []const u8 = &.{};
+            if (typ == .enum_) {
+                if (jf.enum_values) |vals| {
+                    var list: std.ArrayList([]const u8) = .empty;
+                    for (vals) |v| {
+                        try list.append(allocator, try allocator.dupe(u8, v));
+                    }
+                    enum_vals = try list.toOwnedSlice(allocator);
+                }
+                if (enum_vals.len == 0) return error.InvalidEnumValues;
+            }
             try ent.fields.append(allocator, .{
                 .name = try allocator.dupe(u8, jf.name),
                 .typ = typ,
@@ -502,6 +514,7 @@ pub fn parseZentJson(allocator: std.mem.Allocator, src: []const u8) !Schema {
                 .required = jf.required orelse false,
                 .email = jf.email orelse false,
                 .positive = jf.positive orelse false,
+                .enum_values = enum_vals,
             });
         }
         try schema.entities.append(allocator, ent);
@@ -564,11 +577,22 @@ pub fn generateModel(allocator: std.mem.Allocator, schema: *const Schema) ![]u8 
                 break;
             }
         }
-        if (any_index) {
+        if (any_index or ent.unique_fields.len > 0) {
             try w.writeAll("    .indexes = &.{\n");
             for (ent.fields.items) |f| {
                 if (!f.indexed) continue;
                 try w.print("        zent.core.index.Fields(&.{{\"{s}\"}}),\n", .{f.name});
+            }
+            // composite unique (`unique: a, b`) → DB-level UNIQUE index
+            // (guards against concurrent create races beyond the findUnique
+            // pre-check).
+            if (ent.unique_fields.len > 0) {
+                try w.writeAll("        zent.core.index.Fields(&.{");
+                for (ent.unique_fields, 0..) |uf, i| {
+                    if (i > 0) try w.writeAll(", ");
+                    try w.print("\"{s}\"", .{uf});
+                }
+                try w.writeAll("}).Unique(),\n");
             }
             try w.writeAll("    },\n");
         }
@@ -612,14 +636,7 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
         \\const zent = @import("zfinal").zent;
         \\const model = @import("model.zig");
         \\
-        \\// Comptime graph resolution can exceed zent's default branch quota for
-        \\// dense edge graphs (e-commerce / social). Raise it for this module.
-        \\fn zentBuildGraph(comptime schemas: []const type) zent.codegen.graph.Graph {
-        \\    @setEvalBranchQuota(500_000);
-        \\    return zent.codegen.graph.buildGraph(schemas);
-        \\}
-        \\
-        \\const graph = zentBuildGraph(&.{ 
+        \\const graph = zent.codegen.graph.buildGraph(&.{ 
     );    for (schema.entities.items, 0..) |ent, i| {
         if (i > 0) try w.writeAll(", ");
         try w.print("model.{s}", .{ent.name});
@@ -771,7 +788,8 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
             }
             try w.writeAll("    };\n\n");
 
-            try w.print("    pub fn list{s}By{s}(self: *@This(), {s}: i64, limit: usize, offset: usize) ![]{s}Row {{\n", .{
+            try w.print("    pub const {s}Page = struct {{ rows: []{s}Row, total: i64 }};\n\n", .{ ent.name, ent.name });
+            try w.print("    pub fn list{s}By{s}(self: *@This(), {s}: i64, page: usize, size: usize) !{s}Page {{\n", .{
                 ent.name, lb_pascal, lb, ent.name,
             });
             if (ent.policy) {
@@ -782,14 +800,30 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
             try w.writeAll("        defer q.deinit();\n");
             try w.print("        const preds = self.client.{s}.predicates;\n", .{cname});
             try w.print("        _ = try q.Where(.{{preds.{s}EQ(.{{ .int = {s} }})}});\n", .{ lb, lb });
-            // pagination: newest first when paging; limit=0 → all (legacy).
+            // newest first; total via Count (size=0 → all rows, legacy behavior).
             try w.writeAll("        _ = try q.OrderBy(&.{.{ .column = .{ .name = \"id\", .desc = true } }});\n");
-            try w.writeAll("        if (limit > 0) _ = q.Limit(limit);\n");
-            try w.writeAll("        if (offset > 0) _ = q.Offset(offset);\n");
+            try w.writeAll("        if (size > 0) {\n");
+            try w.writeAll("            var p = try q.paged(page, size);\n");
+            try w.writeAll("            defer p.deinit();\n");
+            try w.print("            var out = try self.allocator.alloc({s}Row, p.items.items.len);\n", .{ent.name});
+            try w.writeAll("            errdefer self.allocator.free(out);\n");
+            try w.writeAll("            for (p.items.items, 0..) |e, i| {\n                out[i] = .{\n                    .id = e.id,\n");
+            for (ent.fields.items) |f| {
+                if (f.typ.isOwnedSlice()) {
+                    try w.print("                    .{s} = try self.allocator.dupe(u8, e.{s}),\n", .{ f.name, f.name });
+                } else if (isRefFk(ent, f)) {
+                    try w.print("                    .{s} = e.{s} orelse 0,\n", .{ f.name, f.name });
+                } else {
+                    try w.print("                    .{s} = e.{s},\n", .{ f.name, f.name });
+                }
+            }
+            try w.writeAll("                };\n            }\n");
+            try w.writeAll("            return .{ .rows = out, .total = p.total };\n        }\n");
+            try w.writeAll("        const total = try q.Count();\n");
             try w.writeAll("        var found = try q.All();\n");
             try w.writeAll("        defer {\n            for (found.items) |*p| {\n");
             try w.print("                zent.codegen.deinitEntity(infos, {s}Info, p, self.allocator);\n", .{ent.name});
-            try w.writeAll("            }\n            found.deinit();\n        }\n\n");
+            try w.writeAll("            }\n            found.deinit();\n        }\n");
             try w.print("        var out = try self.allocator.alloc({s}Row, found.items.len);\n", .{ent.name});
             try w.writeAll("        errdefer self.allocator.free(out);\n");
             try w.writeAll("        for (found.items, 0..) |p, i| {\n            out[i] = .{\n                .id = p.id,\n");
@@ -797,13 +831,13 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
                 if (f.typ.isOwnedSlice()) {
                     try w.print("                .{s} = try self.allocator.dupe(u8, p.{s}),\n", .{ f.name, f.name });
                 } else if (isRefFk(ent, f)) {
-                    // auto-added FK columns are optional in zent
                     try w.print("                .{s} = p.{s} orelse 0,\n", .{ f.name, f.name });
                 } else {
                     try w.print("                .{s} = p.{s},\n", .{ f.name, f.name });
                 }
             }
-            try w.writeAll("            };\n        }\n        return out;\n    }\n\n");
+            try w.writeAll("            };\n        }\n");
+            try w.writeAll("        return .{ .rows = out, .total = total };\n    }\n\n");
 
             try w.print("    pub fn free{s}s(self: *@This(), rows: []{s}Row) void {{\n", .{ ent.name, ent.name });
             var has_owned = false;
@@ -918,12 +952,11 @@ pub fn generateService(allocator: std.mem.Allocator, schema: *const Schema) ![]u
         if (ent.list_by) |lb| {
             const lb_pascal = try pascalize(allocator, lb);
             defer allocator.free(lb_pascal);
-            try w.print("    pub fn list{s}(self: *@This(), {s}: i64, page: usize, size: usize) ![]persist.{s}.{s}Row {{\n", .{
+            try w.print("    pub fn list{s}(self: *@This(), {s}: i64, page: usize, size: usize) !persist.{s}.{s}Page {{\n", .{
                 ent.name, lb, store_name, ent.name,
             });
             try w.print("        if ({s} <= 0) return error.InvalidInput;\n", .{lb});
-            try w.writeAll("        const offset = if (page > 1 and size > 0) (page - 1) * size else 0;\n");
-            try w.print("        return try self.store.list{s}By{s}({s}, size, offset);\n", .{ ent.name, lb_pascal, lb });
+            try w.print("        return try self.store.list{s}By{s}({s}, page, size);\n", .{ ent.name, lb_pascal, lb });
             try w.writeAll("    }\n\n");
             try w.print("    pub fn free{s}s(self: *@This(), rows: []persist.{s}.{s}Row) void {{\n", .{
                 ent.name, store_name, ent.name,
@@ -1052,11 +1085,11 @@ pub fn generateHandler(allocator: std.mem.Allocator, schema: *const Schema) ![]u
             try w.writeAll("        return;\n    };\n");
             try w.writeAll("    const page: usize = @intCast(try ctx.getParaToLongDefault(\"page\", 1));\n");
             try w.writeAll("    const size: usize = @intCast(try ctx.getParaToLongDefault(\"size\", 0)); // 0 = all\n");
-            try w.print("    const rows = svc.list{s}({s}, page, size) catch |err| {{\n", .{ ent.name, lb });
+            try w.print("    const pageresult = svc.list{s}({s}, page, size) catch |err| {{\n", .{ ent.name, lb });
             try w.writeAll("        try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });\n");
             try w.writeAll("        return;\n    };\n");
-            try w.print("    defer svc.free{s}s(rows);\n", .{ent.name});
-            try w.print("    try ctx.renderJson(.{{ .ok = true, .{s} = rows }});\n}}\n\n", .{plural});
+            try w.print("    defer svc.free{s}s(pageresult.rows);\n", .{ent.name});
+            try w.print("    try ctx.renderJson(.{{ .ok = true, .{s} = pageresult.rows, .meta = .{{ .total = pageresult.total, .page = page, .size = size }} }});\n}}\n\n", .{plural});
         }
     }
 

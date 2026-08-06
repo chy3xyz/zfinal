@@ -40,7 +40,7 @@ pub const CartItem = Schema("CartItem", .{
 
 pub const Order = Schema("Order", .{
     .fields = &.{
-        field.String("status").Default("pending"),
+        field.Enum("status", &.{"pending", "paid", "canceled"}).Default("pending"),
         field.Int("total_cents").Default("0").Positive(),
     },
     .edges = &.{
@@ -63,6 +63,9 @@ pub const OrderItem = Schema("OrderItem", .{
 pub const Follow = Schema("Follow", .{
     .fields = &.{
     },
+    .indexes = &.{
+        zent.core.index.Fields(&.{"follower_id", "followee_id"}).Unique(),
+    },
     .edges = &.{
         zent.core.edge.From("follower", User).Field("follower_id"),
         zent.core.edge.From("followee", User).Field("followee_id"),
@@ -71,6 +74,9 @@ pub const Follow = Schema("Follow", .{
 
 pub const Like = Schema("Like", .{
     .fields = &.{
+    },
+    .indexes = &.{
+        zent.core.index.Fields(&.{"user_id", "post_id"}).Unique(),
     },
     .edges = &.{
         zent.core.edge.From("user", User).Field("user_id"),

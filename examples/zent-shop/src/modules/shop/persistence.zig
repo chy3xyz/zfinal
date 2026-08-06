@@ -4,14 +4,7 @@ const std = @import("std");
 const zent = @import("zfinal").zent;
 const model = @import("model.zig");
 
-// Comptime graph resolution can exceed zent's default branch quota for
-// dense edge graphs (e-commerce / social). Raise it for this module.
-fn zentBuildGraph(comptime schemas: []const type) zent.codegen.graph.Graph {
-    @setEvalBranchQuota(500_000);
-    return zent.codegen.graph.buildGraph(schemas);
-}
-
-const graph = zentBuildGraph(&.{ model.User, model.Product, model.CartItem, model.Order, model.OrderItem, model.Follow, model.Like, model.Post, model.Comment });
+const graph = zent.codegen.graph.buildGraph(&.{ model.User, model.Product, model.CartItem, model.Order, model.OrderItem, model.Follow, model.Like, model.Post, model.Comment });
 pub const infos = graph.types;
 pub const Client = zent.codegen.client.Client(infos);
 const UserInfo = infos[0];
@@ -145,14 +138,31 @@ pub const ShopStore = struct {
         stock: i64,
     };
 
-    pub fn listProductBySellerId(self: *@This(), seller_id: i64, limit: usize, offset: usize) ![]ProductRow {
+    pub const ProductPage = struct { rows: []ProductRow, total: i64 };
+
+    pub fn listProductBySellerId(self: *@This(), seller_id: i64, page: usize, size: usize) !ProductPage {
         var q = self.client.product.Query();
         defer q.deinit();
         const preds = self.client.product.predicates;
         _ = try q.Where(.{preds.seller_idEQ(.{ .int = seller_id })});
         _ = try q.OrderBy(&.{.{ .column = .{ .name = "id", .desc = true } }});
-        if (limit > 0) _ = q.Limit(limit);
-        if (offset > 0) _ = q.Offset(offset);
+        if (size > 0) {
+            var p = try q.paged(page, size);
+            defer p.deinit();
+            var out = try self.allocator.alloc(ProductRow, p.items.items.len);
+            errdefer self.allocator.free(out);
+            for (p.items.items, 0..) |e, i| {
+                out[i] = .{
+                    .id = e.id,
+                    .seller_id = e.seller_id orelse 0,
+                    .name = try self.allocator.dupe(u8, e.name),
+                    .price_cents = e.price_cents,
+                    .stock = e.stock,
+                };
+            }
+            return .{ .rows = out, .total = p.total };
+        }
+        const total = try q.Count();
         var found = try q.All();
         defer {
             for (found.items) |*p| {
@@ -160,7 +170,6 @@ pub const ShopStore = struct {
             }
             found.deinit();
         }
-
         var out = try self.allocator.alloc(ProductRow, found.items.len);
         errdefer self.allocator.free(out);
         for (found.items, 0..) |p, i| {
@@ -172,7 +181,7 @@ pub const ShopStore = struct {
                 .stock = p.stock,
             };
         }
-        return out;
+        return .{ .rows = out, .total = total };
     }
 
     pub fn freeProducts(self: *@This(), rows: []ProductRow) void {
@@ -219,14 +228,30 @@ pub const ShopStore = struct {
         qty: i64,
     };
 
-    pub fn listCartItemByUserId(self: *@This(), user_id: i64, limit: usize, offset: usize) ![]CartItemRow {
+    pub const CartItemPage = struct { rows: []CartItemRow, total: i64 };
+
+    pub fn listCartItemByUserId(self: *@This(), user_id: i64, page: usize, size: usize) !CartItemPage {
         var q = self.client.cart_item.Query();
         defer q.deinit();
         const preds = self.client.cart_item.predicates;
         _ = try q.Where(.{preds.user_idEQ(.{ .int = user_id })});
         _ = try q.OrderBy(&.{.{ .column = .{ .name = "id", .desc = true } }});
-        if (limit > 0) _ = q.Limit(limit);
-        if (offset > 0) _ = q.Offset(offset);
+        if (size > 0) {
+            var p = try q.paged(page, size);
+            defer p.deinit();
+            var out = try self.allocator.alloc(CartItemRow, p.items.items.len);
+            errdefer self.allocator.free(out);
+            for (p.items.items, 0..) |e, i| {
+                out[i] = .{
+                    .id = e.id,
+                    .user_id = e.user_id orelse 0,
+                    .product_id = e.product_id orelse 0,
+                    .qty = e.qty,
+                };
+            }
+            return .{ .rows = out, .total = p.total };
+        }
+        const total = try q.Count();
         var found = try q.All();
         defer {
             for (found.items) |*p| {
@@ -234,7 +259,6 @@ pub const ShopStore = struct {
             }
             found.deinit();
         }
-
         var out = try self.allocator.alloc(CartItemRow, found.items.len);
         errdefer self.allocator.free(out);
         for (found.items, 0..) |p, i| {
@@ -245,7 +269,7 @@ pub const ShopStore = struct {
                 .qty = p.qty,
             };
         }
-        return out;
+        return .{ .rows = out, .total = total };
     }
 
     pub fn freeCartItems(self: *@This(), rows: []CartItemRow) void {
@@ -322,14 +346,31 @@ pub const ShopStore = struct {
         price_cents: i64,
     };
 
-    pub fn listOrderItemByOrderId(self: *@This(), order_id: i64, limit: usize, offset: usize) ![]OrderItemRow {
+    pub const OrderItemPage = struct { rows: []OrderItemRow, total: i64 };
+
+    pub fn listOrderItemByOrderId(self: *@This(), order_id: i64, page: usize, size: usize) !OrderItemPage {
         var q = self.client.order_item.Query();
         defer q.deinit();
         const preds = self.client.order_item.predicates;
         _ = try q.Where(.{preds.order_idEQ(.{ .int = order_id })});
         _ = try q.OrderBy(&.{.{ .column = .{ .name = "id", .desc = true } }});
-        if (limit > 0) _ = q.Limit(limit);
-        if (offset > 0) _ = q.Offset(offset);
+        if (size > 0) {
+            var p = try q.paged(page, size);
+            defer p.deinit();
+            var out = try self.allocator.alloc(OrderItemRow, p.items.items.len);
+            errdefer self.allocator.free(out);
+            for (p.items.items, 0..) |e, i| {
+                out[i] = .{
+                    .id = e.id,
+                    .order_id = e.order_id orelse 0,
+                    .product_id = e.product_id orelse 0,
+                    .qty = e.qty,
+                    .price_cents = e.price_cents,
+                };
+            }
+            return .{ .rows = out, .total = p.total };
+        }
+        const total = try q.Count();
         var found = try q.All();
         defer {
             for (found.items) |*p| {
@@ -337,7 +378,6 @@ pub const ShopStore = struct {
             }
             found.deinit();
         }
-
         var out = try self.allocator.alloc(OrderItemRow, found.items.len);
         errdefer self.allocator.free(out);
         for (found.items, 0..) |p, i| {
@@ -349,7 +389,7 @@ pub const ShopStore = struct {
                 .price_cents = p.price_cents,
             };
         }
-        return out;
+        return .{ .rows = out, .total = total };
     }
 
     pub fn freeOrderItems(self: *@This(), rows: []OrderItemRow) void {
@@ -407,14 +447,29 @@ pub const ShopStore = struct {
         followee_id: i64,
     };
 
-    pub fn listFollowByFollowerId(self: *@This(), follower_id: i64, limit: usize, offset: usize) ![]FollowRow {
+    pub const FollowPage = struct { rows: []FollowRow, total: i64 };
+
+    pub fn listFollowByFollowerId(self: *@This(), follower_id: i64, page: usize, size: usize) !FollowPage {
         var q = self.client.follow.Query();
         defer q.deinit();
         const preds = self.client.follow.predicates;
         _ = try q.Where(.{preds.follower_idEQ(.{ .int = follower_id })});
         _ = try q.OrderBy(&.{.{ .column = .{ .name = "id", .desc = true } }});
-        if (limit > 0) _ = q.Limit(limit);
-        if (offset > 0) _ = q.Offset(offset);
+        if (size > 0) {
+            var p = try q.paged(page, size);
+            defer p.deinit();
+            var out = try self.allocator.alloc(FollowRow, p.items.items.len);
+            errdefer self.allocator.free(out);
+            for (p.items.items, 0..) |e, i| {
+                out[i] = .{
+                    .id = e.id,
+                    .follower_id = e.follower_id orelse 0,
+                    .followee_id = e.followee_id orelse 0,
+                };
+            }
+            return .{ .rows = out, .total = p.total };
+        }
+        const total = try q.Count();
         var found = try q.All();
         defer {
             for (found.items) |*p| {
@@ -422,7 +477,6 @@ pub const ShopStore = struct {
             }
             found.deinit();
         }
-
         var out = try self.allocator.alloc(FollowRow, found.items.len);
         errdefer self.allocator.free(out);
         for (found.items, 0..) |p, i| {
@@ -432,7 +486,7 @@ pub const ShopStore = struct {
                 .followee_id = p.followee_id orelse 0,
             };
         }
-        return out;
+        return .{ .rows = out, .total = total };
     }
 
     pub fn freeFollows(self: *@This(), rows: []FollowRow) void {
@@ -490,14 +544,29 @@ pub const ShopStore = struct {
         post_id: i64,
     };
 
-    pub fn listLikeByPostId(self: *@This(), post_id: i64, limit: usize, offset: usize) ![]LikeRow {
+    pub const LikePage = struct { rows: []LikeRow, total: i64 };
+
+    pub fn listLikeByPostId(self: *@This(), post_id: i64, page: usize, size: usize) !LikePage {
         var q = self.client.like.Query();
         defer q.deinit();
         const preds = self.client.like.predicates;
         _ = try q.Where(.{preds.post_idEQ(.{ .int = post_id })});
         _ = try q.OrderBy(&.{.{ .column = .{ .name = "id", .desc = true } }});
-        if (limit > 0) _ = q.Limit(limit);
-        if (offset > 0) _ = q.Offset(offset);
+        if (size > 0) {
+            var p = try q.paged(page, size);
+            defer p.deinit();
+            var out = try self.allocator.alloc(LikeRow, p.items.items.len);
+            errdefer self.allocator.free(out);
+            for (p.items.items, 0..) |e, i| {
+                out[i] = .{
+                    .id = e.id,
+                    .user_id = e.user_id orelse 0,
+                    .post_id = e.post_id orelse 0,
+                };
+            }
+            return .{ .rows = out, .total = p.total };
+        }
+        const total = try q.Count();
         var found = try q.All();
         defer {
             for (found.items) |*p| {
@@ -505,7 +574,6 @@ pub const ShopStore = struct {
             }
             found.deinit();
         }
-
         var out = try self.allocator.alloc(LikeRow, found.items.len);
         errdefer self.allocator.free(out);
         for (found.items, 0..) |p, i| {
@@ -515,7 +583,7 @@ pub const ShopStore = struct {
                 .post_id = p.post_id orelse 0,
             };
         }
-        return out;
+        return .{ .rows = out, .total = total };
     }
 
     pub fn freeLikes(self: *@This(), rows: []LikeRow) void {
@@ -556,14 +624,29 @@ pub const ShopStore = struct {
         body: []const u8,
     };
 
-    pub fn listPostByAuthorId(self: *@This(), author_id: i64, limit: usize, offset: usize) ![]PostRow {
+    pub const PostPage = struct { rows: []PostRow, total: i64 };
+
+    pub fn listPostByAuthorId(self: *@This(), author_id: i64, page: usize, size: usize) !PostPage {
         var q = self.client.post.Query();
         defer q.deinit();
         const preds = self.client.post.predicates;
         _ = try q.Where(.{preds.author_idEQ(.{ .int = author_id })});
         _ = try q.OrderBy(&.{.{ .column = .{ .name = "id", .desc = true } }});
-        if (limit > 0) _ = q.Limit(limit);
-        if (offset > 0) _ = q.Offset(offset);
+        if (size > 0) {
+            var p = try q.paged(page, size);
+            defer p.deinit();
+            var out = try self.allocator.alloc(PostRow, p.items.items.len);
+            errdefer self.allocator.free(out);
+            for (p.items.items, 0..) |e, i| {
+                out[i] = .{
+                    .id = e.id,
+                    .author_id = e.author_id orelse 0,
+                    .body = try self.allocator.dupe(u8, e.body),
+                };
+            }
+            return .{ .rows = out, .total = p.total };
+        }
+        const total = try q.Count();
         var found = try q.All();
         defer {
             for (found.items) |*p| {
@@ -571,7 +654,6 @@ pub const ShopStore = struct {
             }
             found.deinit();
         }
-
         var out = try self.allocator.alloc(PostRow, found.items.len);
         errdefer self.allocator.free(out);
         for (found.items, 0..) |p, i| {
@@ -581,7 +663,7 @@ pub const ShopStore = struct {
                 .body = try self.allocator.dupe(u8, p.body),
             };
         }
-        return out;
+        return .{ .rows = out, .total = total };
     }
 
     pub fn freePosts(self: *@This(), rows: []PostRow) void {
@@ -628,14 +710,30 @@ pub const ShopStore = struct {
         body: []const u8,
     };
 
-    pub fn listCommentByPostId(self: *@This(), post_id: i64, limit: usize, offset: usize) ![]CommentRow {
+    pub const CommentPage = struct { rows: []CommentRow, total: i64 };
+
+    pub fn listCommentByPostId(self: *@This(), post_id: i64, page: usize, size: usize) !CommentPage {
         var q = self.client.comment.Query();
         defer q.deinit();
         const preds = self.client.comment.predicates;
         _ = try q.Where(.{preds.post_idEQ(.{ .int = post_id })});
         _ = try q.OrderBy(&.{.{ .column = .{ .name = "id", .desc = true } }});
-        if (limit > 0) _ = q.Limit(limit);
-        if (offset > 0) _ = q.Offset(offset);
+        if (size > 0) {
+            var p = try q.paged(page, size);
+            defer p.deinit();
+            var out = try self.allocator.alloc(CommentRow, p.items.items.len);
+            errdefer self.allocator.free(out);
+            for (p.items.items, 0..) |e, i| {
+                out[i] = .{
+                    .id = e.id,
+                    .post_id = e.post_id orelse 0,
+                    .author_id = e.author_id orelse 0,
+                    .body = try self.allocator.dupe(u8, e.body),
+                };
+            }
+            return .{ .rows = out, .total = p.total };
+        }
+        const total = try q.Count();
         var found = try q.All();
         defer {
             for (found.items) |*p| {
@@ -643,7 +741,6 @@ pub const ShopStore = struct {
             }
             found.deinit();
         }
-
         var out = try self.allocator.alloc(CommentRow, found.items.len);
         errdefer self.allocator.free(out);
         for (found.items, 0..) |p, i| {
@@ -654,7 +751,7 @@ pub const ShopStore = struct {
                 .body = try self.allocator.dupe(u8, p.body),
             };
         }
-        return out;
+        return .{ .rows = out, .total = total };
     }
 
     pub fn freeComments(self: *@This(), rows: []CommentRow) void {
@@ -842,8 +939,8 @@ pub const ShopStore = struct {
         }
 
         // 2. posts by those authors (IN query), newest first
-        // NB: zent's WhereIn() has a Zig 0.17 incompat in its chunk path;
-        //     sql.In() builds the same predicate without that path.
+        // NB: zent WhereIn() still uses the 2-arg append in v0.28 (Zig 0.17
+        //     incompatible); sql.In() builds the same predicate without it.
         var values_buf: [64]zent.sql.Value = undefined;
         for (followee_ids[0..followee_count], 0..) |id, i| values_buf[i] = .{ .int = id };
         var pq = self.client.post.Query();
@@ -955,7 +1052,7 @@ pub const ShopStore = struct {
             }
         }
 
-        // batch-load candidate users
+        // batch-load candidate users (sql.In, see feed note re: WhereIn)
         var user_values: [64]zent.sql.Value = undefined;
         for (cand_ids[0..cand_count], 0..) |cid, i| user_values[i] = .{ .int = cid };
         var uq = self.client.user.Query();

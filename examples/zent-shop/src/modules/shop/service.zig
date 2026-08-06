@@ -52,10 +52,9 @@ pub const ShopService = struct {
         return self.store.deleteProduct(id);
     }
 
-    pub fn listProduct(self: *@This(), seller_id: i64, page: usize, size: usize) ![]persist.ShopStore.ProductRow {
+    pub fn listProduct(self: *@This(), seller_id: i64, page: usize, size: usize) !persist.ShopStore.ProductPage {
         if (seller_id <= 0) return error.InvalidInput;
-        const offset = if (page > 1 and size > 0) (page - 1) * size else 0;
-        return try self.store.listProductBySellerId(seller_id, size, offset);
+        return try self.store.listProductBySellerId(seller_id, page, size);
     }
 
     pub fn freeProducts(self: *@This(), rows: []persist.ShopStore.ProductRow) void {
@@ -80,10 +79,9 @@ pub const ShopService = struct {
         return self.store.deleteCartItem(id);
     }
 
-    pub fn listCartItem(self: *@This(), user_id: i64, page: usize, size: usize) ![]persist.ShopStore.CartItemRow {
+    pub fn listCartItem(self: *@This(), user_id: i64, page: usize, size: usize) !persist.ShopStore.CartItemPage {
         if (user_id <= 0) return error.InvalidInput;
-        const offset = if (page > 1 and size > 0) (page - 1) * size else 0;
-        return try self.store.listCartItemByUserId(user_id, size, offset);
+        return try self.store.listCartItemByUserId(user_id, page, size);
     }
 
     pub fn freeCartItems(self: *@This(), rows: []persist.ShopStore.CartItemRow) void {
@@ -127,10 +125,9 @@ pub const ShopService = struct {
         return self.store.deleteOrderItem(id);
     }
 
-    pub fn listOrderItem(self: *@This(), order_id: i64, page: usize, size: usize) ![]persist.ShopStore.OrderItemRow {
+    pub fn listOrderItem(self: *@This(), order_id: i64, page: usize, size: usize) !persist.ShopStore.OrderItemPage {
         if (order_id <= 0) return error.InvalidInput;
-        const offset = if (page > 1 and size > 0) (page - 1) * size else 0;
-        return try self.store.listOrderItemByOrderId(order_id, size, offset);
+        return try self.store.listOrderItemByOrderId(order_id, page, size);
     }
 
     pub fn freeOrderItems(self: *@This(), rows: []persist.ShopStore.OrderItemRow) void {
@@ -157,10 +154,9 @@ pub const ShopService = struct {
         return self.store.deleteFollow(id);
     }
 
-    pub fn listFollow(self: *@This(), follower_id: i64, page: usize, size: usize) ![]persist.ShopStore.FollowRow {
+    pub fn listFollow(self: *@This(), follower_id: i64, page: usize, size: usize) !persist.ShopStore.FollowPage {
         if (follower_id <= 0) return error.InvalidInput;
-        const offset = if (page > 1 and size > 0) (page - 1) * size else 0;
-        return try self.store.listFollowByFollowerId(follower_id, size, offset);
+        return try self.store.listFollowByFollowerId(follower_id, page, size);
     }
 
     pub fn freeFollows(self: *@This(), rows: []persist.ShopStore.FollowRow) void {
@@ -186,10 +182,9 @@ pub const ShopService = struct {
         return self.store.deleteLike(id);
     }
 
-    pub fn listLike(self: *@This(), post_id: i64, page: usize, size: usize) ![]persist.ShopStore.LikeRow {
+    pub fn listLike(self: *@This(), post_id: i64, page: usize, size: usize) !persist.ShopStore.LikePage {
         if (post_id <= 0) return error.InvalidInput;
-        const offset = if (page > 1 and size > 0) (page - 1) * size else 0;
-        return try self.store.listLikeByPostId(post_id, size, offset);
+        return try self.store.listLikeByPostId(post_id, page, size);
     }
 
     pub fn freeLikes(self: *@This(), rows: []persist.ShopStore.LikeRow) void {
@@ -215,10 +210,9 @@ pub const ShopService = struct {
         return self.store.deletePost(id);
     }
 
-    pub fn listPost(self: *@This(), author_id: i64, page: usize, size: usize) ![]persist.ShopStore.PostRow {
+    pub fn listPost(self: *@This(), author_id: i64, page: usize, size: usize) !persist.ShopStore.PostPage {
         if (author_id <= 0) return error.InvalidInput;
-        const offset = if (page > 1 and size > 0) (page - 1) * size else 0;
-        return try self.store.listPostByAuthorId(author_id, size, offset);
+        return try self.store.listPostByAuthorId(author_id, page, size);
     }
 
     pub fn freePosts(self: *@This(), rows: []persist.ShopStore.PostRow) void {
@@ -245,10 +239,9 @@ pub const ShopService = struct {
         return self.store.deleteComment(id);
     }
 
-    pub fn listComment(self: *@This(), post_id: i64, page: usize, size: usize) ![]persist.ShopStore.CommentRow {
+    pub fn listComment(self: *@This(), post_id: i64, page: usize, size: usize) !persist.ShopStore.CommentPage {
         if (post_id <= 0) return error.InvalidInput;
-        const offset = if (page > 1 and size > 0) (page - 1) * size else 0;
-        return try self.store.listCommentByPostId(post_id, size, offset);
+        return try self.store.listCommentByPostId(post_id, page, size);
     }
 
     pub fn freeComments(self: *@This(), rows: []persist.ShopStore.CommentRow) void {
@@ -290,6 +283,12 @@ pub const ShopService = struct {
 
     pub fn freeScopedOrders(self: *@This(), rows: []persist.ShopStore.ScopedOrderRow) void {
         self.store.freeScopedOrders(rows);
+    }
+
+    /// Resolve a user id by unique handle (used by /api/v1/auth/login).
+    pub fn loginByHandle(self: *@This(), handle: []const u8) !i64 {
+        if (handle.len == 0) return error.InvalidInput;
+        return (try self.store.findByUniqueHandle(handle)) orelse error.UserNotFound;
     }
     // ── end ai-edit-zone ──────────────────────────────────────────
 };

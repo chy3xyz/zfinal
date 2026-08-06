@@ -59,6 +59,9 @@ zig build test-zfsaas
 section "zig build test-zent-shop"
 zig build test-zent-shop
 
+section "smoke-zent-shop (HTTP e2e)"
+bash scripts/smoke-zent-shop.sh
+
 section "zig build test-zf"
 zig build test-zf
 pass "codegen regression"

@@ -142,12 +142,12 @@ pub fn listProduct(ctx: *zfinal.Context) !void {
     };
     const page: usize = @intCast(try ctx.getParaToLongDefault("page", 1));
     const size: usize = @intCast(try ctx.getParaToLongDefault("size", 0)); // 0 = all
-    const rows = svc.listProduct(seller_id, page, size) catch |err| {
+    const pageresult = svc.listProduct(seller_id, page, size) catch |err| {
         try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });
         return;
     };
-    defer svc.freeProducts(rows);
-    try ctx.renderJson(.{ .ok = true, .products = rows });
+    defer svc.freeProducts(pageresult.rows);
+    try ctx.renderJson(.{ .ok = true, .products = pageresult.rows, .meta = .{ .total = pageresult.total, .page = page, .size = size } });
 }
 
 pub fn createCartItem(ctx: *zfinal.Context) !void {
@@ -213,12 +213,12 @@ pub fn listCartItem(ctx: *zfinal.Context) !void {
     };
     const page: usize = @intCast(try ctx.getParaToLongDefault("page", 1));
     const size: usize = @intCast(try ctx.getParaToLongDefault("size", 0)); // 0 = all
-    const rows = svc.listCartItem(user_id, page, size) catch |err| {
+    const pageresult = svc.listCartItem(user_id, page, size) catch |err| {
         try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });
         return;
     };
-    defer svc.freeCartItems(rows);
-    try ctx.renderJson(.{ .ok = true, .cart_items = rows });
+    defer svc.freeCartItems(pageresult.rows);
+    try ctx.renderJson(.{ .ok = true, .cart_items = pageresult.rows, .meta = .{ .total = pageresult.total, .page = page, .size = size } });
 }
 
 pub fn createOrder(ctx: *zfinal.Context) !void {
@@ -353,12 +353,12 @@ pub fn listOrderItem(ctx: *zfinal.Context) !void {
     };
     const page: usize = @intCast(try ctx.getParaToLongDefault("page", 1));
     const size: usize = @intCast(try ctx.getParaToLongDefault("size", 0)); // 0 = all
-    const rows = svc.listOrderItem(order_id, page, size) catch |err| {
+    const pageresult = svc.listOrderItem(order_id, page, size) catch |err| {
         try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });
         return;
     };
-    defer svc.freeOrderItems(rows);
-    try ctx.renderJson(.{ .ok = true, .order_items = rows });
+    defer svc.freeOrderItems(pageresult.rows);
+    try ctx.renderJson(.{ .ok = true, .order_items = pageresult.rows, .meta = .{ .total = pageresult.total, .page = page, .size = size } });
 }
 
 pub fn createFollow(ctx: *zfinal.Context) !void {
@@ -422,12 +422,12 @@ pub fn listFollow(ctx: *zfinal.Context) !void {
     };
     const page: usize = @intCast(try ctx.getParaToLongDefault("page", 1));
     const size: usize = @intCast(try ctx.getParaToLongDefault("size", 0)); // 0 = all
-    const rows = svc.listFollow(follower_id, page, size) catch |err| {
+    const pageresult = svc.listFollow(follower_id, page, size) catch |err| {
         try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });
         return;
     };
-    defer svc.freeFollows(rows);
-    try ctx.renderJson(.{ .ok = true, .follows = rows });
+    defer svc.freeFollows(pageresult.rows);
+    try ctx.renderJson(.{ .ok = true, .follows = pageresult.rows, .meta = .{ .total = pageresult.total, .page = page, .size = size } });
 }
 
 pub fn createLike(ctx: *zfinal.Context) !void {
@@ -491,12 +491,12 @@ pub fn listLike(ctx: *zfinal.Context) !void {
     };
     const page: usize = @intCast(try ctx.getParaToLongDefault("page", 1));
     const size: usize = @intCast(try ctx.getParaToLongDefault("size", 0)); // 0 = all
-    const rows = svc.listLike(post_id, page, size) catch |err| {
+    const pageresult = svc.listLike(post_id, page, size) catch |err| {
         try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });
         return;
     };
-    defer svc.freeLikes(rows);
-    try ctx.renderJson(.{ .ok = true, .likes = rows });
+    defer svc.freeLikes(pageresult.rows);
+    try ctx.renderJson(.{ .ok = true, .likes = pageresult.rows, .meta = .{ .total = pageresult.total, .page = page, .size = size } });
 }
 
 pub fn createPost(ctx: *zfinal.Context) !void {
@@ -560,12 +560,12 @@ pub fn listPost(ctx: *zfinal.Context) !void {
     };
     const page: usize = @intCast(try ctx.getParaToLongDefault("page", 1));
     const size: usize = @intCast(try ctx.getParaToLongDefault("size", 0)); // 0 = all
-    const rows = svc.listPost(author_id, page, size) catch |err| {
+    const pageresult = svc.listPost(author_id, page, size) catch |err| {
         try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });
         return;
     };
-    defer svc.freePosts(rows);
-    try ctx.renderJson(.{ .ok = true, .posts = rows });
+    defer svc.freePosts(pageresult.rows);
+    try ctx.renderJson(.{ .ok = true, .posts = pageresult.rows, .meta = .{ .total = pageresult.total, .page = page, .size = size } });
 }
 
 pub fn createComment(ctx: *zfinal.Context) !void {
@@ -637,12 +637,12 @@ pub fn listComment(ctx: *zfinal.Context) !void {
     };
     const page: usize = @intCast(try ctx.getParaToLongDefault("page", 1));
     const size: usize = @intCast(try ctx.getParaToLongDefault("size", 0)); // 0 = all
-    const rows = svc.listComment(post_id, page, size) catch |err| {
+    const pageresult = svc.listComment(post_id, page, size) catch |err| {
         try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });
         return;
     };
-    defer svc.freeComments(rows);
-    try ctx.renderJson(.{ .ok = true, .comments = rows });
+    defer svc.freeComments(pageresult.rows);
+    try ctx.renderJson(.{ .ok = true, .comments = pageresult.rows, .meta = .{ .total = pageresult.total, .page = page, .size = size } });
 }
 
 
@@ -693,11 +693,15 @@ pub fn recommend(ctx: *zfinal.Context) !void {
     try ctx.renderJson(.{ .ok = true, .users = rows });
 }
 
-/// GET /api/v1/orders/mine?user_id= — own orders only (data_scope row security).
+/// GET /api/v1/orders/mine — own orders only (data_scope row security).
+/// Auth: `Authorization: Bearer <JWT>` (see /api/v1/auth/login). The user_id
+/// comes from the verified token, NOT from a query param — the row-level scope
+/// then filters to that user's orders.
 pub fn listMyOrders(ctx: *zfinal.Context) !void {
     const svc = try svcOrErr(ctx);
-    const user_id = try ctx.getParaToLong("user_id") orelse {
-        try ctx.renderJson(.{ .ok = false, .error_msg = "Missing user_id" });
+    const user_id = try bearerUserId(ctx) orelse {
+        ctx.res_status = .unauthorized;
+        try ctx.renderJson(.{ .ok = false, .error_msg = "Unauthorized" });
         return;
     };
     const rows = svc.listMyOrders(user_id) catch |err| {
@@ -706,5 +710,52 @@ pub fn listMyOrders(ctx: *zfinal.Context) !void {
     };
     defer svc.freeScopedOrders(rows);
     try ctx.renderJson(.{ .ok = true, .orders = rows });
+}
+
+// ── JWT auth (zfinal.auth.Jwt HS256) — production: secret from env/config.
+const jwt_secret = "zent-shop-dev-secret-0123456789abcdef"; // ≥32 bytes
+
+fn authToken(user_id: i64) ![]const u8 {
+    const now: i64 = unixSeconds();
+    const sub = try std.fmt.allocPrint(std.heap.page_allocator, "{d}", .{user_id});
+    defer std.heap.page_allocator.free(sub);
+    return zfinal.Jwt.sign(std.heap.page_allocator, jwt_secret, .{
+        .sub = sub,
+        .exp = now + 3600,
+    });
+}
+
+fn unixSeconds() i64 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+    return ts.sec;
+}
+
+/// User id from a verified `Authorization: Bearer <token>`, or null.
+fn bearerUserId(ctx: *zfinal.Context) !?i64 {
+    const auth = ctx.getHeader("Authorization") orelse return null;
+    if (!std.mem.startsWith(u8, auth, "Bearer ")) return null;
+    const token = auth["Bearer ".len..];
+    const claims = zfinal.Jwt.verify(std.heap.page_allocator, jwt_secret, token, unixSeconds()) catch return null;
+    defer zfinal.Jwt.freeClaims(std.heap.page_allocator, claims);
+    return std.fmt.parseInt(i64, claims.sub, 10) catch null;
+}
+
+/// POST /api/v1/auth/login?handle= → JWT token (demo auth; sub = user_id).
+pub fn login(ctx: *zfinal.Context) !void {
+    const svc = try svcOrErr(ctx);
+    const handle = try ctx.getPara("handle") orelse {
+        try ctx.renderJson(.{ .ok = false, .error_msg = "Missing handle" });
+        return;
+    };
+    const user_id = svc.loginByHandle(handle) catch |err| {
+        try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });
+        return;
+    };
+    const token = authToken(user_id) catch |err| {
+        try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });
+        return;
+    };
+    try ctx.renderJson(.{ .ok = true, .token = token, .user_id = user_id });
 }
 // ── end ai-edit-zone ─────────────────────────────────────

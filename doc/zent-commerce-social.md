@@ -4,7 +4,7 @@
 > 内容电商 / 社区电商。**决策**：这类系统以 **zent 作数据层主力**（见
 > [doc/zent.md](zent.md)），ZFinal 只做 HTTP / 插件 / Queue。
 >
-> **版本**：zent **v0.27.0+** · ZFinal **v0.21.0+** · Zig ≥ 0.17
+> **版本**：zent **v0.29.0+** · ZFinal **v0.21.0+** · Zig ≥ 0.17
 > **参考实现**：[`examples/zent-shop`](../examples/zent-shop/)（9 实体完整可跑）
 
 相关：[zent.md](zent.md)（定位/选型）· [architecture_best_practices.md](architecture_best_practices.md)（分层）·
@@ -76,6 +76,15 @@ entity Follow {
 ```
 
 **分页**：所有 `list_by` 列表自动支持 `?page=&size=`（`Limit/Offset`，newest-first；`size=0` = 全部）。
+HTTP 响应统一带 `meta:{total, page, size}`（total 来自 `Count`）：
+
+```
+GET /api/v1/products?seller_id=1&page=2&size=10
+→ { "ok": true, "products": [...], "meta": { "total": 37, "page": 2, "size": 10 } }
+```
+
+契约：`items`（字段名随实体，如 products/orders）为当前页数组；`meta.total` 为
+满足过滤条件的总行数；`page` 从 1 开始；`size=0` 时返回全部行且 `total` 仍准确。
 
 ### 2.2 关系 DSL（`ref:` → zent edges + QueryEdge）
 
@@ -109,6 +118,20 @@ entity Post {
 - **`@sensitive` 脱敏输出**：生成 `.Sensitive()`；API 输出前用
   `zent.codegen.entity.toMaskedJson`（或手写 mask）替换敏感字段，示例见
   `doc/migration.md` 的绑定信封一节。
+- **EntQL `has(edge)` / `not_has`（zent v0.28+）**：EXISTS 子查询做关系过滤，
+  `QueryBuilder.WhereEntQL("has('posts', author_id = ?)", ...)` 或
+  `has('followers')`（有任一关联）—— 比手写 `WhereIn` 子查询更声明式：
+  ```zig
+  // 只查有评论的帖子 / 只查被关注过的用户
+  _ = try q.WhereEntQL("has('comments')", &.{});
+  _ = try q.WhereEntQL("not_has('followers')", &.{});
+  ```
+- **操作级 privacy（zent v0.28+）**：`OnCreate`/`OnUpdate`/`OnDelete`/`OnQuery`
+  只拦截对应操作（v0.27 是全操作 deny）—— 按需组合：
+  ```zig
+  // 查询可公开、写需鉴权：挂 OnCreate/OnUpdate/OnDelete
+  .policy = .{ .rules = &.{ zent.privacy.OnCreate, zent.privacy.OnUpdate, zent.privacy.OnDelete } },
+  ```
 
 ### 2.3 行级权限（`policy: data_scope`）
 
@@ -311,4 +334,4 @@ schema.zent ──zf crud:zent --json──▶ model/persistence/service/handler
 
 - [`examples/zent-shop`](../examples/zent-shop/) —— 可运行的 9 实体参考实现（本指南同源）
 - [`doc/zent.md`](zent.md) —— zent 定位、选型、反模式
-- [chy3xyz/zent](https://github.com/chy3xyz/zent) —— v0.27.0 API（core/edge、privacy/data_scope、codegen/client、crud、outbox、shard）
+- [chy3xyz/zent](https://github.com/chy3xyz/zent) —— v0.29.0 API（core/edge、privacy/data_scope、codegen/client、crud、outbox、shard）

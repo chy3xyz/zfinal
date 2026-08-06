@@ -598,6 +598,54 @@ test "zent_codegen: enum field + composite unique" {
     try expectZigSyntax(service);
 }
 
+test "zent_codegen: full-feature schema (enum+ref+policy+unique+pagination)" {
+    const allocator = std.testing.allocator;
+    const dsl =
+        \\module shop
+        \\api_prefix /api/v1
+        \\
+        \\entity User {
+        \\  handle: string @unique @index
+        \\}
+        \\
+        \\entity Order {
+        \\  buyer_id: int
+        \\  status: enum(pending,paid) = pending
+        \\  ref: buyer: User via buyer_id
+        \\  policy: data_scope
+        \\  unique: buyer_id, status
+        \\  list_by: buyer_id
+        \\}
+    ;
+    var schema = try zent_codegen.parseZentDsl(allocator, dsl);
+    defer schema.deinit();
+
+    const model = try zent_codegen.generateModel(allocator, &schema);
+    defer allocator.free(model);
+    try std.testing.expect(std.mem.indexOf(u8, model, "field.Enum(\"status\", &.{\"pending\", \"paid\"})") != null);
+    try std.testing.expect(std.mem.indexOf(u8, model, "zent.core.edge.From(\"buyer\", User).Field(\"buyer_id\")") != null);
+    try std.testing.expect(std.mem.indexOf(u8, model, ".policy = zent.data_scope.Policy") != null);
+    try std.testing.expect(std.mem.indexOf(u8, model, "Fields(&.{\"buyer_id\", \"status\"}).Unique()") != null);
+    try expectZigSyntax(model);
+
+    const persist = try zent_codegen.generatePersistence(allocator, &schema);
+    defer allocator.free(persist);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "OrderPage = struct { rows: []OrderRow, total: i64 }") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "q.paged(page, size)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "findUniqueOrder") != null);
+    try expectZigSyntax(persist);
+
+    const service = try zent_codegen.generateService(allocator, &schema);
+    defer allocator.free(service);
+    try std.testing.expect(std.mem.indexOf(u8, service, "persist.ShopStore.OrderPage") != null);
+    try expectZigSyntax(service);
+
+    const handler = try zent_codegen.generateHandler(allocator, &schema);
+    defer allocator.free(handler);
+    try std.testing.expect(std.mem.indexOf(u8, handler, ".meta = .{ .total = pageresult.total") != null);
+    try expectZigSyntax(handler);
+}
+
 test "zent_codegen: parse JSON schema" {
     const allocator = std.testing.allocator;
     const js =

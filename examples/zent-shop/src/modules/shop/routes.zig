@@ -40,5 +40,6 @@ pub fn register(app: anytype) !void {
     try app.post("/api/v1/orders/checkout", handler.checkout);
     try app.get("/api/v1/feed", handler.feed);
     try app.get("/api/v1/recommend", handler.recommend);
+    try app.post("/api/v1/auth/login", handler.login);
     try app.get("/api/v1/orders/mine", handler.listMyOrders);
 }
