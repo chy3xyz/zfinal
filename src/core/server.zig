@@ -5,6 +5,7 @@ const HttpMethod = @import("router.zig").HttpMethod;
 const Context = @import("context.zig").Context;
 const Metrics = @import("metrics.zig").Metrics;
 const getLog = @import("logger.zig").getLogger;
+const RequestLogger = @import("logger.zig").RequestLogger;
 const shutdown = @import("shutdown.zig");
 const io_instance = @import("../io_instance.zig");
 const http_error = @import("http_error.zig");
@@ -12,6 +13,7 @@ const sockread = @import("sockread.zig");
 const WebSocket = @import("../websocket/websocket.zig").WebSocket;
 const WebSocketManager = @import("../websocket/manager.zig").WebSocketManager;
 const ws_handshake = @import("../websocket/handshake.zig");
+const IpExt = @import("../ext/ext_util.zig").IpExt;
 
 pub const ServerConfig = struct {
     host: []const u8 = "0.0.0.0",
@@ -38,6 +40,10 @@ pub const ServerConfig = struct {
     /// Default matches request_timeout_ms. Prefer also terminating TLS/proxy
     /// write timeouts at the reverse proxy.
     write_timeout_ms: u64 = 30_000,
+    /// Emit a structured access-log line per request (`RequestLogger.begin/
+    /// finish`: method, path, status, duration_ms, bytes, ip). Off by default;
+    /// when on, uses the configured global Logger backend.
+    access_log: bool = false,
     /// When true (default), force one-request-per-connection to avoid
     /// Zig `http.Server` keep-alive / discardBody bugs (ziglang/zig#25017;
     /// still asserts on 0.17.0-dev.1422). Production: keep true and put client
@@ -192,6 +198,11 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
     _ = server.active_conns.fetchAdd(1, .monotonic);
     if (server.metrics) |m| m.recordConnection();
 
+    // Populate the peer address once per connection. `Context.remote_addr`
+    // was declared but never filled by the server — without it, client-IP
+    // features (rate limiting, audit logs) silently degrade to "unknown".
+    const peer_addr = IpExt.peerIpAddress(conn.socket.handle);
+
     var ws_took_over = false;
     defer {
         if (!ws_took_over) conn.close(io);
@@ -214,7 +225,7 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
             ws_took_over = true;
             break;
         }
-        dispatch(&request, server) catch break;
+        dispatch(&request, server, peer_addr) catch break;
         if (server.config.force_connection_close) break;
         if (request.head.version != .@"HTTP/1.1") break;
         if (!request.head.keep_alive) break;
@@ -257,6 +268,9 @@ fn tryWebSocketUpgrade(request: *http.Server.Request, server: *Server, conn: std
     const ws = try server.allocator.create(WebSocket);
     errdefer server.allocator.destroy(ws);
     ws.* = WebSocket.init(server.allocator, conn);
+    // Snapshot the handshake target so handlers can read query params
+    // (e.g. `ws.queryParam("room_id")`) — the request Context is gone by now.
+    ws.handshake_target = try server.allocator.dupe(u8, safe_target);
     try mgr.addConnection(ws);
     defer {
         mgr.removeConnection(ws);
@@ -327,12 +341,25 @@ fn monoMs(io: std.Io) u64 {
     return @intCast(@max(ts.toMilliseconds(), 0));
 }
 
-fn dispatch(request: *http.Server.Request, server: *Server) !void {
+fn dispatch(request: *http.Server.Request, server: *Server, peer_addr: ?std.Io.net.IpAddress) !void {
     const target = request.head.target;
     const safe_target = if (target.len > 4096) target[0..4096] else target;
     const path = if (std.mem.indexOfScalar(u8, safe_target, '?')) |q| safe_target[0..q] else safe_target;
     const method = HttpMethod.fromString(@tagName(request.head.method)) orelse .GET;
     const start_ms: i64 = std.Io.Timestamp.now(io_instance.io, .awake).toMilliseconds();
+
+    // Structured access log (opt-in via ServerConfig.access_log). The
+    // formatted peer string borrows a stack buffer; finish() runs inside this
+    // dispatch frame, so it stays valid.
+    var access_log: ?RequestLogger = null;
+    if (server.config.access_log) {
+        var ip_buf: [64]u8 = undefined;
+        const remote_str: ?[]const u8 = if (peer_addr) |addr|
+            std.fmt.bufPrint(&ip_buf, "{}", .{addr}) catch null
+        else
+            null;
+        access_log = RequestLogger.begin(getLog(), @tagName(request.head.method), path, remote_str);
+    }
 
     // MUST run before respond(): `Context.render*` copies `req.head.keep_alive`
     // into the response. Setting this only after execute left Connection:
@@ -343,6 +370,7 @@ fn dispatch(request: *http.Server.Request, server: *Server) !void {
     }
 
     var ctx = Context.init(request, server.allocator);
+    ctx.remote_addr = peer_addr;
     ctx.cacheHeaders(); // snapshot headers before the body can invalidate them
     ctx.max_body_size = server.config.max_body_size;
     ctx.compress_enabled = server.config.compress_responses;
@@ -396,6 +424,10 @@ fn dispatch(request: *http.Server.Request, server: *Server) !void {
         const dur: u64 = @intCast(@max(end_ms - start_ms, 0));
         m.recordLatencyMs(dur);
         m.recordRouteLatencyMs(path, dur);
+    }
+
+    if (access_log) |*rl| {
+        rl.finish(@intFromEnum(ctx.res_status), ctx.response_bytes);
     }
 }
 

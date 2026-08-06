@@ -1,6 +1,7 @@
 const std = @import("std");
 const params = @import("params.zig");
 const Page = @import("../db/pagination.zig").Page;
+const JsonKit = @import("../kit/json_kit.zig").JsonKit;
 
 /// Monotonic nanosecond timestamp. Zig 0.17 removed
 /// `std.time.Instant.now()` / `nanoTimestamp()` in favor of
@@ -62,6 +63,9 @@ pub const Context = struct {
     mock_headers: ?std.StringHashMap([]const u8) = null,
     /// Optional body for capture-mode extractors (`getBodyText` / `parseJsonBody`).
     mock_body: ?[]const u8 = null,
+    /// Total response payload bytes written (compressed size when gzip applied).
+    /// Filled by `render*` before `req.respond`; powers the access-log `bytes` field.
+    response_bytes: usize = 0,
 
     pub const CapturedResponse = struct {
         status: std.http.Status = .ok,
@@ -369,6 +373,25 @@ pub const Context = struct {
         };
     }
 
+    /// Pure-parse variant of `bindQuery`: fills `ptr` from query params but
+    /// does NOT render an error envelope. Returns false on invalid values so
+    /// the caller owns the error contract (e.g. its own {code,msg,data} shape).
+    /// Non-BadRequest errors still propagate.
+    pub fn parseQuery(self: *Context, ptr: anytype) !bool {
+        const Getter = struct {
+            ctx: *Context,
+            fn get(ctx: *const @This(), name: []const u8) ?[]const u8 {
+                return ctx.ctx.getPara(name) catch null;
+            }
+        };
+        const g = Getter{ .ctx = self };
+        bindStruct(g, ptr) catch |err| {
+            if (err == error.BadRequestValue) return false;
+            return err;
+        };
+        return true;
+    }
+
     // === Path Parameters ===
 
     /// Get path parameter value
@@ -645,6 +668,7 @@ pub const Context = struct {
 
         self.drainUnconsumedBody();
 
+        self.response_bytes += compressed.data.len;
         try self.req.respond(compressed.data, .{
             .status = self.res_status,
             .extra_headers = headers.items,
@@ -655,7 +679,9 @@ pub const Context = struct {
 
     pub fn renderJson(self: *Context, data: anytype) !void {
         if (self.response_started) return;
-        const json = try std.json.Stringify.valueAlloc(self.allocator, data, .{});
+        // Serialize via JsonKit (stable wrapper over std.json) so std's
+        // Stringify churn never reaches handlers directly.
+        const json = try JsonKit.stringify(self.allocator, data);
         defer self.allocator.free(json);
 
         if (self.capture) |cap| {
@@ -689,6 +715,7 @@ pub const Context = struct {
 
         self.drainUnconsumedBody();
 
+        self.response_bytes += compressed.data.len;
         try self.req.respond(compressed.data, .{
             .status = self.res_status,
             .extra_headers = headers.items,
@@ -758,6 +785,7 @@ pub const Context = struct {
 
         self.drainUnconsumedBody();
 
+        self.response_bytes += compressed.data.len;
         try self.req.respond(compressed.data, .{
             .status = self.res_status,
             .extra_headers = headers.items,
@@ -873,6 +901,23 @@ pub const Context = struct {
             }
             return err;
         };
+    }
+
+    /// Pure-parse variant of `bindJson`: parses the JSON body into `ptr`
+    /// without rendering an error envelope. Returns false on invalid input so
+    /// the caller owns the error contract (e.g. its own {code,msg,data} shape).
+    pub fn parseJson(self: *Context, ptr: anytype) !bool {
+        const body = self.getBodyText() catch return false;
+        defer self.allocator.free(body);
+        if (self.arena == null) {
+            self.arena = std.heap.ArenaAllocator.init(self.allocator);
+        }
+        const arena = &self.arena.?;
+        bindJsonInto(arena, body, ptr) catch |err| {
+            if (err == error.BadRequest) return false;
+            return err;
+        };
+        return true;
     }
 
     // === File Upload ===
@@ -1404,4 +1449,24 @@ test "context: ok() and created() response shortcuts" {
         try std.testing.expectEqualStrings("{\"ok\":true,\"id\":7}", cap.body.items);
         try std.testing.expectEqual(std.http.Status.created, cap.status);
     }
+}
+
+test "parseJson: pure parse, no render on invalid input" {
+    const a = std.testing.allocator;
+    var ctx: Context = undefined;
+    ctx.allocator = a;
+    defer if (ctx.arena) |*ar| ar.deinit();
+
+    const Dto = struct { name: []const u8, age: i32 };
+    ctx.mock_body = "{\"name\":\"alice\",\"age\":30}";
+    var dto: Dto = undefined;
+    try std.testing.expect(try ctx.parseJson(&dto));
+    try std.testing.expectEqualStrings("alice", dto.name);
+    try std.testing.expectEqual(@as(i32, 30), dto.age);
+    try std.testing.expect(!ctx.response_started);
+
+    // Malformed body → false, and NO error envelope is rendered.
+    ctx.mock_body = "{not json";
+    try std.testing.expect(!try ctx.parseJson(&dto));
+    try std.testing.expect(!ctx.response_started);
 }

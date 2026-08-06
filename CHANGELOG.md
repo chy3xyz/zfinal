@@ -1,3 +1,30 @@
+## [0.22.0] - 2026-08-04
+
+### Added
+- **`zf crud:zent` enum field type**: `status: enum(pending,paid,canceled)` → `field.Enum(...)` (values parsed/owned/freed; JSON schema support).
+- **`zf crud:zent` composite unique**: entity-level `unique: a, b` → generated `store.findUnique<Ent>(a, b)` + service create dedup (`error.Duplicate`); JSON schema `unique_fields`.
+- **`zf crud:zent` list pagination**: every `list_by` endpoint now accepts `?page=&size=` (`Limit/Offset`, newest-first; `size=0` = all, backward compatible).
+- **`zig build test-zent-shop`**: 5 service-level integration tests (SQLite in-memory) — unique dedup, transactional checkout + rollback, composite-unique dedup, QueryEdge feed, data_scope row security; wired into `quality_gate.sh` (real compile of generated code).
+- **`doc/zent-patterns.md`**: advanced patterns — `crud.CrudService` + `CrudEvent`, transactional `zent.outbox` (vs zfinal `DbOutbox`), `sql_pool.ConnPool` production pooling, JWT/data_scope + WebSocket handshake auth, `zent.shard`.
+- **`Context.response_bytes`**: real response payload byte count (3 render exits), used by the access-log `bytes` field (was always 0).
+- **`parseJson` unit test** (mock-body pure parse, no render).
+- Docs: `doc/zent-commerce-social.md` (enum/composite-unique/pagination/To-M2M edges/`@sensitive` masking), `doc/migration.md` (≤v0.13 path).
+
+### Fixed
+- **Generator `create` leaked `Save()` entities**: created rows' owned string fields were never freed (testing allocator exposed it) — generated `create*` now `defer zent.codegen.deinitEntity(...)`.
+- **`checkout` (zent-shop) leaked `UpdateBuilder`**: missing `defer ub.deinit()` on the stock-decrement builder.
+
+### Changed
+- `zf check --prod` needle-miss warnings now print a PracticeIgnore hint.
+- **`Context.remote_addr` never populated** (zapi audit A1): the server now reads the peer address via `getpeername` at accept time (`IpExt.peerIpAddress`) and fills `ctx.remote_addr` — rate limiting / audit no longer silently degrade to "unknown" behind clients that don't send proxy headers.
+- **`RequestLogger` dead code** (A2): `ServerConfig.access_log` (default off) now emits a structured `request` line per request (method/path/status/duration_ms/bytes/ip) via the global Logger.
+- **`setConfig` overwriting `setPort`** (A3): an explicitly-set port survives `setConfig` (order-independent); `port_explicit` flag + tests.
+- **WebSocket handler had no request context** (A4): the server snapshots the handshake target; `ws.queryParam("room_id")` reads handshake URL query params (pure parser + test).
+- **`bindQuery`/`bindJson` error-path coupling** (A5): new pure-parse `parseQuery`/`parseJson` return `bool` without rendering an envelope, so custom `{code,msg,data}` contracts own the error response.
+- **`RateLimitHandler` only raised** (A6): opt-in `render_429` writes a 429 body directly (default keeps `error.TooManyRequests`).
+- **`renderJson` now serializes via `JsonKit.stringify`** (A9): stable wrapper over `std.json` (already present) is now the single serialization path.
+- **Upgrade/migration guide** (A10): new `doc/migration.md` — v0.13→v0.21 breaking changes, workaround migration (logout no-op / getHeader defense / index_php raw target), Zig 0.17 test-collection rules, `zf check --prod` needle-detection caveats.
+
 ## [0.21.1] - 2026-08-04
 
 ### Fixed

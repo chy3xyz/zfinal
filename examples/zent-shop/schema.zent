@@ -53,6 +53,7 @@ entity Follow {
   followee_id: int
   ref: follower: User via follower_id
   ref: followee: User via followee_id
+  unique: follower_id, followee_id
   list_by: follower_id
 }
 
@@ -61,6 +62,7 @@ entity Like {
   post_id: int
   ref: user: User via user_id
   ref: post: Post via post_id
+  unique: user_id, post_id
   list_by: post_id
 }
 

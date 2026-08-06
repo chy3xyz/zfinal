@@ -177,6 +177,10 @@
           "target": "User",
           "field": "followee_id"
         }
+      ],
+      "unique_fields": [
+        "follower_id",
+        "followee_id"
       ]
     },
     {
@@ -203,6 +207,10 @@
           "target": "Post",
           "field": "post_id"
         }
+      ],
+      "unique_fields": [
+        "user_id",
+        "post_id"
       ]
     },
     {

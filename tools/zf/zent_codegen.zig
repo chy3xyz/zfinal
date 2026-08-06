@@ -15,6 +15,7 @@ pub const FieldType = enum {
     time,
     uuid,
     bytes,
+    enum_,
 
     pub fn fromToken(tok: []const u8) ?FieldType {
         if (std.mem.eql(u8, tok, "string") or std.mem.eql(u8, tok, "str")) return .string;
@@ -25,6 +26,7 @@ pub const FieldType = enum {
         if (std.mem.eql(u8, tok, "time") or std.mem.eql(u8, tok, "datetime") or std.mem.eql(u8, tok, "timestamp")) return .time;
         if (std.mem.eql(u8, tok, "uuid")) return .uuid;
         if (std.mem.eql(u8, tok, "bytes") or std.mem.eql(u8, tok, "blob")) return .bytes;
+        if (std.mem.startsWith(u8, tok, "enum")) return .enum_;
         return null;
     }
 
@@ -38,12 +40,13 @@ pub const FieldType = enum {
             .time => "Time",
             .uuid => "UUID",
             .bytes => "Bytes",
+            .enum_ => "Enum",
         };
     }
 
     pub fn zigType(self: FieldType) []const u8 {
         return switch (self) {
-            .string, .text, .uuid, .bytes => "[]const u8",
+            .string, .text, .uuid, .bytes, .enum_ => "[]const u8",
             .int, .time => "i64",
             .bool => "bool",
             .float => "f64",
@@ -51,13 +54,13 @@ pub const FieldType = enum {
     }
 
     pub fn isOwnedSlice(self: FieldType) bool {
-        return self == .string or self == .text or self == .uuid or self == .bytes;
+        return self == .string or self == .text or self == .uuid or self == .bytes or self == .enum_;
     }
 
     /// zent sql.Value tag used by predicate EQ calls (null = unsupported).
     pub fn valueTag(self: FieldType) ?[]const u8 {
         return switch (self) {
-            .string, .text, .uuid => "string",
+            .string, .text, .uuid, .enum_ => "string",
             .int => "int",
             .bool => "bool",
             .float => "float",
@@ -77,6 +80,8 @@ pub const Field = struct {
     required: bool = false,
     email: bool = false,
     positive: bool = false,
+    /// Enum literal values (owned by this Field; freed in deinit).
+    enum_values: []const []const u8 = &.{},
 
     /// string/text fields accept NotEmpty()/Email() chain calls.
     pub fn isStringLike(self: Field) bool {
@@ -91,6 +96,8 @@ pub const Field = struct {
     pub fn deinit(self: *Field, allocator: std.mem.Allocator) void {
         allocator.free(self.name);
         if (self.default_value) |d| allocator.free(d);
+        for (self.enum_values) |v| allocator.free(v);
+        if (self.enum_values.len > 0) allocator.free(self.enum_values);
     }
 };
 
@@ -111,7 +118,9 @@ pub const Entity = struct {
     fields: std.ArrayList(Field),
     list_by: ?[]const u8 = null,
     refs: std.ArrayList(Ref) = .empty,
-    policy: bool = false, // `policy: data_scope` → .policy = zent.privacy.data_scope.Policy
+    policy: bool = false, // `policy: data_scope` → .policy = zent.data_scope.Policy
+    /// Composite-unique field names (`unique: a, b`); each owned.
+    unique_fields: []const []const u8 = &.{},
 
     pub fn deinit(self: *Entity, allocator: std.mem.Allocator) void {
         allocator.free(self.name);
@@ -120,6 +129,8 @@ pub const Entity = struct {
         if (self.list_by) |lb| allocator.free(lb);
         for (self.refs.items) |*r| r.deinit(allocator);
         self.refs.deinit(allocator);
+        for (self.unique_fields) |uf| allocator.free(uf);
+        if (self.unique_fields.len > 0) allocator.free(self.unique_fields);
     }
 
     pub fn clientName(self: Entity, buf: []u8) []const u8 {
@@ -255,6 +266,24 @@ pub fn parseZentDsl(allocator: std.mem.Allocator, src: []const u8) !Schema {
             continue;
         }
 
+        // unique: a, b  → composite-unique fields (generates findUnique* + dedup)
+        if (std.mem.startsWith(u8, line, "unique:")) {
+            var uf_list: std.ArrayList([]const u8) = .empty;
+            errdefer {
+                for (uf_list.items) |v| allocator.free(v);
+                uf_list.deinit(allocator);
+            }
+            var it = std.mem.splitScalar(u8, line["unique:".len..], ',');
+            while (it.next()) |v| {
+                const t = std.mem.trim(u8, v, " \t");
+                if (t.len == 0) continue;
+                try uf_list.append(allocator, try allocator.dupe(u8, t));
+            }
+            if (uf_list.items.len < 2) return error.InvalidUniqueFields;
+            current.?.unique_fields = try uf_list.toOwnedSlice(allocator);
+            continue;
+        }
+
         // ref: <edge_name>: <TargetEntity> via <fk_field>  → zent From edge
         if (std.mem.startsWith(u8, line, "ref:")) {
             const v = std.mem.trim(u8, line["ref:".len..], " \t");
@@ -337,6 +366,29 @@ pub fn parseZentDsl(allocator: std.mem.Allocator, src: []const u8) !Schema {
         }
 
         const typ = FieldType.fromToken(type_tok) orelse return error.UnknownFieldType;
+
+        // enum(a,b,c) → field.Enum values (owned by the Field).
+        var enum_vals: []const []const u8 = &.{};
+        if (typ == .enum_) {
+            if (std.mem.indexOfScalar(u8, type_tok, '(')) |open| {
+                if (std.mem.lastIndexOfScalar(u8, type_tok, ')')) |close| {
+                    var list: std.ArrayList([]const u8) = .empty;
+                    errdefer {
+                        for (list.items) |v| allocator.free(v);
+                        list.deinit(allocator);
+                    }
+                    var it = std.mem.splitScalar(u8, type_tok[open + 1 .. close], ',');
+                    while (it.next()) |v| {
+                        const t = std.mem.trim(u8, v, " \t\"'");
+                        if (t.len == 0) continue;
+                        try list.append(allocator, try allocator.dupe(u8, t));
+                    }
+                    enum_vals = try list.toOwnedSlice(allocator);
+                }
+            }
+            if (enum_vals.len == 0) return error.InvalidEnumValues;
+        }
+
         try current.?.fields.append(allocator, .{
             .name = try allocator.dupe(u8, fname),
             .typ = typ,
@@ -347,6 +399,7 @@ pub fn parseZentDsl(allocator: std.mem.Allocator, src: []const u8) !Schema {
             .required = required,
             .email = email,
             .positive = positive,
+            .enum_values = enum_vals,
         });
     }
 
@@ -378,6 +431,7 @@ const JsonEntity = struct {
     list_by: ?[]const u8 = null,
     refs: ?[]JsonRef = null,
     policy: ?bool = null,
+    unique_fields: ?[]const []const u8 = null,
 };
 
 const JsonSchema = struct {
@@ -406,6 +460,13 @@ pub fn parseZentJson(allocator: std.mem.Allocator, src: []const u8) !Schema {
             .list_by = if (je.list_by) |lb| try allocator.dupe(u8, lb) else null,
             .policy = je.policy orelse false,
         };
+        if (je.unique_fields) |ufs| {
+            var uf_list: std.ArrayList([]const u8) = .empty;
+            for (ufs) |uf| {
+                try uf_list.append(allocator, try allocator.dupe(u8, uf));
+            }
+            ent.unique_fields = try uf_list.toOwnedSlice(allocator);
+        }
         if (je.refs) |refs| {
             for (refs) |jr| {
                 try ent.refs.append(allocator, .{
@@ -477,7 +538,16 @@ pub fn generateModel(allocator: std.mem.Allocator, schema: *const Schema) ![]u8 
             // FK columns declared via `ref:` are auto-added by zent's
             // addEdgeFields from the From edge — do not emit them twice.
             if (isRefFk(ent, f)) continue;
-            try w.print("        field.{s}(\"{s}\")", .{ f.typ.zentCtor(), f.name });
+            if (f.typ == .enum_) {
+                try w.print("        field.Enum(\"{s}\", &.{{", .{f.name});
+                for (f.enum_values, 0..) |v, vi| {
+                    if (vi > 0) try w.writeAll(", ");
+                    try w.print("\"{s}\"", .{v});
+                }
+                try w.writeAll("})");
+            } else {
+                try w.print("        field.{s}(\"{s}\")", .{ f.typ.zentCtor(), f.name });
+            }
             if (f.default_value) |dv| try w.print(".Default(\"{s}\")", .{dv});
             if (f.unique) try w.writeAll(".Unique()");
             if (f.sensitive) try w.writeAll(".Sensitive()");
@@ -605,7 +675,9 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
         for (ent.fields.items) |f| {
             try w.print("        _ = try b.setFieldValue(\"{s}\", {s});\n", .{ f.name, f.name });
         }
-        try w.writeAll("        const row = try b.Save();\n        return row.id;\n    }\n\n");
+        try w.writeAll("        var row = try b.Save();\n");
+        try w.print("        defer zent.codegen.deinitEntity(infos, {s}Info, &row, self.allocator);\n", .{ent.name});
+        try w.writeAll("        return row.id;\n    }\n\n");
 
         // update + delete (full CRUD)
         try w.print("    /// Update a {s} row by id (sets every declared field).\n", .{ent.name});
@@ -660,6 +732,34 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
             try w.writeAll("        if (found.items.len == 0) return null;\n        return found.items[0].id;\n    }\n\n");
         }
 
+        // composite unique (`unique: a, b`) — int fields, generates findUnique<Ent>
+        if (ent.unique_fields.len > 0) {
+            try w.print("    /// Composite-unique check: does a row with these values already exist?\n", .{});
+            try w.print("    pub fn findUnique{s}(self: *@This()", .{ent.name});
+            for (ent.unique_fields) |uf| {
+                try w.print(", {s}: i64", .{uf});
+            }
+            try w.writeAll(") !?i64 {\n");
+            if (ent.policy) {
+                try w.print("        var q = self.client.{s}.withContext(.{{}}).Query();\n", .{cname});
+            } else {
+                try w.print("        var q = self.client.{s}.Query();\n", .{cname});
+            }
+            try w.writeAll("        defer q.deinit();\n");
+            try w.print("        const preds = self.client.{s}.predicates;\n", .{cname});
+            try w.writeAll("        _ = try q.Where(.{");
+            for (ent.unique_fields, 0..) |uf, i| {
+                if (i > 0) try w.writeAll(", ");
+                try w.print("preds.{s}EQ(.{{ .int = {s} }})", .{ uf, uf });
+            }
+            try w.writeAll("});\n");
+            try w.writeAll("        var found = try q.All();\n");
+            try w.writeAll("        defer {\n            for (found.items) |*e| {\n");
+            try w.print("                zent.codegen.deinitEntity(infos, {s}Info, e, self.allocator);\n", .{ent.name});
+            try w.writeAll("            }\n            found.deinit();\n        }\n");
+            try w.writeAll("        if (found.items.len == 0) return null;\n        return found.items[0].id;\n    }\n\n");
+        }
+
         if (ent.list_by) |lb| {
             const lb_pascal = try pascalize(allocator, lb);
             defer allocator.free(lb_pascal);
@@ -671,7 +771,7 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
             }
             try w.writeAll("    };\n\n");
 
-            try w.print("    pub fn list{s}By{s}(self: *@This(), {s}: i64) ![]{s}Row {{\n", .{
+            try w.print("    pub fn list{s}By{s}(self: *@This(), {s}: i64, limit: usize, offset: usize) ![]{s}Row {{\n", .{
                 ent.name, lb_pascal, lb, ent.name,
             });
             if (ent.policy) {
@@ -682,6 +782,10 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
             try w.writeAll("        defer q.deinit();\n");
             try w.print("        const preds = self.client.{s}.predicates;\n", .{cname});
             try w.print("        _ = try q.Where(.{{preds.{s}EQ(.{{ .int = {s} }})}});\n", .{ lb, lb });
+            // pagination: newest first when paging; limit=0 → all (legacy).
+            try w.writeAll("        _ = try q.OrderBy(&.{.{ .column = .{ .name = \"id\", .desc = true } }});\n");
+            try w.writeAll("        if (limit > 0) _ = q.Limit(limit);\n");
+            try w.writeAll("        if (offset > 0) _ = q.Offset(offset);\n");
             try w.writeAll("        var found = try q.All();\n");
             try w.writeAll("        defer {\n            for (found.items) |*p| {\n");
             try w.print("                zent.codegen.deinitEntity(infos, {s}Info, p, self.allocator);\n", .{ent.name});
@@ -773,6 +877,14 @@ pub fn generateService(allocator: std.mem.Allocator, schema: *const Schema) ![]u
             defer allocator.free(fp);
             try w.print("        if (try self.store.findByUnique{s}({s}) != null) return error.Duplicate;\n", .{ fp, f.name });
         }
+        if (ent.unique_fields.len > 0) {
+            try w.print("        if (try self.store.findUnique{s}(", .{ent.name});
+            for (ent.unique_fields, 0..) |uf, i| {
+                if (i > 0) try w.writeAll(", ");
+                try w.writeAll(uf);
+            }
+            try w.writeAll(") != null) return error.Duplicate;\n");
+        }
         try w.writeAll("        // ── end ai-edit-zone ──────────────────────────────────────\n");
         try w.print("        return try self.store.create{s}(", .{ent.name});
         for (ent.fields.items, 0..) |f, i| {
@@ -806,11 +918,12 @@ pub fn generateService(allocator: std.mem.Allocator, schema: *const Schema) ![]u
         if (ent.list_by) |lb| {
             const lb_pascal = try pascalize(allocator, lb);
             defer allocator.free(lb_pascal);
-            try w.print("    pub fn list{s}(self: *@This(), {s}: i64) ![]persist.{s}.{s}Row {{\n", .{
+            try w.print("    pub fn list{s}(self: *@This(), {s}: i64, page: usize, size: usize) ![]persist.{s}.{s}Row {{\n", .{
                 ent.name, lb, store_name, ent.name,
             });
             try w.print("        if ({s} <= 0) return error.InvalidInput;\n", .{lb});
-            try w.print("        return try self.store.list{s}By{s}({s});\n", .{ ent.name, lb_pascal, lb });
+            try w.writeAll("        const offset = if (page > 1 and size > 0) (page - 1) * size else 0;\n");
+            try w.print("        return try self.store.list{s}By{s}({s}, size, offset);\n", .{ ent.name, lb_pascal, lb });
             try w.writeAll("    }\n\n");
             try w.print("    pub fn free{s}s(self: *@This(), rows: []persist.{s}.{s}Row) void {{\n", .{
                 ent.name, store_name, ent.name,
@@ -937,7 +1050,9 @@ pub fn generateHandler(allocator: std.mem.Allocator, schema: *const Schema) ![]u
             try w.print("    const {s} = try ctx.getParaToLong(\"{s}\") orelse {{\n", .{ lb, lb });
             try w.print("        try ctx.renderJson(.{{ .ok = false, .error_msg = \"Missing {s}\" }});\n", .{lb});
             try w.writeAll("        return;\n    };\n");
-            try w.print("    const rows = svc.list{s}({s}) catch |err| {{\n", .{ ent.name, lb });
+            try w.writeAll("    const page: usize = @intCast(try ctx.getParaToLongDefault(\"page\", 1));\n");
+            try w.writeAll("    const size: usize = @intCast(try ctx.getParaToLongDefault(\"size\", 0)); // 0 = all\n");
+            try w.print("    const rows = svc.list{s}({s}, page, size) catch |err| {{\n", .{ ent.name, lb });
             try w.writeAll("        try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });\n");
             try w.writeAll("        return;\n    };\n");
             try w.print("    defer svc.free{s}s(rows);\n", .{ent.name});
@@ -1096,6 +1211,14 @@ pub fn emitJsonManifest(allocator: std.mem.Allocator, schema_path: []const u8, s
             for (ent.refs.items, 0..) |r, ri| {
                 if (ri > 0) try w.writeAll(",");
                 try w.print("{{\"name\": \"{s}\", \"target\": \"{s}\", \"field\": \"{s}\"}}", .{ r.name, r.target, r.field });
+            }
+            try w.writeAll("]");
+        }
+        if (ent.unique_fields.len > 0) {
+            try w.writeAll(",\n      \"unique_fields\": [");
+            for (ent.unique_fields, 0..) |uf, ui| {
+                if (ui > 0) try w.writeAll(",");
+                try w.print("\"{s}\"", .{uf});
             }
             try w.writeAll("]");
         }

@@ -259,6 +259,7 @@ fn checkProdContract(allocator: std.mem.Allocator, root: []const u8, pass: *u32,
                 } else {
                     prod_warn += 1;
                     std.debug.print("⚠️  WARN: {s} missing {s} (required for internet-facing BFF)\n", .{ main_path, c.label });
+                    std.debug.print("         needle-based check on main.zig — custom layouts: use PracticeIgnore\n", .{});
                 }
             }
         }

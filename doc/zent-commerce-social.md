@@ -62,8 +62,20 @@ entity Like    { user_id: int; post_id: int; list_by: post_id }
 | `@positive` | `.Positive()`（int/float） | — |
 | `= default` | `.Default("...")` | handler 用 `getParaToLongDefault` |
 
-字段类型：`string` / `text` / `int` / `bool` / `float` / `time` / **`uuid`** / **`bytes`**。
+字段类型：`string` / `text` / `int` / `bool` / `float` / `time` / **`uuid`** / **`bytes`** / **`enum(a,b,c)`**（→ `field.Enum(name, &.{"a","b","c"})`）。
 JSON 版 schema 同样支持（`{"unique": true, ...}`，见 `examples/zent-shop/schema.json`）。
+
+**组合唯一**（`unique: a, b` 实体级）：生成 `store.findUnique<Ent>(a, b)` + create 防重 `error.Duplicate`：
+
+```
+entity Follow {
+  follower_id: int
+  followee_id: int
+  unique: follower_id, followee_id   # → findUniqueFollow + create 防重
+}
+```
+
+**分页**：所有 `list_by` 列表自动支持 `?page=&size=`（`Limit/Offset`，newest-first；`size=0` = 全部）。
 
 ### 2.2 关系 DSL（`ref:` → zent edges + QueryEdge）
 
@@ -85,6 +97,18 @@ entity Post {
   feed 示例见 `examples/zent-shop`（`feedFor`）。
 - 图遍历（二级关注/好友推荐）：用 Follow 行做 2-hop 查询即可（`recommendFor` 示例），
   或 zent `graph/neighbors` 底层 builder。
+- **反向 To / M2M edges**（`ref:` 只生成 From 方向）：在 `model.zig` 的
+  `ai-edit-zone: model hooks` 手写补充：
+  ```zig
+  // To edge：target 持有 FK 指回本实体（O2M）
+  .edges = &.{ zent.core.edge.To("posts", Post).Field("author_id") },
+  // M2M 经过 junction（Through）：User ↔ Tag via user_tags
+  .edges = &.{ zent.core.edge.To("tags", Tag).Through(UserTag) },
+  ```
+  声明后 `QueryEdge` / `OrderByEdgeCount` 可用。
+- **`@sensitive` 脱敏输出**：生成 `.Sensitive()`；API 输出前用
+  `zent.codegen.entity.toMaskedJson`（或手写 mask）替换敏感字段，示例见
+  `doc/migration.md` 的绑定信封一节。
 
 ### 2.3 行级权限（`policy: data_scope`）
 
@@ -105,11 +129,12 @@ entity Order {
   ```
 - 示例：`examples/zent-shop` 的 `/api/v1/orders/mine`（`listOrdersScoped`）。
 
-### 2.4 组合唯一（生成器不覆盖，进 ai-edit-zone）
+### 2.4 组合唯一（DSL `unique: a, b` 优先；手写兜底）
 
-Follow/Like 的 `(a_id, b_id)` 组合唯一没有单字段 `@unique` 可表达，在
-**persistence.zig 的 custom queries zone** 手写多谓词查询，在 **service.zig 的
-business rules zone** 调用：
+Follow/Like 的 `(a_id, b_id)` 组合唯一现在用实体级 `unique:` 声明自动生成
+`store.findUnique<Ent>` + create 防重（见 §2.1）。旧的手写模式（persistence
+custom queries 的 `findFollowPair` + service business rules 的 Duplicate）仍
+兼容，两者任选其一，不要重复接线。
 
 ```zig
 // persistence.zig  ── ai-edit-zone: custom queries

@@ -147,6 +147,9 @@ pub const WebSocket = struct {
     last_activity_ms: i64 = 0,
     /// Close with 1001 when idle longer than this (0 = disabled).
     idle_timeout_ms: i64 = 0,
+    /// Handshake request target (path + query, e.g. `/ws?room_id=42`), owned.
+    /// Set by the server during the upgrade; powers `queryParam`.
+    handshake_target: ?[]const u8 = null,
 
     pub fn init(allocator: std.mem.Allocator, stream: std.Io.net.Stream) WebSocket {
         return .{
@@ -180,8 +183,28 @@ pub const WebSocket = struct {
     }
 
     pub fn deinit(self: *WebSocket) void {
+        if (self.handshake_target) |t| self.allocator.free(t);
         self.frag_buf.deinit(self.allocator);
         self.close();
+    }
+
+    /// Parse a query parameter from a handshake target like `/ws?room_id=42`.
+    /// Borrows `target`; no allocation. RFC 3986 percent-encoding is NOT
+    /// decoded — use `std.Uri` if you need that.
+    pub fn queryParamFromTarget(target: []const u8, name: []const u8) ?[]const u8 {
+        const q = std.mem.indexOfScalar(u8, target, '?') orelse return null;
+        var it = std.mem.splitScalar(u8, target[q + 1 ..], '&');
+        while (it.next()) |pair| {
+            const eq = std.mem.indexOfScalar(u8, pair, '=') orelse continue;
+            if (std.mem.eql(u8, pair[0..eq], name)) return pair[eq + 1 ..];
+        }
+        return null;
+    }
+
+    /// Query parameter from the handshake URL (e.g. `ws.queryParam("room_id")`).
+    pub fn queryParam(self: *const WebSocket, name: []const u8) ?[]const u8 {
+        const target = self.handshake_target orelse return null;
+        return queryParamFromTarget(target, name);
     }
 
     fn frameReader(self: *WebSocket) *sockread.BufReader {
@@ -422,4 +445,12 @@ test "websocket frame parse rejects rsv" {
     const allocator = std.testing.allocator;
     const raw = [_]u8{ 0x91, 0x85, 0, 0, 0, 0, 'H', 'e', 'l', 'l', 'o' }; // RSV1 + TEXT + masked
     try std.testing.expectError(error.RsvBitsSet, Frame.parseOpts(&raw, allocator, .{ .require_client_mask = true }));
+}
+
+test "queryParamFromTarget parses handshake query" {
+    try std.testing.expectEqualStrings("42", WebSocket.queryParamFromTarget("/ws?room_id=42&token=abc", "room_id").?);
+    try std.testing.expectEqualStrings("abc", WebSocket.queryParamFromTarget("/ws?room_id=42&token=abc", "token").?);
+    try std.testing.expect(WebSocket.queryParamFromTarget("/ws?room_id=42", "missing") == null);
+    try std.testing.expect(WebSocket.queryParamFromTarget("/ws", "room_id") == null);
+    try std.testing.expectEqualStrings("", WebSocket.queryParamFromTarget("/ws?room_id=", "room_id").?);
 }

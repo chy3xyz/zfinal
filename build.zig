@@ -231,6 +231,22 @@ pub fn build(b: *std.Build) void {
     if (b.top_level_steps.get("run-zfsaas")) |run_zf| {
         b.step("run-saas-kit", "Alias for run-zfsaas").dependOn(&run_zf.step);
     }
+
+    // zent-shop domain integration tests (SQLite in-memory, service-level).
+    {
+        const zshop_test_mod = b.createModule(.{
+            .root_source_file = b.path("examples/zent-shop/src/test_root.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "zfinal", .module = zfinal_mod }},
+        });
+        zshop_test_mod.link_libc = true;
+        zshop_test_mod.linkSystemLibrary("sqlite3", .{});
+        const zshop_tests = b.addTest(.{ .root_module = zshop_test_mod, .name = "zent-shop-tests" });
+        const run_zshop_tests = b.addRunArtifact(zshop_tests);
+        const zshop_test_step = b.step("test-zent-shop", "Run zent-shop domain tests (e-commerce+social, zent v0.27)");
+        zshop_test_step.dependOn(&run_zshop_tests.step);
+    }
     // RuoYi example — only when MySQL driver is enabled (needs libmysqlclient)
     if (driver_mysql) {
         const ruoyi_mod = b.createModule(.{

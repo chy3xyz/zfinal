@@ -559,6 +559,45 @@ test "zent_codegen: parse DSL and emit ai-edit-zones" {
     try std.testing.expect(std.mem.indexOf(u8, manifest, fw_ver.semver) != null);
 }
 
+test "zent_codegen: enum field + composite unique" {
+    const allocator = std.testing.allocator;
+    const dsl =
+        \\module shop
+        \\api_prefix /api/v1
+        \\
+        \\entity Order {
+        \\  buyer_id: int
+        \\  status: enum(pending,paid,canceled) = pending
+        \\  unique: buyer_id, status
+        \\}
+    ;
+    var schema = try zent_codegen.parseZentDsl(allocator, dsl);
+    defer schema.deinit();
+    const order = &schema.entities.items[0];
+    try std.testing.expect(order.fields.items[1].typ == .enum_);
+    try std.testing.expectEqual(@as(usize, 3), order.fields.items[1].enum_values.len);
+    try std.testing.expectEqualStrings("pending", order.fields.items[1].enum_values[0]);
+    try std.testing.expectEqualStrings("paid", order.fields.items[1].enum_values[1]);
+    try std.testing.expectEqual(@as(usize, 2), order.unique_fields.len);
+    try std.testing.expectEqualStrings("buyer_id", order.unique_fields[0]);
+
+    const model = try zent_codegen.generateModel(allocator, &schema);
+    defer allocator.free(model);
+    try std.testing.expect(std.mem.indexOf(u8, model, "field.Enum(\"status\", &.{\"pending\", \"paid\", \"canceled\"})") != null);
+    try expectZigSyntax(model);
+
+    const persist = try zent_codegen.generatePersistence(allocator, &schema);
+    defer allocator.free(persist);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "findUniqueOrder") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "preds.buyer_idEQ(.{ .int = buyer_id })") != null);
+    try expectZigSyntax(persist);
+
+    const service = try zent_codegen.generateService(allocator, &schema);
+    defer allocator.free(service);
+    try std.testing.expect(std.mem.indexOf(u8, service, "self.store.findUniqueOrder(buyer_id, status)") != null);
+    try expectZigSyntax(service);
+}
+
 test "zent_codegen: parse JSON schema" {
     const allocator = std.testing.allocator;
     const js =

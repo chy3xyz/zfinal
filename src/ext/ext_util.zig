@@ -14,6 +14,33 @@ pub const ClientIpOptions = struct {
 
 /// IP 工具扩展
 pub const IpExt = struct {
+    /// Peer IP address of a connected socket, or null when the family is
+    /// unsupported or the syscall fails. Fills the long-standing gap where
+    /// `Context.remote_addr` was declared but never populated by the server.
+    pub fn peerIpAddress(handle: std.posix.socket_t) ?std.Io.net.IpAddress {
+        var storage: std.posix.sockaddr.storage = undefined;
+        var len: std.posix.socklen_t = @sizeOf(std.posix.sockaddr.storage);
+        std.posix.getpeername(handle, @ptrCast(&storage), &len) catch return null;
+        const sa: *const std.posix.sockaddr = @ptrCast(&storage);
+        return switch (sa.family) {
+            std.posix.AF.INET => blk: {
+                const sin: *const std.posix.sockaddr.in = @ptrCast(@alignCast(sa));
+                break :blk std.Io.net.IpAddress{ .ip4 = .{
+                    .bytes = @bitCast(std.mem.bigToNative(u32, sin.addr)),
+                    .port = std.mem.bigToNative(u16, sin.port),
+                } };
+            },
+            std.posix.AF.INET6 => blk: {
+                const sin6: *const std.posix.sockaddr.in6 = @ptrCast(@alignCast(sa));
+                break :blk std.Io.net.IpAddress{ .ip6 = .{
+                    .port = std.mem.bigToNative(u16, sin6.port),
+                    .bytes = sin6.addr,
+                } };
+            },
+            else => null,
+        };
+    }
+
     /// Secure default: never trust client-controlled proxy headers.
     /// Prefer `resolveClientIp` with an explicit `ClientIpOptions` behind a reverse proxy.
     pub fn getRealIp(ctx: *zfinal.Context) []const u8 {

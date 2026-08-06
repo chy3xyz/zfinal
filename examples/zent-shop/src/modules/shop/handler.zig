@@ -140,7 +140,9 @@ pub fn listProduct(ctx: *zfinal.Context) !void {
         try ctx.renderJson(.{ .ok = false, .error_msg = "Missing seller_id" });
         return;
     };
-    const rows = svc.listProduct(seller_id) catch |err| {
+    const page: usize = @intCast(try ctx.getParaToLongDefault("page", 1));
+    const size: usize = @intCast(try ctx.getParaToLongDefault("size", 0)); // 0 = all
+    const rows = svc.listProduct(seller_id, page, size) catch |err| {
         try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });
         return;
     };
@@ -209,7 +211,9 @@ pub fn listCartItem(ctx: *zfinal.Context) !void {
         try ctx.renderJson(.{ .ok = false, .error_msg = "Missing user_id" });
         return;
     };
-    const rows = svc.listCartItem(user_id) catch |err| {
+    const page: usize = @intCast(try ctx.getParaToLongDefault("page", 1));
+    const size: usize = @intCast(try ctx.getParaToLongDefault("size", 0)); // 0 = all
+    const rows = svc.listCartItem(user_id, page, size) catch |err| {
         try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });
         return;
     };
@@ -347,7 +351,9 @@ pub fn listOrderItem(ctx: *zfinal.Context) !void {
         try ctx.renderJson(.{ .ok = false, .error_msg = "Missing order_id" });
         return;
     };
-    const rows = svc.listOrderItem(order_id) catch |err| {
+    const page: usize = @intCast(try ctx.getParaToLongDefault("page", 1));
+    const size: usize = @intCast(try ctx.getParaToLongDefault("size", 0)); // 0 = all
+    const rows = svc.listOrderItem(order_id, page, size) catch |err| {
         try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });
         return;
     };
@@ -414,7 +420,9 @@ pub fn listFollow(ctx: *zfinal.Context) !void {
         try ctx.renderJson(.{ .ok = false, .error_msg = "Missing follower_id" });
         return;
     };
-    const rows = svc.listFollow(follower_id) catch |err| {
+    const page: usize = @intCast(try ctx.getParaToLongDefault("page", 1));
+    const size: usize = @intCast(try ctx.getParaToLongDefault("size", 0)); // 0 = all
+    const rows = svc.listFollow(follower_id, page, size) catch |err| {
         try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });
         return;
     };
@@ -481,7 +489,9 @@ pub fn listLike(ctx: *zfinal.Context) !void {
         try ctx.renderJson(.{ .ok = false, .error_msg = "Missing post_id" });
         return;
     };
-    const rows = svc.listLike(post_id) catch |err| {
+    const page: usize = @intCast(try ctx.getParaToLongDefault("page", 1));
+    const size: usize = @intCast(try ctx.getParaToLongDefault("size", 0)); // 0 = all
+    const rows = svc.listLike(post_id, page, size) catch |err| {
         try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });
         return;
     };
@@ -548,7 +558,9 @@ pub fn listPost(ctx: *zfinal.Context) !void {
         try ctx.renderJson(.{ .ok = false, .error_msg = "Missing author_id" });
         return;
     };
-    const rows = svc.listPost(author_id) catch |err| {
+    const page: usize = @intCast(try ctx.getParaToLongDefault("page", 1));
+    const size: usize = @intCast(try ctx.getParaToLongDefault("size", 0)); // 0 = all
+    const rows = svc.listPost(author_id, page, size) catch |err| {
         try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });
         return;
     };
@@ -623,7 +635,9 @@ pub fn listComment(ctx: *zfinal.Context) !void {
         try ctx.renderJson(.{ .ok = false, .error_msg = "Missing post_id" });
         return;
     };
-    const rows = svc.listComment(post_id) catch |err| {
+    const page: usize = @intCast(try ctx.getParaToLongDefault("page", 1));
+    const size: usize = @intCast(try ctx.getParaToLongDefault("size", 0)); // 0 = all
+    const rows = svc.listComment(post_id, page, size) catch |err| {
         try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });
         return;
     };

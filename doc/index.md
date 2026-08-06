@@ -51,7 +51,8 @@ Walkthrough: [ai-quickstart.md](ai-quickstart.md) · Demo: `examples/ai-blog-5mi
 |--------------|------|
 | Best practices index + timeline | [best_practices.md](best_practices.md) |
 | Architecture / progressive / scale | [architecture_best_practices.md](architecture_best_practices.md) · [progressive_architecture.md](progressive_architecture.md) · [scale_to_millions.md](scale_to_millions.md) |
-| Data: `DB` **or** `zent` | [zent.md](zent.md) · [zent-commerce-social.md](zent-commerce-social.md) · [database.md](database.md) |
+| Data: `DB` **or** `zent` | [zent.md](zent.md) · [zent-commerce-social.md](zent-commerce-social.md) · [zent-patterns.md](zent-patterns.md) · [database.md](database.md) |
+| Upgrade / migration | [migration.md](migration.md)（v0.13→v0.21 破坏性变更 + workaround） |
 | SaaS Kit (org auth / Stripe / todo) | [saas_kit.md](saas_kit.md) · `examples/zfsaas/` |
 | L3 async: Outbox + Bus | [outbox.md](outbox.md) · [bus.md](bus.md) |
 | Messaging connectors | [nats.md](nats.md) · [robustmq.md](robustmq.md) |

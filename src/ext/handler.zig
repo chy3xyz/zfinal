@@ -121,6 +121,10 @@ pub const RateLimitHandler = struct {
     /// Controls how often stale entries are cleaned up (every N handle() calls).
     cleanup_counter: usize = 0,
     cleanup_interval: usize = 1000,
+    /// When true, over-limit requests get a 429 response written directly
+    /// (instead of `error.TooManyRequests`). Default false keeps the error
+    /// semantics so callers control the response contract.
+    render_429: bool = false,
 
     const RequestInfo = struct {
         count: usize,
@@ -166,6 +170,14 @@ pub const RateLimitHandler = struct {
         if (self.requests.getPtr(client_key)) |info| {
             if (now - info.window_start < self.window_seconds) {
                 if (info.count >= self.max_requests) {
+                    if (self.render_429) {
+                        // Opt-in: write a 429 body instead of raising, so the
+                        // error contract is the caller's choice. Keeps the
+                        // default error semantics (catch + render yourself).
+                        ctx.res_status = .too_many_requests;
+                        try ctx.renderText("429 Too Many Requests");
+                        return;
+                    }
                     return error.TooManyRequests;
                 }
                 info.count += 1;

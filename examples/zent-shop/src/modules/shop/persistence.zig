@@ -47,7 +47,8 @@ pub const ShopStore = struct {
         _ = try b.setFieldValue("name", name);
         _ = try b.setFieldValue("handle", handle);
         _ = try b.setFieldValue("email", email);
-        const row = try b.Save();
+        var row = try b.Save();
+        defer zent.codegen.deinitEntity(infos, UserInfo, &row, self.allocator);
         return row.id;
     }
 
@@ -111,7 +112,8 @@ pub const ShopStore = struct {
         _ = try b.setFieldValue("name", name);
         _ = try b.setFieldValue("price_cents", price_cents);
         _ = try b.setFieldValue("stock", stock);
-        const row = try b.Save();
+        var row = try b.Save();
+        defer zent.codegen.deinitEntity(infos, ProductInfo, &row, self.allocator);
         return row.id;
     }
 
@@ -143,11 +145,14 @@ pub const ShopStore = struct {
         stock: i64,
     };
 
-    pub fn listProductBySellerId(self: *@This(), seller_id: i64) ![]ProductRow {
+    pub fn listProductBySellerId(self: *@This(), seller_id: i64, limit: usize, offset: usize) ![]ProductRow {
         var q = self.client.product.Query();
         defer q.deinit();
         const preds = self.client.product.predicates;
         _ = try q.Where(.{preds.seller_idEQ(.{ .int = seller_id })});
+        _ = try q.OrderBy(&.{.{ .column = .{ .name = "id", .desc = true } }});
+        if (limit > 0) _ = q.Limit(limit);
+        if (offset > 0) _ = q.Offset(offset);
         var found = try q.All();
         defer {
             for (found.items) |*p| {
@@ -183,7 +188,8 @@ pub const ShopStore = struct {
         _ = try b.setFieldValue("user_id", user_id);
         _ = try b.setFieldValue("product_id", product_id);
         _ = try b.setFieldValue("qty", qty);
-        const row = try b.Save();
+        var row = try b.Save();
+        defer zent.codegen.deinitEntity(infos, CartItemInfo, &row, self.allocator);
         return row.id;
     }
 
@@ -213,11 +219,14 @@ pub const ShopStore = struct {
         qty: i64,
     };
 
-    pub fn listCartItemByUserId(self: *@This(), user_id: i64) ![]CartItemRow {
+    pub fn listCartItemByUserId(self: *@This(), user_id: i64, limit: usize, offset: usize) ![]CartItemRow {
         var q = self.client.cart_item.Query();
         defer q.deinit();
         const preds = self.client.cart_item.predicates;
         _ = try q.Where(.{preds.user_idEQ(.{ .int = user_id })});
+        _ = try q.OrderBy(&.{.{ .column = .{ .name = "id", .desc = true } }});
+        if (limit > 0) _ = q.Limit(limit);
+        if (offset > 0) _ = q.Offset(offset);
         var found = try q.All();
         defer {
             for (found.items) |*p| {
@@ -249,7 +258,8 @@ pub const ShopStore = struct {
         _ = try b.setFieldValue("buyer_id", buyer_id);
         _ = try b.setFieldValue("status", status);
         _ = try b.setFieldValue("total_cents", total_cents);
-        const row = try b.Save();
+        var row = try b.Save();
+        defer zent.codegen.deinitEntity(infos, OrderInfo, &row, self.allocator);
         return row.id;
     }
 
@@ -279,7 +289,8 @@ pub const ShopStore = struct {
         _ = try b.setFieldValue("product_id", product_id);
         _ = try b.setFieldValue("qty", qty);
         _ = try b.setFieldValue("price_cents", price_cents);
-        const row = try b.Save();
+        var row = try b.Save();
+        defer zent.codegen.deinitEntity(infos, OrderItemInfo, &row, self.allocator);
         return row.id;
     }
 
@@ -311,11 +322,14 @@ pub const ShopStore = struct {
         price_cents: i64,
     };
 
-    pub fn listOrderItemByOrderId(self: *@This(), order_id: i64) ![]OrderItemRow {
+    pub fn listOrderItemByOrderId(self: *@This(), order_id: i64, limit: usize, offset: usize) ![]OrderItemRow {
         var q = self.client.order_item.Query();
         defer q.deinit();
         const preds = self.client.order_item.predicates;
         _ = try q.Where(.{preds.order_idEQ(.{ .int = order_id })});
+        _ = try q.OrderBy(&.{.{ .column = .{ .name = "id", .desc = true } }});
+        if (limit > 0) _ = q.Limit(limit);
+        if (offset > 0) _ = q.Offset(offset);
         var found = try q.All();
         defer {
             for (found.items) |*p| {
@@ -347,7 +361,8 @@ pub const ShopStore = struct {
         defer b.deinit();
         _ = try b.setFieldValue("follower_id", follower_id);
         _ = try b.setFieldValue("followee_id", followee_id);
-        const row = try b.Save();
+        var row = try b.Save();
+        defer zent.codegen.deinitEntity(infos, FollowInfo, &row, self.allocator);
         return row.id;
     }
 
@@ -369,17 +384,37 @@ pub const ShopStore = struct {
         _ = try db.Exec();
     }
 
+    /// Composite-unique check: does a row with these values already exist?
+    pub fn findUniqueFollow(self: *@This(), follower_id: i64, followee_id: i64) !?i64 {
+        var q = self.client.follow.Query();
+        defer q.deinit();
+        const preds = self.client.follow.predicates;
+        _ = try q.Where(.{preds.follower_idEQ(.{ .int = follower_id }), preds.followee_idEQ(.{ .int = followee_id })});
+        var found = try q.All();
+        defer {
+            for (found.items) |*e| {
+                zent.codegen.deinitEntity(infos, FollowInfo, e, self.allocator);
+            }
+            found.deinit();
+        }
+        if (found.items.len == 0) return null;
+        return found.items[0].id;
+    }
+
     pub const FollowRow = struct {
         id: i64,
         follower_id: i64,
         followee_id: i64,
     };
 
-    pub fn listFollowByFollowerId(self: *@This(), follower_id: i64) ![]FollowRow {
+    pub fn listFollowByFollowerId(self: *@This(), follower_id: i64, limit: usize, offset: usize) ![]FollowRow {
         var q = self.client.follow.Query();
         defer q.deinit();
         const preds = self.client.follow.predicates;
         _ = try q.Where(.{preds.follower_idEQ(.{ .int = follower_id })});
+        _ = try q.OrderBy(&.{.{ .column = .{ .name = "id", .desc = true } }});
+        if (limit > 0) _ = q.Limit(limit);
+        if (offset > 0) _ = q.Offset(offset);
         var found = try q.All();
         defer {
             for (found.items) |*p| {
@@ -409,7 +444,8 @@ pub const ShopStore = struct {
         defer b.deinit();
         _ = try b.setFieldValue("user_id", user_id);
         _ = try b.setFieldValue("post_id", post_id);
-        const row = try b.Save();
+        var row = try b.Save();
+        defer zent.codegen.deinitEntity(infos, LikeInfo, &row, self.allocator);
         return row.id;
     }
 
@@ -431,17 +467,37 @@ pub const ShopStore = struct {
         _ = try db.Exec();
     }
 
+    /// Composite-unique check: does a row with these values already exist?
+    pub fn findUniqueLike(self: *@This(), user_id: i64, post_id: i64) !?i64 {
+        var q = self.client.like.Query();
+        defer q.deinit();
+        const preds = self.client.like.predicates;
+        _ = try q.Where(.{preds.user_idEQ(.{ .int = user_id }), preds.post_idEQ(.{ .int = post_id })});
+        var found = try q.All();
+        defer {
+            for (found.items) |*e| {
+                zent.codegen.deinitEntity(infos, LikeInfo, e, self.allocator);
+            }
+            found.deinit();
+        }
+        if (found.items.len == 0) return null;
+        return found.items[0].id;
+    }
+
     pub const LikeRow = struct {
         id: i64,
         user_id: i64,
         post_id: i64,
     };
 
-    pub fn listLikeByPostId(self: *@This(), post_id: i64) ![]LikeRow {
+    pub fn listLikeByPostId(self: *@This(), post_id: i64, limit: usize, offset: usize) ![]LikeRow {
         var q = self.client.like.Query();
         defer q.deinit();
         const preds = self.client.like.predicates;
         _ = try q.Where(.{preds.post_idEQ(.{ .int = post_id })});
+        _ = try q.OrderBy(&.{.{ .column = .{ .name = "id", .desc = true } }});
+        if (limit > 0) _ = q.Limit(limit);
+        if (offset > 0) _ = q.Offset(offset);
         var found = try q.All();
         defer {
             for (found.items) |*p| {
@@ -471,7 +527,8 @@ pub const ShopStore = struct {
         defer b.deinit();
         _ = try b.setFieldValue("author_id", author_id);
         _ = try b.setFieldValue("body", body);
-        const row = try b.Save();
+        var row = try b.Save();
+        defer zent.codegen.deinitEntity(infos, PostInfo, &row, self.allocator);
         return row.id;
     }
 
@@ -499,11 +556,14 @@ pub const ShopStore = struct {
         body: []const u8,
     };
 
-    pub fn listPostByAuthorId(self: *@This(), author_id: i64) ![]PostRow {
+    pub fn listPostByAuthorId(self: *@This(), author_id: i64, limit: usize, offset: usize) ![]PostRow {
         var q = self.client.post.Query();
         defer q.deinit();
         const preds = self.client.post.predicates;
         _ = try q.Where(.{preds.author_idEQ(.{ .int = author_id })});
+        _ = try q.OrderBy(&.{.{ .column = .{ .name = "id", .desc = true } }});
+        if (limit > 0) _ = q.Limit(limit);
+        if (offset > 0) _ = q.Offset(offset);
         var found = try q.All();
         defer {
             for (found.items) |*p| {
@@ -537,7 +597,8 @@ pub const ShopStore = struct {
         _ = try b.setFieldValue("post_id", post_id);
         _ = try b.setFieldValue("author_id", author_id);
         _ = try b.setFieldValue("body", body);
-        const row = try b.Save();
+        var row = try b.Save();
+        defer zent.codegen.deinitEntity(infos, CommentInfo, &row, self.allocator);
         return row.id;
     }
 
@@ -567,11 +628,14 @@ pub const ShopStore = struct {
         body: []const u8,
     };
 
-    pub fn listCommentByPostId(self: *@This(), post_id: i64) ![]CommentRow {
+    pub fn listCommentByPostId(self: *@This(), post_id: i64, limit: usize, offset: usize) ![]CommentRow {
         var q = self.client.comment.Query();
         defer q.deinit();
         const preds = self.client.comment.predicates;
         _ = try q.Where(.{preds.post_idEQ(.{ .int = post_id })});
+        _ = try q.OrderBy(&.{.{ .column = .{ .name = "id", .desc = true } }});
+        if (limit > 0) _ = q.Limit(limit);
+        if (offset > 0) _ = q.Offset(offset);
         var found = try q.All();
         defer {
             for (found.items) |*p| {
@@ -707,7 +771,9 @@ pub const ShopStore = struct {
         _ = try ob.setFieldValue("buyer_id", user_id);
         _ = try ob.setFieldValue("status", "pending");
         _ = try ob.setFieldValue("total_cents", total_cents);
-        const order_id = (try ob.Save()).id;
+        var order_ent = try ob.Save();
+        defer zent.codegen.deinitEntity(infos, OrderInfo, &order_ent, self.allocator);
+        const order_id = order_ent.id;
 
         // 4. per item: decrement stock + snapshot OrderItem
         for (cart.items) |c| {
@@ -715,6 +781,7 @@ pub const ShopStore = struct {
             defer self.freeProduct(p);
 
             var ub = txc.client.product.Update();
+            defer ub.deinit();
             _ = try ub.Where(.{txc.client.product.predicates.idEQ(.{ .int = c.product_id orelse 0 })});
             _ = try ub.setExprArgs("stock", "stock - ?", &.{.{ .int = c.qty }});
             _ = try ub.Save();
@@ -725,7 +792,9 @@ pub const ShopStore = struct {
             _ = try iob.setFieldValue("product_id", c.product_id orelse 0);
             _ = try iob.setFieldValue("qty", c.qty);
             _ = try iob.setFieldValue("price_cents", p.price_cents);
-            _ = try iob.Save();
+            var oi_ent = try iob.Save();
+            defer zent.codegen.deinitEntity(infos, OrderItemInfo, &oi_ent, self.allocator);
+            _ = oi_ent.id;
         }
 
         // 5. clear the cart (same tx)

@@ -26,6 +26,9 @@ pub const ZFinal = struct {
     app_state: @import("state.zig").Handle = .{},
     /// Owned when `addWebSocket` is used; passed to `Server` on `start`.
     ws_manager: ?WebSocketManager = null,
+    /// Set when `setPort` is called; `setConfig` preserves the explicit port
+    /// so call order (setPort before/after setConfig) does not matter.
+    port_explicit: bool = false,
 
     /// Initialize a new ZFinal application. Routes, plugins, and config
     /// are added before calling `start()`.
@@ -51,11 +54,16 @@ pub const ZFinal = struct {
     /// Set the HTTP listen port (default 8080).
     pub fn setPort(self: *ZFinal, port: u16) void {
         self.config.port = port;
+        self.port_explicit = true;
     }
 
-    /// Replace the entire server configuration.
+    /// Replace the entire server configuration. An explicitly-set port
+    /// (via `setPort`) survives the replacement, so `setPort` followed by
+    /// `setConfig` does not silently reset the port to the default 8080.
     pub fn setConfig(self: *ZFinal, config: ServerConfig) void {
+        const saved_port = if (self.port_explicit) self.config.port else null;
         self.config = config;
+        if (saved_port) |p| self.config.port = p;
     }
 
     /// Attach shared Metrics so the core server auto-records connections/requests.
@@ -286,4 +294,19 @@ test "RouteGroup param routes match after register frees full_path" {
     var params = try route.extractParams("/api/workspaces/42", allocator);
     defer params.deinit();
     try std.testing.expectEqualStrings("42", params.get("id").?);
+}
+
+test "setConfig preserves explicit setPort (order-independent)" {
+    var app = ZFinal.init(std.testing.allocator);
+    defer app.deinit();
+    app.setPort(9999);
+    app.setConfig(.{});
+    try std.testing.expectEqual(@as(u16, 9999), app.config.port);
+}
+
+test "setConfig without setPort applies config port" {
+    var app = ZFinal.init(std.testing.allocator);
+    defer app.deinit();
+    app.setConfig(.{ .port = 7000 });
+    try std.testing.expectEqual(@as(u16, 7000), app.config.port);
 }
