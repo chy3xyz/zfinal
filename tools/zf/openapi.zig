@@ -378,7 +378,7 @@ fn lessThanRoute(_: void, a: Route, b: Route) bool {
     if (std.mem.lessThan(u8, a.path, b.path)) return true;
     if (!std.mem.eql(u8, a.path, b.path)) return false;
     // Declaration order on HttpMethod = GET, POST, PUT, PATCH, DELETE.
-    return @intFromEnum(a.method) < @intFromEnum(b.method);
+    return @backingInt(a.method) < @backingInt(b.method);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -120,7 +120,7 @@ pub const HttpClient = struct {
         });
 
         return .{
-            .status = @intFromEnum(result.status),
+            .status = @backingInt(result.status),
             .body = try body_writer.toOwnedSlice(),
             .allocator = self.allocator,
         };
@@ -161,7 +161,7 @@ pub const HttpClient = struct {
         };
 
         return .{
-            .status = @intFromEnum(result.status),
+            .status = @backingInt(result.status),
             .body = try self.allocator.dupe(u8, ""),
             .allocator = self.allocator,
         };

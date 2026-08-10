@@ -46,7 +46,7 @@ pub const Frame = struct {
 
         if ((byte1 & 0x70) != 0) return error.RsvBitsSet;
         const fin = (byte1 & 0x80) != 0;
-        const opcode = @as(OpCode, @enumFromInt(byte1 & 0x0F));
+        const opcode = @as(OpCode, @fromBackingInt(@intCast(byte1 & 0x0F)));
         const masked = (byte2 & 0x80) != 0;
         if (opts.require_client_mask and !masked) return error.MaskRequired;
         var payload_len: usize = @intCast(byte2 & 0x7F);
@@ -98,7 +98,7 @@ pub const Frame = struct {
         defer buffer.deinit(allocator);
 
         // Byte 1: FIN + opcode
-        var byte1: u8 = @intFromEnum(self.opcode);
+        var byte1: u8 = @backingInt(self.opcode);
         if (self.fin) byte1 |= 0x80;
         try buffer.append(allocator, byte1);
 
@@ -303,7 +303,7 @@ pub const WebSocket = struct {
 
         if ((header[0] & 0x70) != 0) return error.RsvBitsSet;
         const fin = (header[0] & 0x80) != 0;
-        const opcode: OpCode = @enumFromInt(header[0] & 0x0F);
+        const opcode: OpCode = @fromBackingInt(@intCast(header[0] & 0x0F));
         const masked = (header[1] & 0x80) != 0;
         if (!masked) return error.MaskRequired;
         var payload_len: usize = header[1] & 0x7F;

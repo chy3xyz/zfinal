@@ -387,7 +387,7 @@ fn dispatch(request: *http.Server.Request, server: *Server, peer_addr: ?std.Io.n
     if (ctx.isExpired()) {
         getLog().warnFmt("Request already past deadline at dispatch: {s} {s}", .{ @tagName(request.head.method), target });
         http_error.render(&ctx, error.RequestTimeout) catch {};
-        if (server.metrics) |m| m.recordRequest(@intFromEnum(ctx.res_status));
+        if (server.metrics) |m| m.recordRequest(@backingInt(ctx.res_status));
         return;
     }
 
@@ -418,7 +418,7 @@ fn dispatch(request: *http.Server.Request, server: *Server, peer_addr: ?std.Io.n
     };
 
     if (server.metrics) |m| {
-        m.recordRequest(@intFromEnum(ctx.res_status));
+        m.recordRequest(@backingInt(ctx.res_status));
         m.recordRoute(path);
         const end_ms = std.Io.Timestamp.now(io_instance.io, .awake).toMilliseconds();
         const dur: u64 = @intCast(@max(end_ms - start_ms, 0));
@@ -427,7 +427,7 @@ fn dispatch(request: *http.Server.Request, server: *Server, peer_addr: ?std.Io.n
     }
 
     if (access_log) |*rl| {
-        rl.finish(@intFromEnum(ctx.res_status), ctx.response_bytes);
+        rl.finish(@backingInt(ctx.res_status), ctx.response_bytes);
     }
 }
 

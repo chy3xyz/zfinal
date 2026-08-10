@@ -166,7 +166,7 @@ const LiveHttp = struct {
             .extra_headers = headers_buf[0..n],
             .response_writer = &body_writer.writer,
         });
-        const status = @intFromEnum(result.status);
+        const status = @backingInt(result.status);
         if (status == 202 or status == 204) {
             return try self.allocator.dupe(u8, "");
         }

@@ -1217,7 +1217,7 @@ test "context: setAttr/setHeader overwrite frees previous value" {
 /// `error.BadRequestValue`.
 fn bindStruct(getter: anytype, ptr: anytype) !void {
     const PtrT = @TypeOf(ptr);
-    const Struct = @typeInfo(PtrT).@"pointer".child;
+    const Struct = @typeInfo(PtrT).pointer.child;
     const fields = @typeInfo(Struct).@"struct";
     inline for (fields.field_names, fields.field_types) |fname, FT| {
         const raw = getter.get(fname);
@@ -1369,7 +1369,7 @@ test "context: renderPage serializes and frees items" {
 /// (request-scoped arena) owns them until the arena is deinit'd. Parse failure
 /// → `error.BadRequest`.
 fn bindJsonInto(arena: *std.heap.ArenaAllocator, body: []const u8, ptr: anytype) !void {
-    const T = @typeInfo(@TypeOf(ptr)).@"pointer".child;
+    const T = @typeInfo(@TypeOf(ptr)).pointer.child;
     const parsed = std.json.parseFromSlice(T, arena.allocator(), body, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch {
         return error.BadRequest;
     };

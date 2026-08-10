@@ -135,7 +135,7 @@ fn benchRequest(allocator: std.mem.Allocator, host: []const u8, port: u16, path:
     }) catch {
         return .{ .status = 0, .error_msg = "fetch failed" };
     };
-    return .{ .status = @intFromEnum(result.status), .error_msg = null };
+    return .{ .status = @backingInt(result.status), .error_msg = null };
 }
 
 fn printBenchReport(allocator: std.mem.Allocator, results: []BenchResult, elapsed_s: f64) !void {

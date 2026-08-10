@@ -89,8 +89,8 @@ pub const Logger = struct {
     }
 
     fn shouldLog(self: *const Logger, level: LogLevel) bool {
-        return @intFromEnum(level) >= @intFromEnum(self.min_level) and
-            @intFromEnum(level) >= @intFromEnum(LOG_LEVEL);
+        return @backingInt(level) >= @backingInt(self.min_level) and
+            @backingInt(level) >= @backingInt(LOG_LEVEL);
     }
 
     fn writeOutput(self: *Logger, data: []const u8) void {

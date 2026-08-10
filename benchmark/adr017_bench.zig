@@ -174,7 +174,7 @@ fn parseFilter(comptime FT: type, r: []const u8) FT {
         .@"enum" => if (is_opt)
             @as(FT, std.meta.stringToEnum(T, r))
         else
-            @as(FT, std.meta.stringToEnum(T, r) orelse @enumFromInt(0)),
+            @as(FT, std.meta.stringToEnum(T, r) orelse @fromBackingInt(@intCast(0))),
         .pointer => if (is_opt) @as(FT, r) else @as(FT, r),
         else => @compileError("unsupported"),
     };
@@ -207,7 +207,7 @@ fn benchBindStruct() !void {
         }
     }
     const end = nowNs();
-    std.debug.print("bindStruct (5 fields, comptime loop)    {d:>8} ns/op  (1,000,000 iters)\n", .{ (end - start) / 1_000_000 });
+    std.debug.print("bindStruct (5 fields, comptime loop)    {d:>8} ns/op  (1,000,000 iters)\n", .{(end - start) / 1_000_000});
 }
 
 /// Pattern-level replica of `bindJsonInto` (arena JSON parse).
@@ -236,12 +236,12 @@ fn benchBindJson(allocator: std.mem.Allocator) !void {
         dto = parsed.value;
     }
     const end = nowNs();
-    std.debug.print("bindJsonInto (5-field JSON, arena)      {d:>8} ns/op  (100,000 iters)\n", .{ (end - start) / 100_000 });
+    std.debug.print("bindJsonInto (5-field JSON, arena)      {d:>8} ns/op  (100,000 iters)\n", .{(end - start) / 100_000});
 }
 
 fn benchValidateUnique(allocator: std.mem.Allocator, db: *DB) !void {
     {
-        const existing = try PostModel.findWhere(db, "status = ?", &.{ SqlParam{ .text = "nope" } }, allocator);
+        const existing = try PostModel.findWhere(db, "status = ?", &.{SqlParam{ .text = "nope" }}, allocator);
         defer {
             for (existing) |*it| it.deinit(allocator);
             allocator.free(existing);
@@ -252,7 +252,7 @@ fn benchValidateUnique(allocator: std.mem.Allocator, db: *DB) !void {
     var hits: usize = 0;
     while (it < ITERS) : (it += 1) {
         // @unique check: findWhere + deinit (0 rows matched → no per-row work)
-        const existing = try PostModel.findWhere(db, "status = ?", &.{ SqlParam{ .text = "nope" } }, allocator);
+        const existing = try PostModel.findWhere(db, "status = ?", &.{SqlParam{ .text = "nope" }}, allocator);
         defer {
             for (existing) |*row| row.deinit(allocator);
             allocator.free(existing);
@@ -278,7 +278,7 @@ fn benchToView() !void {
         sink = .{ .id = v0.data.id, .title = v0.data.title, .status = v0.data.status };
     }
     const end = nowNs();
-    std.debug.print("toView (3-field borrow copy)            {d:>8} ns/op  (1,000,000 iters)\n", .{ (end - start) / 1_000_000 });
+    std.debug.print("toView (3-field borrow copy)            {d:>8} ns/op  (1,000,000 iters)\n", .{(end - start) / 1_000_000});
 }
 
 pub fn main() !void {

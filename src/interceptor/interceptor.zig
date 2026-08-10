@@ -119,7 +119,7 @@ pub fn loggingBefore(ctx: *Context) !bool {
 }
 
 pub fn loggingAfter(ctx: *Context) !void {
-    const status = @intFromEnum(ctx.res_status);
+    const status = @backingInt(ctx.res_status);
     std.debug.print("Response: {d}\n", .{status});
 }
 

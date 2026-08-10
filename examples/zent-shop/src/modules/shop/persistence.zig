@@ -154,7 +154,7 @@ pub const ShopStore = struct {
             for (p.items.items, 0..) |e, i| {
                 out[i] = .{
                     .id = e.id,
-                    .seller_id = e.seller_id orelse 0,
+                    .seller_id = e.seller_id,
                     .name = try self.allocator.dupe(u8, e.name),
                     .price_cents = e.price_cents,
                     .stock = e.stock,
@@ -175,7 +175,7 @@ pub const ShopStore = struct {
         for (found.items, 0..) |p, i| {
             out[i] = .{
                 .id = p.id,
-                .seller_id = p.seller_id orelse 0,
+                .seller_id = p.seller_id,
                 .name = try self.allocator.dupe(u8, p.name),
                 .price_cents = p.price_cents,
                 .stock = p.stock,
@@ -244,8 +244,8 @@ pub const ShopStore = struct {
             for (p.items.items, 0..) |e, i| {
                 out[i] = .{
                     .id = e.id,
-                    .user_id = e.user_id orelse 0,
-                    .product_id = e.product_id orelse 0,
+                    .user_id = e.user_id,
+                    .product_id = e.product_id,
                     .qty = e.qty,
                 };
             }
@@ -264,8 +264,8 @@ pub const ShopStore = struct {
         for (found.items, 0..) |p, i| {
             out[i] = .{
                 .id = p.id,
-                .user_id = p.user_id orelse 0,
-                .product_id = p.product_id orelse 0,
+                .user_id = p.user_id,
+                .product_id = p.product_id,
                 .qty = p.qty,
             };
         }
@@ -362,8 +362,8 @@ pub const ShopStore = struct {
             for (p.items.items, 0..) |e, i| {
                 out[i] = .{
                     .id = e.id,
-                    .order_id = e.order_id orelse 0,
-                    .product_id = e.product_id orelse 0,
+                    .order_id = e.order_id,
+                    .product_id = e.product_id,
                     .qty = e.qty,
                     .price_cents = e.price_cents,
                 };
@@ -383,8 +383,8 @@ pub const ShopStore = struct {
         for (found.items, 0..) |p, i| {
             out[i] = .{
                 .id = p.id,
-                .order_id = p.order_id orelse 0,
-                .product_id = p.product_id orelse 0,
+                .order_id = p.order_id,
+                .product_id = p.product_id,
                 .qty = p.qty,
                 .price_cents = p.price_cents,
             };
@@ -429,7 +429,7 @@ pub const ShopStore = struct {
         var q = self.client.follow.Query();
         defer q.deinit();
         const preds = self.client.follow.predicates;
-        _ = try q.Where(.{preds.follower_idEQ(.{ .int = follower_id }), preds.followee_idEQ(.{ .int = followee_id })});
+        _ = try q.Where(.{ preds.follower_idEQ(.{ .int = follower_id }), preds.followee_idEQ(.{ .int = followee_id }) });
         var found = try q.All();
         defer {
             for (found.items) |*e| {
@@ -463,8 +463,8 @@ pub const ShopStore = struct {
             for (p.items.items, 0..) |e, i| {
                 out[i] = .{
                     .id = e.id,
-                    .follower_id = e.follower_id orelse 0,
-                    .followee_id = e.followee_id orelse 0,
+                    .follower_id = e.follower_id,
+                    .followee_id = e.followee_id,
                 };
             }
             return .{ .rows = out, .total = p.total };
@@ -482,8 +482,8 @@ pub const ShopStore = struct {
         for (found.items, 0..) |p, i| {
             out[i] = .{
                 .id = p.id,
-                .follower_id = p.follower_id orelse 0,
-                .followee_id = p.followee_id orelse 0,
+                .follower_id = p.follower_id,
+                .followee_id = p.followee_id,
             };
         }
         return .{ .rows = out, .total = total };
@@ -526,7 +526,7 @@ pub const ShopStore = struct {
         var q = self.client.like.Query();
         defer q.deinit();
         const preds = self.client.like.predicates;
-        _ = try q.Where(.{preds.user_idEQ(.{ .int = user_id }), preds.post_idEQ(.{ .int = post_id })});
+        _ = try q.Where(.{ preds.user_idEQ(.{ .int = user_id }), preds.post_idEQ(.{ .int = post_id }) });
         var found = try q.All();
         defer {
             for (found.items) |*e| {
@@ -560,8 +560,8 @@ pub const ShopStore = struct {
             for (p.items.items, 0..) |e, i| {
                 out[i] = .{
                     .id = e.id,
-                    .user_id = e.user_id orelse 0,
-                    .post_id = e.post_id orelse 0,
+                    .user_id = e.user_id,
+                    .post_id = e.post_id,
                 };
             }
             return .{ .rows = out, .total = p.total };
@@ -579,8 +579,8 @@ pub const ShopStore = struct {
         for (found.items, 0..) |p, i| {
             out[i] = .{
                 .id = p.id,
-                .user_id = p.user_id orelse 0,
-                .post_id = p.post_id orelse 0,
+                .user_id = p.user_id,
+                .post_id = p.post_id,
             };
         }
         return .{ .rows = out, .total = total };
@@ -640,7 +640,7 @@ pub const ShopStore = struct {
             for (p.items.items, 0..) |e, i| {
                 out[i] = .{
                     .id = e.id,
-                    .author_id = e.author_id orelse 0,
+                    .author_id = e.author_id,
                     .body = try self.allocator.dupe(u8, e.body),
                 };
             }
@@ -659,7 +659,7 @@ pub const ShopStore = struct {
         for (found.items, 0..) |p, i| {
             out[i] = .{
                 .id = p.id,
-                .author_id = p.author_id orelse 0,
+                .author_id = p.author_id,
                 .body = try self.allocator.dupe(u8, p.body),
             };
         }
@@ -726,8 +726,8 @@ pub const ShopStore = struct {
             for (p.items.items, 0..) |e, i| {
                 out[i] = .{
                     .id = e.id,
-                    .post_id = e.post_id orelse 0,
-                    .author_id = e.author_id orelse 0,
+                    .post_id = e.post_id,
+                    .author_id = e.author_id,
                     .body = try self.allocator.dupe(u8, e.body),
                 };
             }
@@ -746,8 +746,8 @@ pub const ShopStore = struct {
         for (found.items, 0..) |p, i| {
             out[i] = .{
                 .id = p.id,
-                .post_id = p.post_id orelse 0,
-                .author_id = p.author_id orelse 0,
+                .post_id = p.post_id,
+                .author_id = p.author_id,
                 .body = try self.allocator.dupe(u8, p.body),
             };
         }
@@ -779,7 +779,7 @@ pub const ShopStore = struct {
         const p = found.items[0];
         return .{
             .id = p.id,
-            .seller_id = p.seller_id orelse 0,
+            .seller_id = p.seller_id,
             .name = try self.allocator.dupe(u8, p.name),
             .price_cents = p.price_cents,
             .stock = p.stock,
@@ -855,7 +855,7 @@ pub const ShopStore = struct {
         // 2. verify stock + compute total (snapshot pricing)
         var total_cents: i64 = 0;
         for (cart.items) |c| {
-            const p = try self.getProductById(c.product_id orelse 0) orelse return error.ProductNotFound;
+            const p = try self.getProductById(c.product_id) orelse return error.ProductNotFound;
             defer self.freeProduct(p);
             if (p.stock < c.qty) return error.InsufficientStock;
             total_cents += p.price_cents * c.qty;
@@ -874,19 +874,19 @@ pub const ShopStore = struct {
 
         // 4. per item: decrement stock + snapshot OrderItem
         for (cart.items) |c| {
-            const p = try self.getProductById(c.product_id orelse 0) orelse return error.ProductNotFound;
+            const p = try self.getProductById(c.product_id) orelse return error.ProductNotFound;
             defer self.freeProduct(p);
 
             var ub = txc.client.product.Update();
             defer ub.deinit();
-            _ = try ub.Where(.{txc.client.product.predicates.idEQ(.{ .int = c.product_id orelse 0 })});
+            _ = try ub.Where(.{txc.client.product.predicates.idEQ(.{ .int = c.product_id })});
             _ = try ub.setExprArgs("stock", "stock - ?", &.{.{ .int = c.qty }});
             _ = try ub.Save();
 
             var iob = try txc.client.order_item.Create();
             defer iob.deinit();
             _ = try iob.setFieldValue("order_id", order_id);
-            _ = try iob.setFieldValue("product_id", c.product_id orelse 0);
+            _ = try iob.setFieldValue("product_id", c.product_id);
             _ = try iob.setFieldValue("qty", c.qty);
             _ = try iob.setFieldValue("price_cents", p.price_cents);
             var oi_ent = try iob.Save();
@@ -934,7 +934,7 @@ pub const ShopStore = struct {
         var followee_count: usize = 0;
         for (follows.items) |f| {
             if (followee_count >= followee_ids.len) break;
-            followee_ids[followee_count] = f.followee_id orelse 0;
+            followee_ids[followee_count] = f.followee_id;
             followee_count += 1;
         }
 
@@ -967,14 +967,14 @@ pub const ShopStore = struct {
         for (posts.items[0..m], 0..) |p, i| {
             var handle: []const u8 = "?";
             for (authors.items) |a| {
-                if (a.id == (p.author_id orelse 0)) {
+                if (a.id == (p.author_id)) {
                     handle = a.handle;
                     break;
                 }
             }
             out[i] = .{
                 .post_id = p.id,
-                .author_id = p.author_id orelse 0,
+                .author_id = p.author_id,
                 .author_handle = try alloc.dupe(u8, handle),
                 .body = try alloc.dupe(u8, p.body),
             };
@@ -1016,7 +1016,7 @@ pub const ShopStore = struct {
         var followee_count: usize = 0;
         for (follows.items) |f| {
             if (followee_count >= followee_ids.len) break;
-            followee_ids[followee_count] = f.followee_id orelse 0;
+            followee_ids[followee_count] = f.followee_id;
             followee_count += 1;
         }
 
@@ -1033,7 +1033,7 @@ pub const ShopStore = struct {
                 hops.deinit();
             }
             for (hops.items) |h| {
-                const cid = h.followee_id orelse 0;
+                const cid = h.followee_id;
                 if (cid == user_id) continue;
                 var already = false;
                 for (followee_ids[0..followee_count]) |f2| {
@@ -1110,7 +1110,7 @@ pub const ShopStore = struct {
         for (found.items, 0..) |o, i| {
             out[i] = .{
                 .id = o.id,
-                .buyer_id = o.buyer_id orelse 0,
+                .buyer_id = o.buyer_id,
                 .status = try self.allocator.dupe(u8, o.status),
                 .total_cents = o.total_cents,
             };
@@ -1136,7 +1136,8 @@ pub const ShopStore = struct {
     }
     // ── end ai-edit-zone ──────────────────────────────────────────
 
-    comptime {        _ = UserInfo;
+    comptime {
+        _ = UserInfo;
         _ = OrderInfo;
     }
 };

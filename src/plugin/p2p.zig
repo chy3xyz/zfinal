@@ -194,7 +194,7 @@ pub const P2pPlugin = struct {
         errdefer buf.deinit(allocator);
         try buf.appendSlice(allocator, magic);
         try buf.append(allocator, version);
-        try buf.append(allocator, @intFromEnum(typ));
+        try buf.append(allocator, @backingInt(typ));
         var len_be: [4]u8 = undefined;
         std.mem.writeInt(u32, &len_be, @intCast(payload.len), .big);
         try buf.appendSlice(allocator, &len_be);
@@ -217,7 +217,7 @@ pub const P2pPlugin = struct {
         if (data.len < 10) return error.NeedMoreData;
         if (!std.mem.eql(u8, data[0..4], magic)) return error.BadMagic;
         if (data[4] != version) return error.BadVersion;
-        const typ: FrameType = @enumFromInt(data[5]);
+        const typ: FrameType = @fromBackingInt(@intCast(data[5]));
         const len = std.mem.readInt(u32, data[6..10], .big);
         if (len > max_len) return error.FrameTooLarge;
         if (data.len < 10 + len) return error.NeedMoreData;
@@ -230,7 +230,7 @@ pub const P2pPlugin = struct {
         errdefer self.allocator.free(out);
         var mac: [hmac_len]u8 = undefined;
         var h = HmacSha256.init(key);
-        const typ_b = [_]u8{@intFromEnum(typ)};
+        const typ_b = [_]u8{@backingInt(typ)};
         h.update(&typ_b);
         h.update(plain);
         h.final(&mac);
@@ -244,7 +244,7 @@ pub const P2pPlugin = struct {
         if (sealed.len < hmac_len) return error.BadHmac;
         var expected: [hmac_len]u8 = undefined;
         var h = HmacSha256.init(key);
-        const typ_b = [_]u8{@intFromEnum(typ)};
+        const typ_b = [_]u8{@backingInt(typ)};
         h.update(&typ_b);
         h.update(sealed[hmac_len..]);
         h.final(&expected);

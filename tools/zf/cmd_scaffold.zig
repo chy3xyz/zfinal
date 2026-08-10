@@ -911,8 +911,8 @@ pub fn handleAi(allocator: std.mem.Allocator, prompt: []const u8, provider: []co
         return;
     };
 
-    std.debug.print("HTTP {d} ", .{@intFromEnum(fetch_result.status)});
-    if (@intFromEnum(fetch_result.status) >= 200 and @intFromEnum(fetch_result.status) < 300) {
+    std.debug.print("HTTP {d} ", .{@backingInt(fetch_result.status)});
+    if (@backingInt(fetch_result.status) >= 200 and @backingInt(fetch_result.status) < 300) {
         std.debug.print("✓\n\n", .{});
     } else {
         std.debug.print("✗ (error)\n", .{});

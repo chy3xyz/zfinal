@@ -119,8 +119,8 @@ fn fetchCatalog(allocator: std.mem.Allocator, url: []const u8, body: *std.ArrayL
         std.debug.print("   (network error: {t})\n", .{err});
         return error.FetchFailed;
     };
-    if (@intFromEnum(result.status) < 200 or @intFromEnum(result.status) >= 300) {
-        std.debug.print("   (HTTP {d})\n", .{@intFromEnum(result.status)});
+    if (@backingInt(result.status) < 200 or @backingInt(result.status) >= 300) {
+        std.debug.print("   (HTTP {d})\n", .{@backingInt(result.status)});
         return error.FetchFailed;
     }
     try body.appendSlice(allocator, response_writer.buffer[0..response_writer.end]);

@@ -155,8 +155,7 @@ test "cachePath: HOME fallback" {
 }
 
 test "findEntry: matches by id" {
-    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator,
-        "{\"modules\":[{\"id\":\"example/hello-world\",\"url\":\"https://x/t.tgz\"}]}", .{});
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, "{\"modules\":[{\"id\":\"example/hello-world\",\"url\":\"https://x/t.tgz\"}]}", .{});
     defer parsed.deinit();
     const e = findEntry(&parsed.value, "example/hello-world").?;
     try std.testing.expectEqualStrings("https://x/t.tgz", entryUrl(e).?);
@@ -164,8 +163,7 @@ test "findEntry: matches by id" {
 }
 
 test "matchQuery: case-insensitive across id/name/summary/tags" {
-    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator,
-        "{\"modules\":[{\"id\":\"example/zent-shop\",\"name\":\"Zent Shop\",\"summary\":\"e-commerce\",\"tags\":[\"zent\"]}]}", .{});
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, "{\"modules\":[{\"id\":\"example/zent-shop\",\"name\":\"Zent Shop\",\"summary\":\"e-commerce\",\"tags\":[\"zent\"]}]}", .{});
     defer parsed.deinit();
     const item = parsed.value.object.get("modules").?.array.items[0];
     try std.testing.expect(matchQuery(item, "ZENT"));

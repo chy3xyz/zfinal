@@ -8,7 +8,7 @@
 
 [![Zig](https://img.shields.io/badge/Zig-0.17.0-orange.svg)](https://ziglang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v0.23.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.23.2-blue.svg)](CHANGELOG.md)
 [![Tests](https://img.shields.io/badge/tests-369%20passed%20%C2%B7%2017%20skipped%20%C2%B7%200%20failed-brightgreen.svg)]()
 [![Drivers](https://img.shields.io/badge/drivers-SQLite%20%C2%B7%20PostgreSQL%20%C2%B7%20MySQL-blue.svg)]()
 [![Production](https://img.shields.io/badge/production--score-9.8%2F10%20(contractual)%20%C2%B7%20~9.2%20honest-brightgreen.svg)](PRODUCTION_AUDIT.md)
@@ -108,7 +108,7 @@ zig build run-standalone-admin   # Single-binary admin (all HTML @embedFile'd)
 ### Add ZFinal to your project
 
 ```bash
-zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.23.1.tar.gz
+zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.23.2.tar.gz
 ```
 
 In your `build.zig.zon`:
@@ -116,7 +116,7 @@ In your `build.zig.zon`:
 ```zon
 .dependencies = .{
     .zfinal = .{
-        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.23.1.tar.gz",
+        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.23.2.tar.gz",
         .hash = "...",  // auto-filled by `zig fetch`
     },
 },
@@ -673,6 +673,6 @@ MIT — see [LICENSE](LICENSE) for details.
 
 Made with ❤️ by the ZFinal Team
 
-**ZFinal v0.23.1** — Zig 的 AI 极速开发框架
+**ZFinal v0.23.2** — Zig 的 AI 极速开发框架
 
 </div>

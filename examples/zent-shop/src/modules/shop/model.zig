@@ -19,6 +19,7 @@ pub const User = Schema("User", .{
 
 pub const Product = Schema("Product", .{
     .fields = &.{
+        field.Int("seller_id"),
         field.String("name").NotEmpty(),
         field.Int("price_cents").Positive(),
         field.Int("stock").Default("0").Positive(),
@@ -30,6 +31,8 @@ pub const Product = Schema("Product", .{
 
 pub const CartItem = Schema("CartItem", .{
     .fields = &.{
+        field.Int("user_id"),
+        field.Int("product_id"),
         field.Int("qty").Default("1").Positive(),
     },
     .edges = &.{
@@ -40,7 +43,8 @@ pub const CartItem = Schema("CartItem", .{
 
 pub const Order = Schema("Order", .{
     .fields = &.{
-        field.Enum("status", &.{"pending", "paid", "canceled"}).Default("pending"),
+        field.Int("buyer_id"),
+        field.Enum("status", &.{ "pending", "paid", "canceled" }).Default("pending"),
         field.Int("total_cents").Default("0").Positive(),
     },
     .edges = &.{
@@ -51,6 +55,8 @@ pub const Order = Schema("Order", .{
 
 pub const OrderItem = Schema("OrderItem", .{
     .fields = &.{
+        field.Int("order_id"),
+        field.Int("product_id"),
         field.Int("qty").Positive(),
         field.Int("price_cents").Positive(),
     },
@@ -62,9 +68,11 @@ pub const OrderItem = Schema("OrderItem", .{
 
 pub const Follow = Schema("Follow", .{
     .fields = &.{
+        field.Int("follower_id"),
+        field.Int("followee_id"),
     },
     .indexes = &.{
-        zent.core.index.Fields(&.{"follower_id", "followee_id"}).Unique(),
+        zent.core.index.Fields(&.{ "follower_id", "followee_id" }).Unique(),
     },
     .edges = &.{
         zent.core.edge.From("follower", User).Field("follower_id"),
@@ -74,9 +82,11 @@ pub const Follow = Schema("Follow", .{
 
 pub const Like = Schema("Like", .{
     .fields = &.{
+        field.Int("user_id"),
+        field.Int("post_id"),
     },
     .indexes = &.{
-        zent.core.index.Fields(&.{"user_id", "post_id"}).Unique(),
+        zent.core.index.Fields(&.{ "user_id", "post_id" }).Unique(),
     },
     .edges = &.{
         zent.core.edge.From("user", User).Field("user_id"),
@@ -86,6 +96,7 @@ pub const Like = Schema("Like", .{
 
 pub const Post = Schema("Post", .{
     .fields = &.{
+        field.Int("author_id"),
         field.Text("body").NotEmpty(),
     },
     .edges = &.{
@@ -95,6 +106,8 @@ pub const Post = Schema("Post", .{
 
 pub const Comment = Schema("Comment", .{
     .fields = &.{
+        field.Int("post_id"),
+        field.Int("author_id"),
         field.Text("body").NotEmpty(),
     },
     .edges = &.{

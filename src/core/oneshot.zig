@@ -76,7 +76,7 @@ pub fn captureWith(
     try router.execute(path, method, &ctx);
 
     return .{
-        .status = @intFromEnum(cap.status),
+        .status = @backingInt(cap.status),
         .body = try cap.body.toOwnedSlice(allocator),
         .allocator = allocator,
     };
@@ -186,7 +186,7 @@ pub fn fetch(
     });
 
     return .{
-        .status = @intFromEnum(result.status),
+        .status = @backingInt(result.status),
         .body = try response_body.toOwnedSlice(),
         .allocator = allocator,
     };

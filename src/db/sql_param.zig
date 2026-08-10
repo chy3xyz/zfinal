@@ -75,7 +75,7 @@ pub const ParamQuery = struct {
     /// untrusted input. Always prefer native parameter binding (execParams).
     /// Only compiles in Debug mode.
     pub fn toSql(self: *ParamQuery) ![:0]const u8 {
-        if (@import("builtin").mode != .Debug) @compileError("toSql() is only available in Debug mode. Use native parameter binding in production.");
+        if (@import("builtin").mode != .debug) @compileError("toSql() is only available in Debug mode. Use native parameter binding in production.");
         var result = std.ArrayList(u8).empty;
         defer result.deinit(self.allocator);
 

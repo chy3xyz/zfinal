@@ -18,13 +18,13 @@ pub const TodoModel = zfinal.ModelWithPK(Todo, "todo", "id");
 pub const jsonNaming: zfinal.JsonNaming = .snake_case;
 
 pub const fieldMap = [_]struct { db: []const u8, json: []const u8 }{
-        .{ .db = "id", .json = "id" },
-        .{ .db = "owner_id", .json = "owner_id" },
-        .{ .db = "org_id", .json = "org_id" },
-        .{ .db = "title", .json = "title" },
-        .{ .db = "message", .json = "message" },
-        .{ .db = "updated_at", .json = "updated_at" },
-        .{ .db = "created_at", .json = "created_at" },
+    .{ .db = "id", .json = "id" },
+    .{ .db = "owner_id", .json = "owner_id" },
+    .{ .db = "org_id", .json = "org_id" },
+    .{ .db = "title", .json = "title" },
+    .{ .db = "message", .json = "message" },
+    .{ .db = "updated_at", .json = "updated_at" },
+    .{ .db = "created_at", .json = "created_at" },
 };
 
 pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
@@ -34,13 +34,13 @@ pub fn jsonFieldName(comptime db_name: []const u8) []const u8 {
 
 /// Fields safe to expose in API responses (sensitive columns excluded).
 pub const safeFields = [_][]const u8{
-        "id",
-        "owner_id",
-        "org_id",
-        "title",
-        "message",
-        "updated_at",
-        "created_at",
+    "id",
+    "owner_id",
+    "org_id",
+    "title",
+    "message",
+    "updated_at",
+    "created_at",
 };
 
 /// Validate Todo data before insert/update.

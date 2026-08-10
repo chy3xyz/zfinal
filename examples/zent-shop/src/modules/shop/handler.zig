@@ -645,7 +645,6 @@ pub fn listComment(ctx: *zfinal.Context) !void {
     try ctx.renderJson(.{ .ok = true, .comments = pageresult.rows, .meta = .{ .total = pageresult.total, .page = page, .size = size } });
 }
 
-
 // ── ai-edit-zone: extra handlers ─────────────────────────
 /// POST /api/v1/orders/checkout?user_id= — transactional cart→order.
 pub fn checkout(ctx: *zfinal.Context) !void {

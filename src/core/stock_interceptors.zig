@@ -77,7 +77,7 @@ pub fn createTraceInterceptor() Interceptor {
                 getLog().infoFmt("{s} {s} status={d} request_id={s}", .{
                     method,
                     path,
-                    @intFromEnum(ctx.res_status),
+                    @backingInt(ctx.res_status),
                     rid,
                 });
             }

@@ -71,7 +71,7 @@ pub fn createAccessLogInterceptor() zfinal.Interceptor {
         fn after(ctx: *zfinal.Context, _: ?*anyopaque) !void {
             const method = @tagName(ctx.req.head.method);
             const path = ctx.req.head.target;
-            const status = @intFromEnum(ctx.res_status);
+            const status = @backingInt(ctx.res_status);
             const user_agent = ctx.getHeader("User-Agent") orelse "Unknown";
             var ip_buf: [64]u8 = undefined;
             // Secure default: do not trust spoofable proxy headers in access logs.

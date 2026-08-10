@@ -1,3 +1,11 @@
+## [0.23.2] - 2026-08-07
+
+### Changed
+- **zent upgraded `v0.29.3` → `v0.29.4`** (root + `examples/zent-shop` pins). v0.29.4 **fixes our upstream issue #2**: `addEdgeFields` now dedups declared FK columns and honors `edge.field_name` — explicit FK + From edge no longer duplicates columns (graph regression test `38523e6`).
+- **`zf crud:zent` isRefFk workaround reversed**: explicit FK columns are emitted in `model.zig` again (were skipped to dodge the upstream bug); generated Row fields are non-optional (`orelse 0` removed); the `isRefFk()` helper is gone. zent-shop regenerated + hand-written zones cleaned (11× `orelse 0`).
+- **Zig `0.17.0-dev.1422` → `0.17.0-dev.1567` compat**: `builtin.mode != .Debug` → `.debug` (`src/db/sql_param.zig`, Optimize value members are lowercase).
+- **Repo-wide `zig fmt`**: cleared pre-existing format debt (zfsaas/benchmark/plugin files) so `gate-quick` fmt check passes.
+
 ## [0.23.1] - 2026-08-07
 
 ### Changed

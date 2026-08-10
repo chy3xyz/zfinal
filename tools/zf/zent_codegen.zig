@@ -164,16 +164,8 @@ pub const Schema = struct {
     }
 };
 
-/// True when the field is a FK column declared via a `ref:` edge (zent
-/// auto-adds it from the From edge, so model.zig must not emit it twice).
-fn isRefFk(ent: Entity, f: Field) bool {
-    for (ent.refs.items) |r| {
-        if (std.mem.eql(u8, r.field, f.name)) return true;
-    }
-    return false;
-}
-
-pub fn pascalize(allocator: std.mem.Allocator, snake: []const u8) ![]u8 {    var out: std.ArrayList(u8) = .empty;
+pub fn pascalize(allocator: std.mem.Allocator, snake: []const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
     var cap = true;
     for (snake) |c| {
@@ -548,9 +540,6 @@ pub fn generateModel(allocator: std.mem.Allocator, schema: *const Schema) ![]u8 
         try w.print("\npub const {s} = Schema(\"{s}\", .{{\n", .{ ent.name, ent.name });
         try w.writeAll("    .fields = &.{\n");
         for (ent.fields.items) |f| {
-            // FK columns declared via `ref:` are auto-added by zent's
-            // addEdgeFields from the From edge — do not emit them twice.
-            if (isRefFk(ent, f)) continue;
             if (f.typ == .enum_) {
                 try w.print("        field.Enum(\"{s}\", &.{{", .{f.name});
                 for (f.enum_values, 0..) |v, vi| {
@@ -637,7 +626,8 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
         \\const model = @import("model.zig");
         \\
         \\const graph = zent.codegen.graph.buildGraph(&.{ 
-    );    for (schema.entities.items, 0..) |ent, i| {
+    );
+    for (schema.entities.items, 0..) |ent, i| {
         if (i > 0) try w.writeAll(", ");
         try w.print("model.{s}", .{ent.name});
     }
@@ -811,8 +801,6 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
             for (ent.fields.items) |f| {
                 if (f.typ.isOwnedSlice()) {
                     try w.print("                    .{s} = try self.allocator.dupe(u8, e.{s}),\n", .{ f.name, f.name });
-                } else if (isRefFk(ent, f)) {
-                    try w.print("                    .{s} = e.{s} orelse 0,\n", .{ f.name, f.name });
                 } else {
                     try w.print("                    .{s} = e.{s},\n", .{ f.name, f.name });
                 }
@@ -830,8 +818,6 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
             for (ent.fields.items) |f| {
                 if (f.typ.isOwnedSlice()) {
                     try w.print("                .{s} = try self.allocator.dupe(u8, p.{s}),\n", .{ f.name, f.name });
-                } else if (isRefFk(ent, f)) {
-                    try w.print("                .{s} = p.{s} orelse 0,\n", .{ f.name, f.name });
                 } else {
                     try w.print("                .{s} = p.{s},\n", .{ f.name, f.name });
                 }
@@ -923,7 +909,8 @@ pub fn generateService(allocator: std.mem.Allocator, schema: *const Schema) ![]u
         try w.print("        return try self.store.create{s}(", .{ent.name});
         for (ent.fields.items, 0..) |f, i| {
             if (i > 0) try w.writeAll(", ");
-            try w.writeAll(f.name);        }
+            try w.writeAll(f.name);
+        }
         try w.writeAll(");\n    }\n\n");
 
         // update + delete (no ai-edit-zone: keeps merge order stable when new
