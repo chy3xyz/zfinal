@@ -247,6 +247,17 @@ pub const RedisClient = struct {
         if (result) |r| self.allocator.free(r);
     }
 
+    /// INCR key — atomically increment and return the new value.
+    /// (Atomically with EXPIRE-on-first-hit forms a fixed-window counter.)
+    pub fn incr(self: *Self, key: []const u8) !i64 {
+        const result = try self.command(&.{ "INCR", key });
+        if (result) |r| {
+            defer self.allocator.free(r);
+            return std.fmt.parseInt(i64, r, 10) catch error.InvalidResponse;
+        }
+        return error.InvalidResponse;
+    }
+
     /// FLUSHDB — clear current database.
     pub fn flushDb(self: *Self) !void {
         const result = try self.command(&.{"FLUSHDB"});

@@ -60,3 +60,38 @@ Live soak: set `NATS_URL` / `KAFKA_BOOTSTRAP` / `ROBUSTMQ_URL` (CI job
 - [nats.md](nats.md) — `QueueNatsClient`
 - [robustmq.md](robustmq.md) — `QueueRobustMQClient` / `KafkaConsumer`
 - [scale_to_millions.md](scale_to_millions.md) — topology
+
+## WebSocket 多实例 fanout（`WsFanout`）
+
+单实例广播用 `WebSocketManager.broadcast`；跨实例 fanout = 生产侧用
+跨进程 pub/sub（Redis `PUBLISH`/NATS/RobustMQ）投递，**每个实例**用
+`WsFanout` 订阅并把消息转发到本地 WS 连接：
+
+```zig
+// 生产侧（任意实例）：Redis 发布
+try redis_client.publish("ws:events", payload);          // 或 NATS/RobustMQ publish
+
+// 每个实例：订阅 → 本地广播
+var qc = zfinal.QueueClient.init(allocator);
+const mb = try qc.subscribe("ws:events");
+_ = try zfinal.WsFanout.startBroadcast(allocator, &ws_manager, mb, "ws:events");
+// 收到消息 → ws_manager.broadcast(payload)（本实例所有连接）
+```
+
+- 内存 `QueueClient` 用于单进程 fanout/测试；跨进程后端用
+  `QueueNatsClient`/`QueueRobustMQClient`（或 Redis `SUBSCRIBE`，收消息桥见
+  `RedisClient`）。
+- `WsFanout.start(..., on_message, ctx)` 回调式变体可接任意 sink（不限于 WS）。
+
+## 分布式限流（`RedisRateLimiter`）
+
+`RateLimitHandler` 是单实例内存计数；多实例精确限流用 Redis 原子窗口：
+
+```zig
+var rl = zfinal.RedisRateLimiter.init(&redis_client, "zfinal:rl:");
+// INCR + 首次 EXPIRE；超 max 在 window 秒内 → false
+if (!try rl.allow(user_id, 100, 60)) return error.TooManyRequests;
+```
+
+**fail-closed**：Redis 不可用（`NotConnected` 等）→ `allow` 返回错误（**不会静默放行**），
+由调用方显式决定降级策略（拒绝 / 回退内存 / 熔断）。

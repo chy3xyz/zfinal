@@ -1,3 +1,9 @@
+## [0.24.0] - 2026-08-07
+
+### Added
+- **`WsFanout`** (`zfinal.WsFanout`): bridges a Queue mailbox (in-process `QueueClient`, or Redis/NATS/RobustMQ on the producing side) into a WebSocket sink via `startBroadcast(manager, mailbox, topic)` — the missing multi-instance WS fanout layer; single-instance `WebSocketManager.broadcast` already existed. Callback-style `start(...)` + test.
+- **`RedisRateLimiter`** (`zfinal.RedisRateLimiter`): Redis `INCR` + `EXPIRE`-on-first-hit fixed-window distributed limiter (`allow(key, max, window)`), **fail-closed** (Redis errors propagate, never silently allow) — fills the "no distributed rate limit" gap the in-memory `RateLimitHandler` left. `RedisClient.incr` added. Tests: fail-closed on `NotConnected`, `max=0` denies.
+
 ## [0.23.2] - 2026-08-07
 
 ### Changed
