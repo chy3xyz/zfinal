@@ -16,7 +16,7 @@ can invoke generators in-process. Current release: **v0.20.15** (Zig `0.17.0-dev
 | `zf routes` + `actions.zig` | One routing source of truth (v0.20.9+) |
 | `zfinal.ZfTool` | In-process generator, no shell required |
 | `zf check` / `--heal` / `--prod` | Boundary + HttpError + production contract + L3 heuristics |
-| `zig build test` | **379 passed; 17 skipped; 0 failed** (baseline; live env adds more) |
+| `zig build test` | **416 passed; 16 skipped; 0 failed** (baseline; live env adds more) |
 
 ## The 5-minute AI speedrun
 

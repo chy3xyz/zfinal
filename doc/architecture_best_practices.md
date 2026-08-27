@@ -186,7 +186,7 @@ ADR：[003-experimental-plugins.md](../.life/decisions/003-experimental-plugins.
 
 ```bash
 zig build
-zig build test          # 期望：369 passed; 17 skipped; 0 failed
+zig build test          # 期望：416 passed; 16 skipped; 0 failed
 zig build test-zf
 zig fmt --check src/ test/ tools/ examples/ benchmark/ build.zig
 zf check                # 应用仓库

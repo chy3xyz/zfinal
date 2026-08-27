@@ -86,7 +86,7 @@ fn index(ctx: *zfinal.Context) !void {
 git clone https://github.com/chy3xyz/zfinal.git
 cd zfinal
 zig build                  # 构建框架 + 所有示例
-zig build test             # 基线：369 passed; 17 skipped; 0 failed
+zig build test             # 基线：416 passed; 16 skipped; 0 failed
 zig build test-zf          # codegen 回归（zig build test-zf）
 ```
 
@@ -203,7 +203,7 @@ pub fn isUsernameTaken(db: *zfinal.DB, username: []const u8) !bool {
 
 ```bash
 zf check           # AI 边界审计
-zig build test     # 369 passed; 17 skipped; 0 failed
+zig build test     # 416 passed; 16 skipped; 0 failed
 ```
 
 ### 第 5 步 — 跑

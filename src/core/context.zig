@@ -2,6 +2,7 @@ const std = @import("std");
 const params = @import("params.zig");
 const Page = @import("../db/pagination.zig").Page;
 const JsonKit = @import("../kit/json_kit.zig").JsonKit;
+const getLog = @import("logger.zig").getLogger;
 
 /// Monotonic nanosecond timestamp. Zig 0.17 removed
 /// `std.time.Instant.now()` / `nanoTimestamp()` in favor of
@@ -19,6 +20,33 @@ fn monoNowNs() i128 {
 /// headers, attributes, file uploads, and response rendering.
 ///
 /// Created per-request by Server. Call `deinit()` after use.
+///
+/// ## 生命周期阶段契约（B1）
+///
+/// Zig's `std.http.Server` invalidates its header buffer once the request
+/// body is read — after that, `req.iterateHeaders()` **panics**. The phases
+/// below define which `Context` APIs are legal where:
+///
+/// ```text
+/// ┌─ P0 accept      Server accepts the TCP connection (peer addr snapshot).
+/// ├─ P1 head        receiveHead() → cacheHeaders() snapshots all request
+/// │                 headers into `header_map`. From here on, `getHeader()`
+/// │                 is ALWAYS SAFE (reads the dup'd cache), including after
+/// │                 the body has been consumed.
+/// ├─ P2 body        `getBodyText` / `bindJson` / `parseJson` / `getFiles`
+/// │                 consume the body exactly ONCE. In Debug builds a second
+/// │                 body read trips `@panic("Context body already consumed…")`
+/// │                 instead of silently returning an empty body.
+/// ├─ P3 render      `renderJson` / `renderText` / `respond`… — response
+/// │                 starts at most once (`response_started` guards doubles).
+/// └─ P4 teardown    `deinit()` frees everything the Context owns. Handler
+///                   must free what IT allocated via `ctx.allocator`.
+/// ```
+///
+/// Rules of thumb: **headers any time** (cache-backed), **body once**,
+/// **response once**, **no body read after render started**. Interceptors run
+/// in P1/P2 too — a body-reading interceptor consumes the budget for the
+/// handler (read it once and pass the bytes along via `attributes`/ext).
 ///
 /// All per-request allocations go through `allocator` (parent allocator —
 /// Arena was removed for Zig 0.17 threaded-IO safety). Handlers MUST free
@@ -55,6 +83,9 @@ pub const Context = struct {
     err_detail: ?[]const u8 = null,
     /// True after a successful `respond` / streaming start (prevents double-render).
     response_started: bool = false,
+    /// True once the request body was read (P2 entered). Guarded in Debug to
+    /// catch double consumption — see the phase contract above.
+    body_consumed: bool = false,
     /// Client disconnected / write failed during streaming — stop writing.
     client_gone: bool = false,
     /// When set, `renderJson`/`renderText`/`renderHtml` write here instead of `req.respond` (in-process tests).
@@ -365,8 +396,7 @@ pub const Context = struct {
         const g = Getter{ .ctx = self };
         bindStruct(g, ptr) catch |err| {
             if (err == error.BadRequestValue) {
-                self.res_status = .bad_request;
-                try self.renderJson(.{ .err = "invalid query parameter value" });
+                self.err_detail = "invalid query parameter value";
                 return error.BadRequest;
             }
             return err;
@@ -861,8 +891,19 @@ pub const Context = struct {
 
     // === JSON Body ===
 
-    /// Read request body as raw text.
+    /// Read request body as raw text. Consumes the body exactly once — a
+    /// second call panics in Debug builds (phase contract P2) instead of
+    /// silently returning an empty slice.
     pub fn getBodyText(self: *Context) ![]const u8 {
+        if (@import("builtin").mode == .debug and self.body_consumed and self.mock_body == null) {
+            @panic("Context body already consumed: getBodyText/bindJson/parseJson/getFiles may only read the request body once per request (see Context phase contract)");
+        }
+        self.body_consumed = true;
+        if (self.response_started) {
+            // Reading the body after the response started corrupts framing.
+            getLog().warnFmt("getBodyText called after response started — returning empty", .{});
+            return try self.allocator.dupe(u8, "");
+        }
         if (self.mock_body) |b| return try self.allocator.dupe(u8, b);
         var read_buf: [4096]u8 = undefined;
         var reader = self.req.readerExpectNone(&read_buf);
@@ -884,8 +925,7 @@ pub const Context = struct {
     /// `error.BadRequest`.
     pub fn bindJson(self: *Context, ptr: anytype) !void {
         const body = self.getBodyText() catch {
-            self.res_status = .bad_request;
-            try self.renderJson(.{ .err = "cannot read request body" });
+            self.err_detail = "cannot read request body";
             return error.BadRequest;
         };
         defer self.allocator.free(body);
@@ -895,8 +935,7 @@ pub const Context = struct {
         const arena = &self.arena.?;
         bindJsonInto(arena, body, ptr) catch |err| {
             if (err == error.BadRequest) {
-                self.res_status = .bad_request;
-                try self.renderJson(.{ .err = "invalid JSON body" });
+                self.err_detail = "invalid JSON body";
                 return error.BadRequest;
             }
             return err;

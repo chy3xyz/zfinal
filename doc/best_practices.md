@@ -2,7 +2,7 @@
 
 > **版本**：v0.20.15 · Zig `0.17.0-dev.1422+e863bf3be` · 修订 **2026-08-02**  
 > **受众**：应用开发者、框架贡献者、AI agent  
-> **验证基线**：`zig build gate`（或 `zig build test` → **390 passed; 17 skipped**）· `zig build test-zf`
+> **验证基线**：`zig build gate`（或 `zig build test` → **416 passed; 16 skipped**）· `zig build test-zf`
 
 本文是**最佳实践文档的入口**：按任务选文档，按版本看能力何时可用。细节仍在各专题文中。
 

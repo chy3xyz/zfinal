@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const io_instance = @import("../io_instance.zig");
 
 /// Compile-time log level floor. Build with `zig build -Dlog-level=debug`.

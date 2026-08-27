@@ -17,17 +17,37 @@ pub const SQLiteDB = struct {
     pub fn open(allocator: std.mem.Allocator, config: DBConfig) !SQLiteDB {
         var db: ?*c.sqlite3 = null;
 
-        // Convert to null-terminated string
+        // In-memory databases are per-connection by default: a pool of N
+        // `:memory:` conns would give each its own empty DB. Shared-cache
+        // memory mode (+ FULLMUTEX, set below) makes every pool connection
+        // see the same in-memory database.
+        const is_memory = std.mem.eql(u8, config.database, ":memory:") or
+            std.mem.startsWith(u8, config.database, "file::memory:");
+
         var path_buf: [512]u8 = undefined;
-        const path = try std.fmt.bufPrint(&path_buf, "{s}", .{config.database});
+        const path = if (is_memory)
+            try std.fmt.bufPrint(&path_buf, "file::memory:?cache=shared", .{})
+        else
+            try std.fmt.bufPrint(&path_buf, "{s}", .{config.database});
         path_buf[path.len] = 0;
         const path_z: [:0]const u8 = path_buf[0..path.len :0];
 
-        const rc = c.sqlite3_open(path_z.ptr, &db);
+        const rc = c.sqlite3_open_v2(path_z.ptr, &db, c.SQLITE_OPEN_READWRITE | c.SQLITE_OPEN_CREATE | c.SQLITE_OPEN_FULLMUTEX | c.SQLITE_OPEN_URI, null);
         if (rc != c.SQLITE_OK) {
             std.debug.print("SQLite open failed. rc={d} err={s} path={s}\n", .{ rc, c.sqlite3_errmsg(db), path_z.ptr });
             if (db) |d| _ = c.sqlite3_close(d);
             return error.DatabaseOpenFailed;
+        }
+
+        // Concurrent writers (pool with N conns → one shared file or shared
+        // memory cache) need a busy timeout instead of failing instantly with
+        // SQLITE_LOCKED/SQLITE_BUSY. 5s default; matches typical lock hold
+        // times of transactional request handlers.
+        if (db != null) {
+            _ = c.sqlite3_busy_timeout(db, 5000);
+            // WAL lets file-backed pool readers/writers on separate
+            // connections overlap instead of serializing. No-op for :memory:.
+            _ = c.sqlite3_exec(db, "PRAGMA journal_mode=WAL", null, null, null);
         }
 
         return SQLiteDB{

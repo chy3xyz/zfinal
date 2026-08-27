@@ -75,3 +75,6 @@ generated/
 
 # Cursor IDE config (local only)
 .cursor/
+
+# Agent tooling (local only)
+.reasonix/

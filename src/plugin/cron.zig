@@ -1,5 +1,4 @@
 const std = @import("std");
-const Plugin = @import("plugin.zig").Plugin;
 const TimeKit = @import("../kit/time_kit.zig").TimeKit;
 
 /// Cron expression parser

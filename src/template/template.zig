@@ -109,7 +109,7 @@ pub const TemplateManager = struct {
 };
 
 /// Token types for template parsing
-const TokenType = enum {
+pub const TokenType = enum {
     text,
     variable,
     tag_if,
@@ -125,7 +125,7 @@ const TokenType = enum {
     eof,
 };
 
-const Token = struct {
+pub const Token = struct {
     type: TokenType,
     value: []const u8,
     line: usize,
@@ -133,7 +133,7 @@ const Token = struct {
 };
 
 /// Template rendering engine
-const RenderEngine = struct {
+pub const RenderEngine = struct {
     allocator: std.mem.Allocator,
     source: []const u8,
     template_dir: ?[]const u8 = null,

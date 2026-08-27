@@ -48,7 +48,7 @@ Prefer the productized gate (see `doc/release_and_quality_gates.md`):
 - For the standard add-a-feature flow (SQL → edit → verify → ship), follow `zfinal-ai-playbook`.
 - `zf crud:sql <file> --json` and `zf g <type> <name> --json` emit machine-readable manifests — always use `--json` when invoked by an AI agent.
 - Generated files contain `// ── ai-edit-zone: …` markers. Edit only inside these zones; modify the generator template (in `tools/zf/`) if you need to change boilerplate.
-- `zig build test` runs unit tests; expected baseline is `369 passed; 17 skipped; 0 failed.`
+- `zig build test` runs unit tests; expected baseline is `416 passed; 16 skipped; 0 failed.`
   (extra skips when `NATS_URL` / `ROBUSTMQ_URL` / `ZF_PG_*` / `ZF_MY_*` / `OAUTH2_LIVE` unset —
   CI `messaging-live` / `drivers-live` enable them.)
 - On Zig `0.17.0-dev.1422+e863bf3be`, the server-mode test runner may crash with `EndOfStream`; `build.zig` works around this by running the compiled test binary directly via `b.addRunFile(lib_unit_tests.getEmittedBin())`.

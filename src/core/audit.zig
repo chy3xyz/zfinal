@@ -1,6 +1,5 @@
 //! Structured security/ops audit events (auth fail, rate limit, CSRF).
 
-const std = @import("std");
 const getLogger = @import("logger.zig").getLogger;
 
 pub const Event = enum {

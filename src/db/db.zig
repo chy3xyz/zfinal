@@ -6,8 +6,6 @@ const ResultSet = @import("result.zig").ResultSet;
 const floatToI64Exact = @import("result.zig").floatToI64Exact;
 const SqlParam = @import("sql_param.zig").SqlParam;
 
-const builtin = @import("builtin");
-
 /// Monotonic nanosecond timestamp via libc clock_gettime.
 /// Same pattern as src/core/context.zig:monoNowNs — Zig 0.17 removed
 /// `std.time.Instant.now()` in favor of `std.Io.Timestamp.now(io, .awake)`.

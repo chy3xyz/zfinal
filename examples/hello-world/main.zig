@@ -32,9 +32,8 @@ fn calcHandler(ctx: *zfinal.Context) !void {
     const b = try ctx.getParaToInt("b");
 
     if (a == null or b == null) {
-        ctx.res_status = .bad_request;
-        try ctx.renderJson(.{ .err = "Missing parameters 'a' or 'b'" });
-        return;
+        ctx.err_detail = "Missing parameters 'a' or 'b'";
+        return error.BadRequest;
     }
 
     const sum = a.? + b.?;

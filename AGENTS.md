@@ -84,7 +84,7 @@ src/modules/<sub>/<name>/
 
 ```bash
 zig build                  # framework + all examples
-zig build test             # baseline: 369 passed; 17 skipped; 0 failed
+zig build test             # baseline: 416 passed; 16 skipped; 0 failed
 zig build test -Ddriver_pg=true -Ddriver_mysql=true  # all drivers (+ DbOutbox live)
 zig build install-zf       # CLI tool → zig-out/bin/zf
 zig build run-hello        # hello-world demo

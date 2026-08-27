@@ -29,6 +29,7 @@ pub fn extractFromSql(allocator: std.mem.Allocator, sql: []const u8) !std.ArrayL
     if (c.sqlite3_exec(db, sql_z.ptr, null, null, &err_msg) != c.SQLITE_OK) {
         std.debug.print("sqlite3_exec schema: {s}\n", .{err_msg});
         c.sqlite3_free(err_msg);
+        diagnoseDdlFailure(allocator, sql);
         return error.SqliteExec;
     }
 
@@ -136,13 +137,7 @@ fn filterDdl(allocator: std.mem.Allocator, sql: []const u8) ![]const u8 {
         }
 
         // Check if this statement starts with CREATE
-        const is_create = i + 6 <= sql.len and
-            (sql[i] == 'C' or sql[i] == 'c') and
-            (sql[i + 1] == 'R' or sql[i + 1] == 'r') and
-            (sql[i + 2] == 'E' or sql[i + 2] == 'e') and
-            (sql[i + 3] == 'A' or sql[i + 3] == 'a') and
-            (sql[i + 4] == 'T' or sql[i + 4] == 't') and
-            (sql[i + 5] == 'E' or sql[i + 5] == 'e');
+        const is_create = isCreateKeyword(sql, i);
 
         if (is_create) {
             const start = i;
@@ -159,6 +154,137 @@ fn filterDdl(allocator: std.mem.Allocator, sql: []const u8) ![]const u8 {
     }
 
     return out.toOwnedSlice(allocator);
+}
+
+// ─── C1: generator error diagnostics ────────────────────────────────────
+//
+// `zf crud:sql` validates schemas by running them through SQLite
+// introspection. When the combined DDL exec fails, the bare sqlite error
+// gives no location — AI consumers retry blind. These helpers re-run each
+// CREATE in isolation to name the offending statement, its source line,
+// a snippet, and the common causes.
+
+fn isCreateKeyword(sql: []const u8, at: usize) bool {
+    if (at + 6 > sql.len) return false;
+    const word = "create";
+    for (word, 0..) |ch, k| {
+        if (std.ascii.toLower(sql[at + k]) != ch) return false;
+    }
+    return true;
+}
+
+/// 1-based source line of byte offset `off`.
+pub fn lineOfOffset(sql: []const u8, off: usize) usize {
+    var line: usize = 1;
+    for (sql[0..@min(off, sql.len)]) |ch| {
+        if (ch == '\n') line += 1;
+    }
+    return line;
+}
+
+/// Start offsets of every CREATE statement kept by `filterDdl`.
+pub fn ddlStatementOffsets(allocator: std.mem.Allocator, sql: []const u8) !std.ArrayList(usize) {
+    var offsets = std.ArrayList(usize).empty;
+    errdefer offsets.deinit(allocator);
+    var i: usize = 0;
+
+    while (i < sql.len) {
+        while (i < sql.len and (sql[i] == ' ' or sql[i] == '\n' or sql[i] == '\r' or sql[i] == '\t')) i += 1;
+        if (i >= sql.len) break;
+
+        if (i + 1 < sql.len and sql[i] == '-' and sql[i + 1] == '-') {
+            while (i < sql.len and sql[i] != '\n') i += 1;
+            continue;
+        }
+        if (i + 1 < sql.len and sql[i] == '/' and sql[i + 1] == '*') {
+            i += 2;
+            while (i + 1 < sql.len) {
+                if (sql[i] == '*' and sql[i + 1] == '/') {
+                    i += 2;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+
+        const start = i;
+        const is_create = isCreateKeyword(sql, i);
+        while (i < sql.len and sql[i] != ';') i += 1;
+        if (i < sql.len) i += 1;
+        if (is_create) try offsets.append(allocator, start);
+    }
+    return offsets;
+}
+
+/// Re-run each CREATE statement on a fresh :memory: DB to identify the one
+/// SQLite rejected; print its source line + snippet + likely causes.
+fn diagnoseDdlFailure(allocator: std.mem.Allocator, sql: []const u8) void {
+    var offsets = ddlStatementOffsets(allocator, sql) catch return;
+    defer offsets.deinit(allocator);
+
+    std.debug.print("\nerror: your SQL failed SQLite introspection — diagnosing {d} CREATE statement(s):\n", .{offsets.items.len});
+
+    for (offsets.items, 0..) |start, idx| {
+        var end = start;
+        while (end < sql.len and sql[end] != ';') end += 1;
+        const stmt_raw = std.mem.trim(u8, sql[start..end], " \t\r\n");
+        if (stmt_raw.len == 0) continue;
+
+        const stmt_z = allocator.allocSentinel(u8, stmt_raw.len, 0) catch continue;
+        defer allocator.free(stmt_z);
+        @memcpy(stmt_z, stmt_raw);
+
+        var err_msg: [*c]u8 = undefined;
+        var db: ?*c.sqlite3 = null;
+        if (c.sqlite3_open(":memory:", &db) != c.SQLITE_OK) return;
+        defer _ = c.sqlite3_close(db);
+        if (c.sqlite3_exec(db, stmt_z.ptr, null, null, &err_msg) != c.SQLITE_OK) {
+            const snippet = if (stmt_raw.len > 160) stmt_raw[0..160] else stmt_raw;
+            std.debug.print(
+                \\
+                \\→ statement {d}/{d} FAILED (source line ~{d}):
+                \\    {s}{s}
+                \\  sqlite says: {s}
+                \\
+                \\hints:
+                \\  • zf imports your schema into an in-memory SQLite to introspect it.
+                \\    MySQL/PG-only column clauses are not valid there: UNSIGNED, ZEROFILL,
+                \\    COMMENT '…', ON UPDATE CURRENT_TIMESTAMP, SERIAL (use INTEGER instead).
+                \\  • Table suffixes like ENGINE=InnoDB / DEFAULT CHARSET=… are stripped
+                \\    automatically; column-level MySQL clauses are NOT — remove them.
+                \\  • Unbalanced quotes/parens earlier in this statement also land here.
+                \\  • The text parser fallback still runs after this diagnosis.
+                \\
+            , .{ idx + 1, offsets.items.len, lineOfOffset(sql, start), snippet, if (stmt_raw.len > 160) " …" else "", err_msg });
+            c.sqlite3_free(err_msg);
+            return;
+        }
+    }
+    std.debug.print("   all statements pass individually — failure may come from ORDER-dependent DDL (index before table?).\n", .{});
+}
+
+test "csql: lineOfOffset counts lines up to offset" {
+    const sql = "a\nbb\nccc";
+    try std.testing.expectEqual(@as(usize, 1), lineOfOffset(sql, 0));
+    try std.testing.expectEqual(@as(usize, 2), lineOfOffset(sql, 3));
+    try std.testing.expectEqual(@as(usize, 3), lineOfOffset(sql, 7));
+    try std.testing.expectEqual(@as(usize, 3), lineOfOffset(sql, 100));
+}
+
+test "csql: ddlStatementOffsets finds only CREATE statements" {
+    const a = std.testing.allocator;
+    const sql =
+        \\INSERT INTO t VALUES (1); CREATE TABLE users (id INT);
+        \\-- comment CREATE FAKE
+        \\CREATE INDEX idx_users ON users(id);
+        \\DROP TABLE x;
+    ;
+    var offsets = try ddlStatementOffsets(a, sql);
+    defer offsets.deinit(a);
+    try std.testing.expectEqual(@as(usize, 2), offsets.items.len);
+    try std.testing.expect(std.ascii.startsWithIgnoreCase(sql[offsets.items[0]..], "CREATE TABLE"));
+    try std.testing.expect(std.ascii.startsWithIgnoreCase(sql[offsets.items[1]..], "CREATE INDEX"));
 }
 
 fn toPascalCase(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {

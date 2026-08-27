@@ -7,7 +7,6 @@
 
 const std = @import("std");
 const DB = @import("../db/db.zig").DB;
-const ResultSet = @import("../db/result.zig").ResultSet;
 const Row = @import("../db/result.zig").Row;
 const Cell = @import("../db/result.zig").Cell;
 const SqlParam = @import("../db/sql_param.zig").SqlParam;

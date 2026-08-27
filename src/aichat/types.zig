@@ -1,5 +1,3 @@
-const std = @import("std");
-
 pub const ChatMessage = struct {
     role: []const u8,
     content: []const u8,

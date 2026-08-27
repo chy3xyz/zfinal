@@ -281,3 +281,103 @@ test "oneshot Result owns body" {
 }
 
 // Full `against` spins a real server thread — use manually / in CI soak; not default unit test.
+//
+// ─── E1: graceful shutdown regression ───────────────────────────────────
+//
+// Historical bug: a business app had to comment out
+// `zfinal.shutdown.registerHandlers()` because the old shutdown path called
+// `group.cancel(io)` while request awaiters existed → panic. The current
+// design (watchdog closes listener → accept loop breaks on the flag → drain
+// with `drain_timeout_ms` deadline, no group.cancel) must survive both
+// request flavors below. Run as a unit test since it takes ~1–2s.
+
+test "graceful shutdown: in-flight slow request drains then server stops" {
+    if (@import("builtin").single_threaded) return error.SkipZigTest;
+    const testing = std.testing;
+    const ZfMod = @import("zfinal.zig");
+
+    shutdown.shutting_down.store(false, .monotonic);
+    defer shutdown.shutting_down.store(true, .monotonic);
+
+    var app = ZfMod.ZFinal.init(testing.allocator);
+    defer app.deinit();
+    app.setConfig(.{
+        .host = "127.0.0.1",
+        .port = 18791,
+        .drain_timeout_ms = 3_000,
+        .request_timeout_ms = 10_000,
+        .read_timeout_ms = 10_000,
+        .write_timeout_ms = 10_000,
+        .force_connection_close = true,
+    });
+    try app.get("/slow", struct {
+        fn h(_: *Context) !void {
+            // Simulate work in flight when SIGTERM lands. Bounded well under
+            // drain_timeout_ms so the test never hangs if drain is broken —
+            // instead the assertions below fail loudly.
+            std.Io.sleep(std.testing.io, std.Io.Duration.fromMilliseconds(400), .awake) catch {};
+        }
+    }.h);
+    try app.router.seal();
+
+    var ready = std.atomic.Value(bool).init(false);
+    const Srv = struct {
+        fn run(a: *ZfMod.ZFinal, r: *std.atomic.Value(bool)) void {
+            r.store(true, .release);
+            a.start() catch {};
+        }
+    };
+    const thr = try std.Thread.spawn(.{}, Srv.run, .{ &app, &ready });
+    while (!ready.load(.acquire)) {
+        std.Io.sleep(std.testing.io, std.Io.Duration.fromMilliseconds(5), .real) catch {};
+    }
+    // Settle for listen()
+    {
+        var threaded = std.Io.Threaded.init(testing.allocator, .{});
+        defer threaded.deinit();
+        var tries: u32 = 0;
+        while (tries < 50) : (tries += 1) {
+            threaded.io().sleep(std.Io.Duration.fromMilliseconds(20), .awake) catch break;
+            const addr = std.Io.net.IpAddress.parse("127.0.0.1", 18791) catch break;
+            const s = addr.connect(threaded.io(), .{ .mode = .stream }) catch continue;
+            s.close(threaded.io());
+            break;
+        }
+    }
+
+    // Fire one slow request and signal shutdown while it is in flight.
+    const Req = struct {
+        fn run() void {
+            var threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
+            defer threaded.deinit();
+            const io = threaded.io();
+            const addr = std.Io.net.IpAddress.parse("127.0.0.1", 18791) catch return;
+            const stream = addr.connect(io, .{ .mode = .stream }) catch return;
+            defer stream.close(io);
+            var wbuf: [256]u8 = undefined;
+            var wr = stream.writer(io, &wbuf);
+            wr.interface.writeAll("GET /slow HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n") catch return;
+            wr.interface.flush() catch return;
+            var rbuf: [512]u8 = undefined;
+            var rd = stream.reader(io, &rbuf);
+            var out: [512]u8 = undefined;
+            _ = rd.interface.readSliceShort(&out) catch {};
+            got_response.store(true, .release);
+        }
+        var got_response: std.atomic.Value(bool) = .init(false);
+    };
+
+    const req_thr = try std.Thread.spawn(.{}, Req.run, .{});
+
+    // Let the request get into the handler, then flip the flag (what the
+    // SIGTERM handler would do).
+    var threaded_main = std.Io.Threaded.init(testing.allocator, .{});
+    defer threaded_main.deinit();
+    threaded_main.io().sleep(std.Io.Duration.fromMilliseconds(150), .awake) catch {};
+    shutdown.shutting_down.store(true, .monotonic);
+
+    thr.join(); // start() must return after drain — this is the regression
+    req_thr.join();
+
+    try testing.expect(Req.got_response.load(.acquire)); // client got its full response
+}

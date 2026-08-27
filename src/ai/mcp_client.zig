@@ -755,7 +755,7 @@ const StdioTransport = struct {
     }
 };
 
-fn parseContentLength(hdr: []const u8) ?usize {
+pub fn parseContentLength(hdr: []const u8) ?usize {
     const key = "Content-Length:";
     const idx = std.mem.indexOf(u8, hdr, key) orelse return null;
     var i = idx + key.len;

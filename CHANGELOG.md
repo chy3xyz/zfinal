@@ -1,4 +1,16 @@
-## [0.24.0] - 2026-08-07
+## [0.25.0] - 2026-08-27
+
+### Added
+- **ConnectionPool stress regression (A1)**: 4 new pool tests on the always-on SQLite driver — concurrent burst acquire/release (8 threads × 60 iters with forced contention), concurrent `pool.transaction` correctness check (6×40 inserts must all land), background `startReaper` interleaved with acquires (plus idempotency), and double-release rejection. Pins the v0.12.x–v0.13.0 segfault cluster under CI.
+- **Graceful shutdown regression (E1)**: unit test spins a real server, fires a slow in-flight request, then signals shutdown — asserts the client still receives its full response and `start()` returns via drain (watchdog closes listener → accept breaks → bounded drain) instead of panicking; locks the fix for the old `group.cancel(io)`-with-awaiters crash that had forced apps to comment out `shutdown.registerHandlers()`.
+- **Context lifecycle phase contract (B1)**: doc comment on `Context` defines P0 accept→P1 head→P2 body→P3 render→P4 teardown and which APIs are legal per phase (`getHeader` always safe via cacheHeaders snapshot; body exactly once; response once). `getBodyText` now flags `body_consumed` — a second body read **panics in Debug** with an explanatory message instead of silently returning empty, and after render-start it warns + returns empty rather than corrupting framing.
+- **`zf crud:sql` DDL failure diagnostics (C1)**: when SQLite introspection of the schema fails, zf now re-runs each CREATE statement in isolation and reports the offending statement index, its source line in the original file, a snippet, the raw sqlite error, and cause hints (MySQL-only column clauses like UNSIGNED/COMMENT, unbalanced quotes, order-dependent DDL). Text-parser fallback unchanged. New csql helpers (`lineOfOffset`, `ddlStatementOffsets`) are unit-tested.
+- **Richer generator error hints**: `zf admin` / `zf crud:zent` failures now print a minimal valid example next to the error (CREATE TABLE skeleton with annotation comments; .zent DSL shape per `examples/zent-shop/schema.zent`) so AI consumers can self-correct.
+
+### Fixed
+- **SQLite driver opened without FULLMUTEX / shared-cache / busy_timeout**: multi-thread pools hit garbled handles and instant `SQLITE_LOCKED` ("database table is locked") under concurrent write transactions. Driver now opens with `SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_URI`, maps `:memory:` to `file::memory:?cache=shared` (a pool's conns share one memory DB instead of N disjoint ones), sets `busy_timeout=5000`, and enables WAL for file-backed DBs.
+
+
 
 ### Added
 - **`WsFanout`** (`zfinal.WsFanout`): bridges a Queue mailbox (in-process `QueueClient`, or Redis/NATS/RobustMQ on the producing side) into a WebSocket sink via `startBroadcast(manager, mailbox, topic)` — the missing multi-instance WS fanout layer; single-instance `WebSocketManager.broadcast` already existed. Callback-style `start(...)` + test.

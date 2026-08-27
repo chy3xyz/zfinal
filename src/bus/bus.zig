@@ -1,8 +1,6 @@
 //! Optional L3 message bus port — swap Memory / NATS / RobustMQ without
 //! touching service code. See `doc/bus.md` and `doc/progressive_architecture.md`.
 
-const std = @import("std");
-
 pub const Bus = struct {
     ptr: *anyopaque,
     vtable: *const VTable,

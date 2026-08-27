@@ -40,7 +40,21 @@ pub fn handleAdmin(allocator: std.mem.Allocator, sql_path: []const u8, out_dir: 
         tables.deinit(allocator);
     }
     if (tables.items.len == 0) {
-        std.debug.print("error: no CREATE TABLE found in {s}\n", .{sql_path});
+        std.debug.print(
+            \\error: no CREATE TABLE found in {s}
+            \\
+            \\hints:
+            \\  • zf crud needs DDL (CREATE TABLE …) — a dump of only INSERT/UPDATE data is not enough.
+            \\  • Minimal example:
+            \\      CREATE TABLE users (
+            \\        id INTEGER PRIMARY KEY,
+            \\        email VARCHAR(255) NOT NULL,
+            \\        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            \\      );
+            \\  • Column annotations (→ generated filters/indexes) go as trailing comments:
+            \\      email VARCHAR(255) NOT NULL, -- @unique @required @email
+            \\
+        , .{sql_path});
         return error.NoTables;
     }
 
@@ -208,7 +222,26 @@ pub fn handleCrudZent(
     defer allocator.free(content);
 
     var schema = zent_codegen.parseFile(allocator, schema_path, content) catch |e| {
-        std.debug.print("error: failed to parse {s}: {t}\n", .{ schema_path, e });
+        std.debug.print(
+            \\error: failed to parse {s}: {t}
+            \\
+            \\hints:
+            \\  • .zent schema DSL shape (see examples/zent-shop/schema.zent):
+            \\      module shop
+            \\      api_prefix /api/v1
+            \\      entity User {{
+            \\        name: string @required
+            \\        handle: string @unique @index
+            \\        email: string @email @unique
+            \\        ref: seller: User via seller_id
+            \\        list_by: seller_id
+            \\      }}
+            \\  • Field types: int | float | bool | string | text | bytes | uuid |
+            \\    json | time | enum(a,b,c); constraints as @index/@unique/@sensitive/
+            \\    @required/@email/@positive [= default]; relations: ref: <edge>: <Target> via <fk>
+            \\  • The parse error names the token that broke — check the line above it.
+            \\
+        , .{ schema_path, e });
         return e;
     };
     defer schema.deinit();

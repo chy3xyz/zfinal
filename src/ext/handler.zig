@@ -1,5 +1,4 @@
 const std = @import("std");
-const io_instance = @import("../io_instance.zig");
 const zfinal = @import("../main.zig");
 const mutex_init = @import("../db/mutex_init.zig");
 const IpExt = @import("ext_util.zig").IpExt;

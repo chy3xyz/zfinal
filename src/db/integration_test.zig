@@ -7,7 +7,6 @@
 const std = @import("std");
 const DB = @import("db.zig").DB;
 const DBConfig = @import("config.zig").DBConfig;
-const DBType = @import("config.zig").DBType;
 const SqlParam = @import("sql_param.zig").SqlParam;
 const build_opts = @import("build_options");
 
@@ -66,7 +65,7 @@ fn tryOpenMY(allocator: std.mem.Allocator) !?*DB {
     }) catch null;
 }
 
-fn expectRow(result: anytype) ?*const @import("result.zig").Row {
+pub fn expectRow(result: anytype) ?*const @import("result.zig").Row {
     if (result.next()) {
         return result.currentRow();
     }

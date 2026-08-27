@@ -1,5 +1,3 @@
-const std = @import("std");
-
 /// DateKit merged into TimeKit. Re-exported for backward compatibility.
 pub const DateKit = struct {
     pub const Date = @import("time_kit.zig").TimeKit.Date;
