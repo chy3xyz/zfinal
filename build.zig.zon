@@ -6,8 +6,8 @@
 
     .dependencies = .{
         .zent = .{
-            .url = "git+https://github.com/chy3xyz/zent?ref=v0.29.4#232e38c72c060508bf8913aa69ba963af08229a7",
-            .hash = "zent-0.29.4-oiur-3JtDQB0AvrBPRIPv3R3_CfJpuOMogRvdK2WXlRh",
+            .url = "git+https://github.com/chy3xyz/zent?ref=v0.31.0#96c962c69d65cdda1fcaeb602394aad59ceb799b",
+            .hash = "zent-0.31.0-oiur-31tDwD4Xuts2KOkUF9ot6y0zMFA-BOzojMIm17h",
         },
     },
 
