@@ -1,6 +1,6 @@
 # ZFinal 代码架构最佳实践
 
-> **版本**：对齐 v0.26.0 / Zig 工具链见仓库根 `.zig-version` · 修订 **2026-07-31**  
+> **版本**：对齐 v0.26.1 / Zig 工具链见仓库根 `.zig-version` · 修订 **2026-07-31**  
 > **受众**：框架贡献者、应用开发者、AI agent  
 > **总索**：[best_practices.md](best_practices.md)（任务索引 + 能力时间线）  
 > **相关**：[`AGENTS.md`](../AGENTS.md) · [`PRODUCTION_AUDIT.md`](../PRODUCTION_AUDIT.md) · [`api_envelope.md`](api_envelope.md) · [`.life/decisions/`](../.life/decisions/)

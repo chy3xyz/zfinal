@@ -348,7 +348,8 @@ fn verifyRs256Fixed(
 ) JwtError!void {
     var sig_arr: [modulus_len]u8 = undefined;
     @memcpy(&sig_arr, sig[0..modulus_len]);
-    rsa.PKCS1v1_5Signature.verify(modulus_len, sig_arr, signing_input, pk, Sha256) catch return error.InvalidSignature;
+    // Zig 0.17-dev.19xx: verify() takes the signature by pointer.
+    rsa.PKCS1v1_5Signature.verify(modulus_len, &sig_arr, signing_input, pk, Sha256) catch return error.InvalidSignature;
 }
 
 fn signRs256Fixed(

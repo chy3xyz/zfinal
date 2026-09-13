@@ -269,6 +269,8 @@ grep -o "ai-edit-zone: [a-z ]*" tools/zf/codegen.zig | sort -u
 | P1-5 写入安全 | `safeWrite` 改为 `<path>.tmp` + rename 原子写，覆盖/合并前留 `.bak`；`.gen.new` / `.bak` 入 gitignore | e2e：`--force` 生成 `.bak`，无 `.tmp` 残留 |
 | P1-6 `zf check` | 新增当前单文件布局的 zone 契约检查（`@generated` 但无 zone 且无 `DO NOT EDIT` 即告警） | 新工程 `zf check` → 6 pass / 0 warn / 0 fail |
 
+> **后续（同日）**：工具链进一步前移到 `0.17.0-dev.1970+67f39b551`，修复了 `Io.VTable.netWrite` 移除（改用 `io.operate(.net_write)`）、`PKCS1v1_5Signature.verify` 改为指针参数、以及 `@hasDecl` 变为可见性感知（`renderPage` 的 item `deinit` 必须 `pub`，否则静默泄漏）。`.zig-version` 已更新；在 1970 上 `zig build` / `zig build test`(418/16/0) / `test-zf`(49/49) / `install-zf` / `zig fmt --check` 全部通过。
+
 ### 尚未处理（建议下一批）
 
 - **P2-1** 覆盖率采集 / fuzz / sanitizer、Windows job、`test-int` 复活与 CI matrix。

@@ -2,6 +2,15 @@
 
 <!-- New changes land here; on release, move them under a new `## [x.y.z]` section. -->
 
+## [0.26.1] - 2026-09-13
+
+### Fixed
+- **Zig `0.17.0-dev.1970+67f39b551` compatibility** (toolchain pin moved from `0.17.0-dev.1567+f0354179a`):
+  - `src/core/server.zig`: upstream removed `Io.VTable.netWrite`; `TimedWriter.drain` now issues `io.operate(.{ .net_write = … })`, mirroring `std.Io.net.Stream.Writer.drain`.
+  - `src/auth/jwt.zig`: `rsa.PKCS1v1_5Signature.verify` now takes the signature by pointer (`*const [modulus_len]u8`).
+  - `src/core/context.zig`: `@hasDecl` became visibility-aware, so `renderPage` no longer detected a non-pub `deinit` — a local non-pub `deinit` silently leaked the item's owned fields. The contract is now documented and the test uses `pub fn deinit`.
+- `.zig-version` now pins `0.17.0-dev.1970+67f39b551`; CI, `release.yml` and `docker/Dockerfile` pick it up automatically.
+
 ## [0.26.0] - 2026-09-13
 
 ### Added

@@ -328,7 +328,18 @@ const TimedWriter = struct {
                 return error.WriteFailed;
             }
         }
-        const n = w.io.vtable.netWrite(w.io.userdata, w.stream.socket.handle, io_w.buffered(), data, splat) catch |err| {
+        // Zig 0.17-dev.19xx: socket writes go through `Io.Operation`
+        // (`VTable.netWrite` was removed); this mirrors `std.Io.net.Stream.Writer.drain`.
+        const result = w.io.operate(.{ .net_write = .{
+            .socket_handle = w.stream.socket.handle,
+            .header = io_w.buffered(),
+            .data = data,
+            .splat = splat,
+        } }) catch |err| {
+            w.err = err;
+            return error.WriteFailed;
+        };
+        const n = result.net_write catch |err| {
             w.err = err;
             return error.WriteFailed;
         };

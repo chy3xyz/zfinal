@@ -103,7 +103,7 @@ zig build run-htmx               # HTMX 交互应用
 ### 集成到你的项目
 
 ```bash
-zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.26.0.tar.gz
+zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.26.1.tar.gz
 ```
 
 在 `build.zig.zon`：
@@ -111,7 +111,7 @@ zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.26.0.tar
 ```zon
 .dependencies = .{
     .zfinal = .{
-        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.26.0.tar.gz",
+        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.26.1.tar.gz",
         .hash = "...",  // `zig fetch` 自动填
     },
 },
@@ -453,6 +453,6 @@ MIT — 见 [LICENSE](LICENSE)。
 
 Made with ❤️ by the ZFinal Team
 
-**ZFinal v0.26.0** — Zig 的 AI 极速开发框架
+**ZFinal v0.26.1** — Zig 的 AI 极速开发框架
 
 </div>

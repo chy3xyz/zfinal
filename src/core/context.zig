@@ -768,6 +768,10 @@ pub const Context = struct {
     /// Serialize a `Page(T)`-shaped value as `{data, total, page, size}`, then
     /// free it: per-item `deinit(allocator)` (when the item type has one) and
     /// the list slice. One call replaces the render + free dance in list handlers.
+    ///
+    /// The item type's `deinit` must be `pub`: Zig 0.17-dev.19xx made
+    /// `@hasDecl` visibility-aware, so a non-pub (or file-local) `deinit` is
+    /// not detected and the item's owned fields would leak.
     pub fn renderPage(self: *Context, page: anytype, allocator: std.mem.Allocator) !void {
         var p = page;
         const items = p.list;
@@ -1394,7 +1398,10 @@ test "context: renderPage serializes and frees items" {
 
     const Item = struct {
         name: []const u8,
-        fn deinit(self: *const @This(), allocator: std.mem.Allocator) void {
+        // Must be `pub`: Zig 0.17-dev.19xx made `@hasDecl` visibility-aware, so
+        // a non-pub `deinit` in another scope is no longer detected (and could
+        // never be called from this file anyway).
+        pub fn deinit(self: *const @This(), allocator: std.mem.Allocator) void {
             allocator.free(self.name);
         }
     };
