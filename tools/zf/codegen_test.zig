@@ -845,6 +845,219 @@ test "zent_codegen: field constraints @unique/@sensitive/@required/@email/@posit
     try std.testing.expect(std.mem.indexOf(u8, manifest, "\"sensitive\": true") != null);
 }
 
+test "zent_codegen: reserved-word and non-ASCII field names stay valid identifiers" {
+    const allocator = std.testing.allocator;
+    // `const` is a Zig keyword and `中文` is non-ASCII; both are valid zent/DB
+    // field names but illegal *bare* Zig identifiers. Identifier positions must
+    // use quoted syntax (`@"const"`), while schema/string positions keep the raw
+    // name so `std.meta.fields(T).name` and SQL columns stay correct.
+    const dsl =
+        \\module kwtest
+        \\api_prefix /api
+        \\
+        \\entity Item {
+        \\  const: string @required
+        \\  中文: string @unique @index
+        \\  list_by: 中文
+        \\}
+    ;
+    var schema = try zent_codegen.parseZentDsl(allocator, dsl);
+    defer schema.deinit();
+
+    // model.zig takes field names as macro *strings* → raw names, unchanged.
+    const model = try zent_codegen.generateModel(allocator, &schema);
+    defer allocator.free(model);
+    try std.testing.expect(std.mem.indexOf(u8, model, "field.String(\"const\").NotEmpty()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, model, "field.String(\"中文\").Unique()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, model, "zent.core.index.Fields(&.{\"中文\"})") != null);
+    try expectZigSyntax(model);
+
+    // persistence.zig: params / field-init / predicate names are identifiers;
+    // setFieldValue's first argument is the raw schema name.
+    const persist = try zent_codegen.generatePersistence(allocator, &schema);
+    defer allocator.free(persist);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "pub fn createItem(self: *@This(), @\"const\": []const u8, @\"中文\": []const u8) !i64") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "pub fn updateItem(self: *@This(), id: i64, @\"const\": []const u8, @\"中文\": []const u8) !void") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "_ = try b.setFieldValue(\"const\", @\"const\");") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "_ = try ub.setFieldValue(\"中文\", @\"中文\");") != null);
+    // Joined identifiers (function + PascalCase field, field + "EQ") are
+    // sanitized as a whole: `@"findByUnique中文"`, `preds.@"中文EQ"`.
+    try std.testing.expect(std.mem.indexOf(u8, persist, "pub fn @\"findByUnique中文\"(self: *@This(), @\"中文\": []const u8) !?i64") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "preds.@\"中文EQ\"(.{ .string = @\"中文\" })") != null);
+    // `list<Entity>By<Pascal(field)>` is also a joined identifier.
+    try std.testing.expect(std.mem.indexOf(u8, persist, "pub fn @\"listItemBy中文\"(self: *@This(), @\"中文\": i64, page: usize, size: usize) !ItemPage") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "preds.@\"中文EQ\"(.{ .int = @\"中文\" })") != null);
+    try expectZigSyntax(persist);
+
+    // service.zig: locals / arguments are identifiers; store lookups match.
+    const service = try zent_codegen.generateService(allocator, &schema);
+    defer allocator.free(service);
+    try std.testing.expect(std.mem.indexOf(u8, service, "if (@\"const\".len == 0) return error.InvalidInput;") != null);
+    try std.testing.expect(std.mem.indexOf(u8, service, "if (@\"中文\".len == 0) return error.InvalidInput;") != null);
+    try std.testing.expect(std.mem.indexOf(u8, service, "self.store.@\"findByUnique中文\"(@\"中文\")") != null);
+    try std.testing.expect(std.mem.indexOf(u8, service, "return try self.store.createItem(@\"const\", @\"中文\");") != null);
+    try std.testing.expect(std.mem.indexOf(u8, service, "self.store.@\"listItemBy中文\"(@\"中文\", page, size)") != null);
+    try expectZigSyntax(service);
+
+    // handler.zig: locals are identifiers; getPara keeps the raw schema name.
+    const handler = try zent_codegen.generateHandler(allocator, &schema);
+    defer allocator.free(handler);
+    try std.testing.expect(std.mem.indexOf(u8, handler, "const @\"const\" = try ctx.getPara(\"const\")") != null);
+    try std.testing.expect(std.mem.indexOf(u8, handler, "const @\"中文\" = try ctx.getPara(\"中文\")") != null);
+    try std.testing.expect(std.mem.indexOf(u8, handler, "svc.createItem(@\"const\", @\"中文\")") != null);
+    try std.testing.expect(std.mem.indexOf(u8, handler, "svc.listItem(@\"中文\", page, size)") != null);
+    try expectZigSyntax(handler);
+
+    // Round-trip: the raw schema name survives wherever zent/the DB needs a
+    // string, and the JSON manifest documents the real field names.
+    try std.testing.expect(std.mem.indexOf(u8, persist, "setFieldValue(\"const\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, handler, "getPara(\"中文\")") != null);
+    const manifest = try zent_codegen.emitJsonManifest(allocator, "schema.zent", &schema);
+    defer allocator.free(manifest);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "\"name\": \"const\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "\"name\": \"中文\"") != null);
+}
+
+test "zent_codegen: reserved-word / non-ASCII entity names become quoted identifiers" {
+    const allocator = std.testing.allocator;
+    // Entity names feed type/decl/function symbols (`create<Ent>`, `<Ent>Row`,
+    // `model.<Ent>`, `<Ent>Info`) as well as strings (zent `Schema("…")`, route
+    // paths, action names). Identifier positions must be sanitized.
+    const dsl =
+        \\module kwent
+        \\api_prefix /api
+        \\
+        \\entity const {
+        \\  name: string
+        \\}
+        \\
+        \\entity 中文 {
+        \\  title: string
+        \\}
+    ;
+    var schema = try zent_codegen.parseZentDsl(allocator, dsl);
+    defer schema.deinit();
+
+    const model = try zent_codegen.generateModel(allocator, &schema);
+    defer allocator.free(model);
+    try std.testing.expect(std.mem.indexOf(u8, model, "pub const @\"const\" = Schema(\"const\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, model, "pub const @\"中文\" = Schema(\"中文\"") != null);
+    try expectZigSyntax(model);
+
+    const persist = try zent_codegen.generatePersistence(allocator, &schema);
+    defer allocator.free(persist);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "model.@\"const\", model.@\"中文\"") != null);
+    // Whole-name joins: `<Ent>Info`, `create<Ent>`, zent Client accessor.
+    try std.testing.expect(std.mem.indexOf(u8, persist, "const constInfo = infos[0];") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "const @\"中文Info\" = infos[1];") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "pub fn createconst(self: *@This(), name: []const u8) !i64") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "pub fn @\"create中文\"(self: *@This(), title: []const u8) !i64") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "self.client.@\"const\".Create()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "self.client.@\"中文\".Create()") != null);
+    try expectZigSyntax(persist);
+
+    const service = try zent_codegen.generateService(allocator, &schema);
+    defer allocator.free(service);
+    try std.testing.expect(std.mem.indexOf(u8, service, "store.createconst(name)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, service, "store.@\"create中文\"(title)") != null);
+    try expectZigSyntax(service);
+
+    const handler = try zent_codegen.generateHandler(allocator, &schema);
+    defer allocator.free(handler);
+    try std.testing.expect(std.mem.indexOf(u8, handler, "pub fn createconst(ctx: *zfinal.Context)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, handler, "pub fn @\"create中文\"(ctx: *zfinal.Context)") != null);
+    try expectZigSyntax(handler);
+
+    const routes = try zent_codegen.generateRoutes(allocator, &schema);
+    defer allocator.free(routes);
+    // Route paths keep the raw (snake) name; handler symbols are sanitized.
+    try std.testing.expect(std.mem.indexOf(u8, routes, "handler.createconst") != null);
+    try std.testing.expect(std.mem.indexOf(u8, routes, "handler.@\"create中文\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, routes, "\"/api/中文s\"") != null);
+    try expectZigSyntax(routes);
+
+    const actions = try zent_codegen.generateActions(allocator, &schema);
+    defer allocator.free(actions);
+    try std.testing.expect(std.mem.indexOf(u8, actions, ".name = \"createconst\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, actions, ".name = \"create中文\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, actions, "handler.@\"create中文\"") != null);
+    try expectZigSyntax(actions);
+
+    const manifest = try zent_codegen.emitJsonManifest(allocator, "schema.zent", &schema);
+    defer allocator.free(manifest);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "\"name\": \"const\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "\"name\": \"中文\"") != null);
+}
+
+test "zent_codegen: embedded double quote / backslash in names is escaped" {
+    const allocator = std.testing.allocator;
+    // `"` and `\` are accepted by the DSL but break raw Zig string literals and
+    // JSON, so every string position must escape them.
+    const dsl =
+        \\module a"b
+        \\api_prefix /api
+        \\
+        \\entity E"nt {
+        \\  a"b: string
+        \\  c\d: string
+        \\}
+    ;
+    var schema = try zent_codegen.parseZentDsl(allocator, dsl);
+    defer schema.deinit();
+
+    const model = try zent_codegen.generateModel(allocator, &schema);
+    defer allocator.free(model);
+    try std.testing.expect(std.mem.indexOf(u8, model, "pub const @\"E\\\"nt\" = Schema(\"E\\\"nt\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, model, "field.String(\"a\\\"b\")") != null);
+    try std.testing.expect(std.mem.indexOf(u8, model, "field.String(\"c\\\\d\")") != null);
+    try expectZigSyntax(model);
+
+    const persist = try zent_codegen.generatePersistence(allocator, &schema);
+    defer allocator.free(persist);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "model.@\"E\\\"nt\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "@\"A\\\"bStore\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "setFieldValue(\"a\\\"b\", @\"a\\\"b\")") != null);
+    try std.testing.expect(std.mem.indexOf(u8, persist, "setFieldValue(\"c\\\\d\", @\"c\\\\d\")") != null);
+    try expectZigSyntax(persist);
+
+    const handler = try zent_codegen.generateHandler(allocator, &schema);
+    defer allocator.free(handler);
+    try std.testing.expect(std.mem.indexOf(u8, handler, "const @\"a\\\"b\" = try ctx.getPara(\"a\\\"b\")") != null);
+    try std.testing.expect(std.mem.indexOf(u8, handler, "getPara(\"c\\\\d\")") != null);
+    try expectZigSyntax(handler);
+
+    const routes = try zent_codegen.generateRoutes(allocator, &schema);
+    defer allocator.free(routes);
+    try std.testing.expect(std.mem.indexOf(u8, routes, "handler.@\"createE\\\"nt\"") != null);
+    try expectZigSyntax(routes);
+
+    const actions = try zent_codegen.generateActions(allocator, &schema);
+    defer allocator.free(actions);
+    try std.testing.expect(std.mem.indexOf(u8, actions, ".name = \"createE\\\"nt\"") != null);
+    try expectZigSyntax(actions);
+
+    // Bootstrap import paths / module symbols escape the quoted module name.
+    const boot = try zent_codegen.generateBootstrapSnippet(allocator, &schema);
+    defer allocator.free(boot);
+    try std.testing.expect(std.mem.indexOf(u8, boot, "@import(\"modules/a\\\"b/persistence.zig\")") != null);
+    try std.testing.expect(std.mem.indexOf(u8, boot, "persist.@\"A\\\"bStore\".init") != null);
+    try std.testing.expect(std.mem.indexOf(u8, boot, "service.@\"A\\\"bService\".init") != null);
+    try expectZigSyntax(boot);
+
+    // The manifest must stay valid JSON and round-trip the real names.
+    const manifest = try zent_codegen.emitJsonManifest(allocator, "schema.zent", &schema);
+    defer allocator.free(manifest);
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, manifest, .{});
+    defer parsed.deinit();
+    const root = parsed.value.object;
+    try std.testing.expectEqualStrings("a\"b", root.get("module").?.string);
+    const ent = root.get("entities").?.array.items[0].object;
+    try std.testing.expectEqualStrings("E\"nt", ent.get("name").?.string);
+    const fields = ent.get("fields").?.array;
+    try std.testing.expectEqualStrings("a\"b", fields.items[0].object.get("name").?.string);
+    try std.testing.expectEqualStrings("c\\d", fields.items[1].object.get("name").?.string);
+}
+
 // ============================================================
 // openapi — minimal OpenAPI 3.0.3 spec generator from Zig source
 // ============================================================

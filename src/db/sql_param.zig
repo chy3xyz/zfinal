@@ -110,30 +110,36 @@ pub const ParamQuery = struct {
 };
 
 test "ParamQuery basic" {
-    const allocator = std.testing.allocator;
+    // `toSql` is Debug-only by design (@compileError otherwise), so this test is
+    // compiled out in ReleaseSafe rather than breaking `zig build test -Doptimize=ReleaseSafe`.
+    if (@import("builtin").mode == .debug) {
+        const allocator = std.testing.allocator;
 
-    var pq = ParamQuery.init(allocator, "SELECT * FROM users WHERE id = ? AND name = ?");
-    defer pq.deinit();
+        var pq = ParamQuery.init(allocator, "SELECT * FROM users WHERE id = ? AND name = ?");
+        defer pq.deinit();
 
-    try pq.bindInt(42);
-    try pq.bindText("alice");
+        try pq.bindInt(42);
+        try pq.bindText("alice");
 
-    const sql = try pq.toSql();
-    defer allocator.free(sql);
+        const sql = try pq.toSql();
+        defer allocator.free(sql);
 
-    try std.testing.expectEqualStrings("SELECT * FROM users WHERE id = 42 AND name = 'alice'", sql);
+        try std.testing.expectEqualStrings("SELECT * FROM users WHERE id = 42 AND name = 'alice'", sql);
+    }
 }
 
 test "ParamQuery text escaping" {
-    const allocator = std.testing.allocator;
+    if (@import("builtin").mode == .debug) {
+        const allocator = std.testing.allocator;
 
-    var pq = ParamQuery.init(allocator, "INSERT INTO users (name) VALUES (?)");
-    defer pq.deinit();
+        var pq = ParamQuery.init(allocator, "INSERT INTO users (name) VALUES (?)");
+        defer pq.deinit();
 
-    try pq.bindText("O'Brien");
+        try pq.bindText("O'Brien");
 
-    const sql = try pq.toSql();
-    defer allocator.free(sql);
+        const sql = try pq.toSql();
+        defer allocator.free(sql);
 
-    try std.testing.expectEqualStrings("INSERT INTO users (name) VALUES ('O''Brien')", sql);
+        try std.testing.expectEqualStrings("INSERT INTO users (name) VALUES ('O''Brien')", sql);
+    }
 }

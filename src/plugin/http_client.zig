@@ -9,6 +9,12 @@ const std = @import("std");
 pub const HttpClient = struct {
     allocator: std.mem.Allocator,
     base_url: []const u8,
+    /// 单次请求的**空闲/读**超时，单位毫秒。0 表示不限制。
+    ///
+    /// `std.http.Client.fetch` 本身没有 timeout（`FetchOptions` 和 `Client` 都
+    /// 没有 deadline 字段），所以这里在 `std.Io` 层用「可取消任务 vs 空闲看门狗」
+    /// 竞速实现，见 `fetchWithTimeout`。看门狗在每次收到响应数据时被刷新，因此
+    /// 连接卡死/读不到数据才会触发；持续输出的流式响应（如 LLM SSE）不会被误杀。
     timeout_ms: u64 = 10_000,
     /// Isolated from `io_instance` / server Threaded; one per HttpClient.
     threaded: *std.Io.Threaded,
@@ -103,6 +109,8 @@ pub const HttpClient = struct {
 
         var body_writer: std.Io.Writer.Allocating = .init(self.allocator);
         defer body_writer.deinit();
+        var clock = ActivityClock.init(self.threaded.io());
+        var activity_writer = ActivityWriter.init(&body_writer.writer, &clock);
 
         const http_method: std.http.Method = switch (method) {
             .GET => .GET,
@@ -111,19 +119,37 @@ pub const HttpClient = struct {
             .DELETE => .DELETE,
         };
 
-        const result = try self.http.fetch(.{
+        const result = try self.fetchWithTimeout(.{
             .location = .{ .url = url },
             .method = http_method,
             .payload = body,
             .extra_headers = extra_headers,
-            .response_writer = &body_writer.writer,
-        });
+            .response_writer = &activity_writer.writer,
+        }, &clock);
 
         return .{
             .status = @backingInt(result.status),
             .body = try body_writer.toOwnedSlice(),
             .allocator = self.allocator,
         };
+    }
+
+    /// 带空闲超时的 `std.http.Client.fetch`。
+    ///
+    /// Zig 0.17 的 `fetch` 不支持 timeout：既没有 `FetchOptions.timeout`，
+    /// `connectTcpOptions` 的 timeout 也无法穿透 `fetch`。因此在 `std.Io` 层
+    /// 把整个请求当作可取消任务，与空闲看门狗竞速（见 `raceWithTimeout`）：
+    /// 看门狗先到就取消请求并返回 `error.Timeout`；请求先到就正常返回。
+    /// `clock` 由 `ActivityWriter` 在每次响应数据到达时刷新，所以这里是
+    /// 「连接 + 读空闲」超时，而不是一刀切的总时长。
+    ///
+    /// 这里用 `Select.concurrent`（而不是 `async`）：`async` 在 Io 的
+    /// `async_limit` 用满时会退化成在调用线程内同步执行，看门狗将永远没机会注册，
+    /// 超时也就形同虚设。`concurrent` 要么真正并发、要么明确失败。
+    fn fetchWithTimeout(self: *HttpClient, options: std.http.Client.FetchOptions, clock: *ActivityClock) !std.http.Client.FetchResult {
+        if (self.timeout_ms == 0) return self.http.fetch(options);
+        const result = try raceWithTimeout(self.threaded.io(), self.timeout_ms, clock, fetchTask, .{ self.http, options });
+        return result orelse error.Timeout;
     }
 
     /// Stream the response body via `on_chunk`. `Response.body` is empty (caller still `deinit`s).
@@ -141,6 +167,8 @@ pub const HttpClient = struct {
         defer self.allocator.free(url);
 
         var forwarder = ChunkForwarder.init(cb_ctx, on_chunk);
+        var clock = ActivityClock.init(self.threaded.io());
+        var activity_writer = ActivityWriter.init(&forwarder.writer, &clock);
 
         const http_method: std.http.Method = switch (method) {
             .GET => .GET,
@@ -149,13 +177,13 @@ pub const HttpClient = struct {
             .DELETE => .DELETE,
         };
 
-        const result = self.http.fetch(.{
+        const result = self.fetchWithTimeout(.{
             .location = .{ .url = url },
             .method = http_method,
             .payload = body,
             .extra_headers = extra_headers,
-            .response_writer = &forwarder.writer,
-        }) catch |err| {
+            .response_writer = &activity_writer.writer,
+        }, &clock) catch |err| {
             if (forwarder.cb_err) |e| return e;
             return err;
         };
@@ -167,6 +195,98 @@ pub const HttpClient = struct {
         };
     }
 };
+
+/// `task_fn` 的薄包装：让 `Select` 的 union 字段类型与任务返回类型一致。
+fn fetchTask(client: *std.http.Client, options: std.http.Client.FetchOptions) std.http.Client.FetchError!std.http.Client.FetchResult {
+    return client.fetch(options);
+}
+
+/// 最近一次收到响应数据的单调时钟（`awake` 时钟，毫秒）。
+/// `ActivityWriter` 在每次 `drain` 时刷新它，看门狗据此判断是否真正空闲。
+const ActivityClock = struct {
+    io: std.Io,
+    last_ms: std.atomic.Value(i64),
+
+    fn init(io: std.Io) ActivityClock {
+        return .{ .io = io, .last_ms = .init(nowMs(io)) };
+    }
+
+    fn touch(self: *ActivityClock) void {
+        self.last_ms.store(nowMs(self.io), .monotonic);
+    }
+
+    fn idleMs(self: *const ActivityClock) i64 {
+        return nowMs(self.io) - self.last_ms.load(.monotonic);
+    }
+};
+
+fn nowMs(io: std.Io) i64 {
+    return std.Io.Clock.Timestamp.now(io, .awake).raw.toMilliseconds();
+}
+
+/// 透传 `Writer`：把每次写出的字节原样交给 `target`，同时刷新 `clock`。
+/// 这样「收到数据」就等于「还没卡死」，空闲看门狗不必理解 HTTP。
+const ActivityWriter = struct {
+    target: *std.Io.Writer,
+    clock: *ActivityClock,
+    writer: std.Io.Writer,
+
+    fn init(target: *std.Io.Writer, clock: *ActivityClock) ActivityWriter {
+        return .{
+            .target = target,
+            .clock = clock,
+            .writer = .{ .buffer = &.{}, .vtable = &vtable },
+        };
+    }
+
+    const vtable: std.Io.Writer.VTable = .{ .drain = drain };
+
+    fn drain(w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+        const self: *ActivityWriter = @alignCast(@fieldParentPtr("writer", w));
+        self.clock.touch();
+        return self.target.vtable.drain(self.target, data, splat);
+    }
+};
+
+/// 空闲看门狗：只要 `clock` 在 `timeout_ms` 内被刷新过就继续等待；
+/// 真正空闲超时后返回，让 `Select` 选中 timeout 分支并取消请求。
+fn idleWatchdog(io: std.Io, clock: *ActivityClock, timeout_ms: u64) void {
+    const timeout_i: i64 = @intCast(@min(timeout_ms, @as(u64, @intCast(std.math.maxInt(i64)))));
+    const poll_i: i64 = @min(timeout_i, 100);
+    while (clock.idleMs() < timeout_i) {
+        std.Io.sleep(io, std.Io.Duration.fromMilliseconds(@max(poll_i, 1)), .awake) catch return;
+    }
+}
+
+/// 让 `task_fn` 与空闲看门狗竞速：请求先完成返回其结果（`?Ret`），空闲超时返回 `null`。
+///
+/// 依赖 `std.Io.Select` + `concurrent`：两个任务都真正并发执行，超时后
+/// `cancelDiscard` 会取消未完成的一方并等待其清理（包括 `fetch` 的 `defer`）。
+fn raceWithTimeout(
+    io: std.Io,
+    timeout_ms: u64,
+    clock: *ActivityClock,
+    comptime task_fn: anytype,
+    task_args: std.meta.ArgsTuple(@TypeOf(task_fn)),
+) !?@typeInfo(@TypeOf(task_fn)).@"fn".return_type.? {
+    const Ret = @typeInfo(@TypeOf(task_fn)).@"fn".return_type.?;
+
+    const Outcome = union(enum) {
+        task: Ret,
+        timeout: void,
+    };
+    var buf: [2]Outcome = undefined;
+    var select: std.Io.Select(Outcome) = .init(io, &buf);
+    defer select.cancelDiscard();
+
+    try select.concurrent(.task, task_fn, task_args);
+    try select.concurrent(.timeout, idleWatchdog, .{ io, clock, timeout_ms });
+
+    return switch (try select.await()) {
+        .task => |result| result,
+        .timeout => null,
+    };
+}
 
 /// `std.Io.Writer` that invokes `OnBodyChunk` from `drain` (unbuffered).
 const ChunkForwarder = struct {
@@ -241,4 +361,81 @@ test "http client: ChunkForwarder drain invokes on_chunk" {
     const n = try ChunkForwarder.drain(&fwd.writer, &parts, 1);
     try std.testing.expectEqual(@as(usize, 3), n);
     try std.testing.expectEqual(@as(usize, 3), ctx.total);
+}
+
+test "http client: ActivityWriter forwards bytes and refreshes the idle clock" {
+    const a = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var clock = ActivityClock.init(io);
+    // 人为制造空闲，再写入，验证写入会刷新计时。
+    std.Io.sleep(io, std.Io.Duration.fromMilliseconds(30), .awake) catch {};
+    const idle_before = clock.idleMs();
+    try std.testing.expect(idle_before >= 20);
+
+    var sink: std.Io.Writer.Allocating = .init(a);
+    defer sink.deinit();
+    var aw = ActivityWriter.init(&sink.writer, &clock);
+    try aw.writer.writeAll("hello");
+
+    try std.testing.expectEqualStrings("hello", sink.written());
+    try std.testing.expect(clock.idleMs() < idle_before);
+}
+
+test "http client: raceWithTimeout cancels a slow task and reports timeout" {
+    const a = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var clock = ActivityClock.init(io);
+
+    const Slow = struct {
+        fn run(task_io: std.Io) u32 {
+            std.Io.sleep(task_io, std.Io.Duration.fromMilliseconds(10_000), .awake) catch return 0;
+            return 1;
+        }
+    };
+
+    // 始终空闲 -> null（调用方据此返回 error.Timeout），慢任务被取消。
+    try std.testing.expectEqual(@as(?u32, null), try raceWithTimeout(io, 50, &clock, Slow.run, .{io}));
+}
+
+test "http client: raceWithTimeout returns the task result when it finishes first" {
+    const a = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var clock = ActivityClock.init(io);
+
+    const Fast = struct {
+        fn run() u32 {
+            return 7;
+        }
+    };
+
+    try std.testing.expectEqual(@as(?u32, 7), try raceWithTimeout(io, 5_000, &clock, Fast.run, .{}));
+}
+
+test "http client: idle timeout is refreshed by ongoing activity" {
+    const a = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var clock = ActivityClock.init(io);
+
+    const Busy = struct {
+        fn run(task_io: std.Io, c: *ActivityClock) u32 {
+            var i: usize = 0;
+            while (i < 5) : (i += 1) {
+                std.Io.sleep(task_io, std.Io.Duration.fromMilliseconds(20), .awake) catch return 0;
+                c.touch();
+            }
+            return 42;
+        }
+    };
+
+    // 每 20ms 刷新一次、总耗时约 100ms；50ms 的空闲阈值不应触发。
+    try std.testing.expectEqual(@as(?u32, 42), try raceWithTimeout(io, 50, &clock, Busy.run, .{ io, &clock }));
 }

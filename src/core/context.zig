@@ -278,14 +278,19 @@ pub const Context = struct {
     }
 
     /// Set a response header. Copies both name and value — caller retains ownership.
-    /// Overwriting the same name frees the previous owned value.
+    /// Overwriting the same name frees the previous owned value. Matching is
+    /// case-insensitive (RFC 9110), consistent with `getHeader`: setting
+    /// `set-cookie` then `Set-Cookie` overwrites instead of creating a duplicate.
     pub fn setHeader(self: *Context, name: []const u8, value: []const u8) !void {
         const value_copy = try self.allocator.dupe(u8, value);
         errdefer self.allocator.free(value_copy);
-        if (self.response_headers.getPtr(name)) |vp| {
-            self.allocator.free(vp.*);
-            vp.* = value_copy;
-            return;
+        var it = self.response_headers.iterator();
+        while (it.next()) |entry| {
+            if (std.ascii.eqlIgnoreCase(entry.key_ptr.*, name)) {
+                self.allocator.free(entry.value_ptr.*);
+                entry.value_ptr.* = value_copy;
+                return;
+            }
         }
         const name_copy = try self.allocator.dupe(u8, name);
         errdefer self.allocator.free(name_copy);
@@ -1256,6 +1261,30 @@ test "context: setAttr/setHeader overwrite frees previous value" {
     try ctx.setHeader("X-A", "1");
     try ctx.setHeader("X-A", "2");
     try std.testing.expectEqualStrings("2", ctx.response_headers.get("X-A").?);
+}
+
+test "context: setHeader matches existing names case-insensitively (RFC 9110)" {
+    const a = std.testing.allocator;
+    var ctx: Context = .{
+        .req = undefined,
+        .allocator = a,
+        .attributes = .init(a),
+        .response_cookies = .empty,
+        .response_headers = .init(a),
+        .compress_enabled = false,
+    };
+    defer ctx.deinit();
+
+    try ctx.setHeader("x-custom", "1");
+    try ctx.setHeader("X-Custom", "2");
+    // One entry, latest value — not two entries with different casing.
+    try std.testing.expectEqual(@as(usize, 1), ctx.response_headers.count());
+    // (Do not call ctx.getHeader here: with no capture/mock headers it walks the
+    // real `req`, which is `undefined` in this unit test.)
+    var it = ctx.response_headers.iterator();
+    const entry = it.next().?;
+    try std.testing.expect(std.ascii.eqlIgnoreCase(entry.key_ptr.*, "X-CUSTOM"));
+    try std.testing.expectEqualStrings("2", entry.value_ptr.*);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

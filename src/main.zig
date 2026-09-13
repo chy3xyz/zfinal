@@ -90,6 +90,12 @@ pub const Page = @import("db/pagination.zig").Page;
 pub const SqlTemplate = @import("db/sql_template.zig").SqlTemplate;
 pub const SqlTemplateManager = @import("db/sql_template.zig").SqlTemplateManager;
 
+/// HTML template engine (`{{var}}`, `{% if %}`, filters incl. `|escape`).
+/// Documented in `doc/htmx_template.md` and referenced by `examples/htmx`.
+pub const Template = @import("template/template.zig").Template;
+pub const TemplateManager = @import("template/template.zig").TemplateManager;
+pub const RenderEngine = @import("template/template.zig").RenderEngine;
+
 /// Alternative data layer to `DB`/`Model` ([zent](https://github.com/chy3xyz/zent)).
 /// Equal choice — and the recommended **primary** stack for graph-heavy apps
 /// (e-commerce, social, RBAC). Default on (`-Denable-zent=true`).
@@ -272,6 +278,9 @@ pub const createRequestIdInterceptor = @import("ext/security_interceptor.zig").c
 pub const RenderExt = @import("ext/util.zig").RenderExt;
 pub const ParamExt = @import("ext/util.zig").ParamExt;
 pub const SessionExt = @import("ext/util.zig").SessionExt;
+/// In-memory session store (TTL/lifecycle managed by the caller). Session reads
+/// return an owned `Snapshot` — see `SessionStore.getSession`.
+pub const SessionStore = @import("core/session.zig").SessionStore;
 pub const ClientIpOptions = @import("ext/ext_util.zig").ClientIpOptions;
 pub const IpExt = @import("ext/ext_util.zig").IpExt;
 pub const RequestExt = @import("ext/ext_util.zig").RequestExt;

@@ -5,6 +5,8 @@
 //! Parallel to `codegen.zig` (SQL → DB/Model). Do not mix stacks in one Tx.
 
 const std = @import("std");
+/// Shared identifier helpers (`isValidBareZigIdent`, `zigFieldName`).
+const codegen = @import("codegen");
 
 pub const FieldType = enum {
     string,
@@ -193,6 +195,129 @@ pub fn pluralize(allocator: std.mem.Allocator, singular: []const u8) ![]u8 {
         }
     }
     return try std.fmt.allocPrint(allocator, "{s}s", .{singular});
+}
+
+/// Render a schema field name for a Zig *identifier* position (struct field,
+/// function parameter, local variable, field-init/field-access, predicate
+/// method). Reserved words and non-ASCII names become quoted identifiers
+/// (`@"const"`, `@"中文"`) while `std.meta.fields(T).name` keeps the real
+/// schema name. Schema/string positions (`field.String("const")`,
+/// `setFieldValue("const", …)`, `getPara("const")`) must keep the raw name.
+/// Caller frees.
+fn zigIdent(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
+    return codegen.zigFieldName(allocator, name);
+}
+
+/// Like `zigIdent`, but for identifiers assembled from parts, e.g.
+/// `findByUnique` + PascalCase(field), `<field>EQ`, `<field>_raw`. The joined
+/// text is sanitized as a whole so `@"中文EQ"` stays one quoted identifier.
+/// Caller frees.
+fn zigIdentCat(allocator: std.mem.Allocator, prefix: []const u8, name: []const u8, suffix: []const u8) ![]const u8 {
+    const joined = try std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ prefix, name, suffix });
+    defer allocator.free(joined);
+    return codegen.zigFieldName(allocator, joined);
+}
+
+/// Name of the paginated list function: `list<Entity>By<Pascal(field)>`.
+/// Sanitized as a whole so reserved-word / non-ASCII field names stay valid
+/// (`listItemBy中文` → `@"listItemBy中文"`). Caller frees.
+fn listByFn(allocator: std.mem.Allocator, ent_name: []const u8, field_pascal: []const u8) ![]const u8 {
+    const joined = try std.fmt.allocPrint(allocator, "list{s}By{s}", .{ ent_name, field_pascal });
+    defer allocator.free(joined);
+    return codegen.zigFieldName(allocator, joined);
+}
+
+/// Escape `s` for the *body* of a Zig string literal (no surrounding quotes):
+/// backslash, double quote and control bytes. Schema names reach string
+/// positions (`Schema("…")`, `setFieldValue("…")`, `getPara("…")`) unescaped
+/// otherwise. Caller frees.
+fn zigStr(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    errdefer buf.deinit(allocator);
+    for (s) |c| switch (c) {
+        '\\' => try buf.appendSlice(allocator, "\\\\"),
+        '"' => try buf.appendSlice(allocator, "\\\""),
+        '\n' => try buf.appendSlice(allocator, "\\n"),
+        '\r' => try buf.appendSlice(allocator, "\\r"),
+        '\t' => try buf.appendSlice(allocator, "\\t"),
+        else => if (c < 0x20) {
+            var esc: [8]u8 = undefined;
+            try buf.appendSlice(allocator, try std.fmt.bufPrint(&esc, "\\x{x:0>2}", .{c}));
+        } else {
+            try buf.append(allocator, c);
+        },
+    };
+    return buf.toOwnedSlice(allocator);
+}
+
+/// Escape `s` for the *body* of a JSON string (no surrounding quotes).
+/// Mirrors `zf_shared.appendJsonString`; kept local so zent_codegen does not
+/// need a new build.zig module dependency. Caller frees.
+fn jsonStr(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    errdefer buf.deinit(allocator);
+    for (s) |c| switch (c) {
+        '"' => try buf.appendSlice(allocator, "\\\""),
+        '\\' => try buf.appendSlice(allocator, "\\\\"),
+        '\n' => try buf.appendSlice(allocator, "\\n"),
+        '\r' => try buf.appendSlice(allocator, "\\r"),
+        '\t' => try buf.appendSlice(allocator, "\\t"),
+        0x08 => try buf.appendSlice(allocator, "\\b"),
+        0x0C => try buf.appendSlice(allocator, "\\f"),
+        else => if (c < 0x20) {
+            var esc: [8]u8 = undefined;
+            try buf.appendSlice(allocator, try std.fmt.bufPrint(&esc, "\\u{x:0>4}", .{c}));
+        } else {
+            try buf.append(allocator, c);
+        },
+    };
+    return buf.toOwnedSlice(allocator);
+}
+
+/// Every entity-derived Zig symbol name, pre-sanitized for identifier
+/// positions. Address these through an arena so nothing leaks.
+const EntNames = struct {
+    ident: []const u8, // `pub const <Ent>` / `model.<Ent>`
+    info: []const u8, // `<Ent>Info`
+    row: []const u8, // `<Ent>Row`
+    page: []const u8, // `<Ent>Page`
+    create_fn: []const u8, // `create<Ent>`
+    update_fn: []const u8, // `update<Ent>`
+    delete_fn: []const u8, // `delete<Ent>`
+    find_unique_fn: []const u8, // `findUnique<Ent>`
+    list_fn: []const u8, // `list<Ent>`
+    free_fn: []const u8, // `free<Ent>s`
+    client: []const u8, // zent Client accessor (`self.client.<client>`)
+};
+
+fn entityNames(allocator: std.mem.Allocator, ent: Entity, client_name: []const u8) !EntNames {
+    return .{
+        .ident = try zigIdent(allocator, ent.name),
+        .info = try zigIdentCat(allocator, "", ent.name, "Info"),
+        .row = try zigIdentCat(allocator, "", ent.name, "Row"),
+        .page = try zigIdentCat(allocator, "", ent.name, "Page"),
+        .create_fn = try zigIdentCat(allocator, "create", ent.name, ""),
+        .update_fn = try zigIdentCat(allocator, "update", ent.name, ""),
+        .delete_fn = try zigIdentCat(allocator, "delete", ent.name, ""),
+        .find_unique_fn = try zigIdentCat(allocator, "findUnique", ent.name, ""),
+        .list_fn = try zigIdentCat(allocator, "list", ent.name, ""),
+        .free_fn = try zigIdentCat(allocator, "free", ent.name, "s"),
+        .client = try zigIdent(allocator, client_name),
+    };
+}
+
+/// `<Module>Store` / `<Module>Service`, sanitized for identifier positions.
+const ModuleNames = struct {
+    store: []const u8,
+    service: []const u8,
+};
+
+fn moduleNames(allocator: std.mem.Allocator, module: []const u8) !ModuleNames {
+    const pascal = try pascalize(allocator, module);
+    return .{
+        .store = try zigIdent(allocator, try std.fmt.allocPrint(allocator, "{s}Store", .{pascal})),
+        .service = try zigIdent(allocator, try std.fmt.allocPrint(allocator, "{s}Service", .{pascal})),
+    };
 }
 
 fn trimComment(line: []const u8) []const u8 {
@@ -524,6 +649,9 @@ pub fn generateModel(allocator: std.mem.Allocator, schema: *const Schema) ![]u8 
     var aw: std.Io.Writer.Allocating = .init(allocator);
     defer aw.deinit();
     const w = &aw.writer;
+    var name_arena = std.heap.ArenaAllocator.init(allocator);
+    defer name_arena.deinit();
+    const na = name_arena.allocator();
 
     try w.writeAll(
         \\// @generated by `zf crud:zent` — AI: edit inside ai-edit-zone only.
@@ -537,20 +665,20 @@ pub fn generateModel(allocator: std.mem.Allocator, schema: *const Schema) ![]u8 
     );
 
     for (schema.entities.items) |ent| {
-        try w.print("\npub const {s} = Schema(\"{s}\", .{{\n", .{ ent.name, ent.name });
+        try w.print("\npub const {s} = Schema(\"{s}\", .{{\n", .{ try zigIdent(na, ent.name), try zigStr(na, ent.name) });
         try w.writeAll("    .fields = &.{\n");
         for (ent.fields.items) |f| {
             if (f.typ == .enum_) {
-                try w.print("        field.Enum(\"{s}\", &.{{", .{f.name});
+                try w.print("        field.Enum(\"{s}\", &.{{", .{try zigStr(na, f.name)});
                 for (f.enum_values, 0..) |v, vi| {
                     if (vi > 0) try w.writeAll(", ");
-                    try w.print("\"{s}\"", .{v});
+                    try w.print("\"{s}\"", .{try zigStr(na, v)});
                 }
                 try w.writeAll("})");
             } else {
-                try w.print("        field.{s}(\"{s}\")", .{ f.typ.zentCtor(), f.name });
+                try w.print("        field.{s}(\"{s}\")", .{ f.typ.zentCtor(), try zigStr(na, f.name) });
             }
-            if (f.default_value) |dv| try w.print(".Default(\"{s}\")", .{dv});
+            if (f.default_value) |dv| try w.print(".Default(\"{s}\")", .{try zigStr(na, dv)});
             if (f.unique) try w.writeAll(".Unique()");
             if (f.sensitive) try w.writeAll(".Sensitive()");
             if (f.required and f.isStringLike()) try w.writeAll(".NotEmpty()");
@@ -570,7 +698,7 @@ pub fn generateModel(allocator: std.mem.Allocator, schema: *const Schema) ![]u8 
             try w.writeAll("    .indexes = &.{\n");
             for (ent.fields.items) |f| {
                 if (!f.indexed) continue;
-                try w.print("        zent.core.index.Fields(&.{{\"{s}\"}}),\n", .{f.name});
+                try w.print("        zent.core.index.Fields(&.{{\"{s}\"}}),\n", .{try zigStr(na, f.name)});
             }
             // composite unique (`unique: a, b`) → DB-level UNIQUE index
             // (guards against concurrent create races beyond the findUnique
@@ -579,7 +707,7 @@ pub fn generateModel(allocator: std.mem.Allocator, schema: *const Schema) ![]u8 
                 try w.writeAll("        zent.core.index.Fields(&.{");
                 for (ent.unique_fields, 0..) |uf, i| {
                     if (i > 0) try w.writeAll(", ");
-                    try w.print("\"{s}\"", .{uf});
+                    try w.print("\"{s}\"", .{try zigStr(na, uf)});
                 }
                 try w.writeAll("}).Unique(),\n");
             }
@@ -588,7 +716,7 @@ pub fn generateModel(allocator: std.mem.Allocator, schema: *const Schema) ![]u8 
         if (ent.refs.items.len > 0) {
             try w.writeAll("    .edges = &.{\n");
             for (ent.refs.items) |r| {
-                try w.print("        zent.core.edge.From(\"{s}\", {s}).Field(\"{s}\"),\n", .{ r.name, r.target, r.field });
+                try w.print("        zent.core.edge.From(\"{s}\", {s}).Field(\"{s}\"),\n", .{ try zigStr(na, r.name), try zigIdent(na, r.target), try zigStr(na, r.field) });
             }
             try w.writeAll("    },\n");
         }
@@ -613,10 +741,10 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
     defer aw.deinit();
     const w = &aw.writer;
 
-    const mod_pascal = try pascalize(allocator, schema.module);
-    defer allocator.free(mod_pascal);
-    const store_name = try std.fmt.allocPrint(allocator, "{s}Store", .{mod_pascal});
-    defer allocator.free(store_name);
+    var name_arena = std.heap.ArenaAllocator.init(allocator);
+    defer name_arena.deinit();
+    const na = name_arena.allocator();
+    const store_name = (try moduleNames(na, schema.module)).store;
 
     try w.writeAll(
         \\// @generated by `zf crud:zent` — AI: edit inside ai-edit-zone only.
@@ -629,7 +757,7 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
     );
     for (schema.entities.items, 0..) |ent, i| {
         if (i > 0) try w.writeAll(", ");
-        try w.print("model.{s}", .{ent.name});
+        try w.print("model.{s}", .{try zigIdent(na, ent.name)});
     }
     try w.writeAll(
         \\ });
@@ -638,7 +766,7 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
         \\
     );
     for (schema.entities.items, 0..) |ent, i| {
-        try w.print("const {s}Info = infos[{d}];\n", .{ ent.name, i });
+        try w.print("const {s} = infos[{d}];\n", .{ try zigIdentCat(na, "", ent.name, "Info"), i });
     }
 
     try w.print("\npub const {s} = struct {{\n", .{store_name});
@@ -665,55 +793,64 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
     var name_buf: [128]u8 = undefined;
     for (schema.entities.items) |ent| {
         const cname = ent.clientName(&name_buf);
+        const en = try entityNames(na, ent, cname);
 
-        try w.print("    pub fn create{s}(self: *@This()", .{ent.name});
+        try w.print("    pub fn {s}(self: *@This()", .{en.create_fn});
         for (ent.fields.items) |f| {
-            try w.print(", {s}: {s}", .{ f.name, f.typ.zigType() });
+            const fid = try zigIdent(allocator, f.name);
+            defer allocator.free(fid);
+            try w.print(", {s}: {s}", .{ fid, f.typ.zigType() });
         }
         try w.writeAll(") !i64 {\n");
         if (ent.policy) {
             // data_scope entities need a PrivacyContext; empty ctx → no extra
             // filter → allow-all (production should pass a real scope).
-            try w.print("        var b = try self.client.{s}.withContext(.{{}}).Create();\n", .{cname});
+            try w.print("        var b = try self.client.{s}.withContext(.{{}}).Create();\n", .{en.client});
         } else {
-            try w.print("        var b = try self.client.{s}.Create();\n", .{cname});
+            try w.print("        var b = try self.client.{s}.Create();\n", .{en.client});
         }
         try w.writeAll("        defer b.deinit();\n");
         for (ent.fields.items) |f| {
-            try w.print("        _ = try b.setFieldValue(\"{s}\", {s});\n", .{ f.name, f.name });
+            const fid = try zigIdent(allocator, f.name);
+            defer allocator.free(fid);
+            try w.print("        _ = try b.setFieldValue(\"{s}\", {s});\n", .{ try zigStr(na, f.name), fid });
         }
         try w.writeAll("        var row = try b.Save();\n");
-        try w.print("        defer zent.codegen.deinitEntity(infos, {s}Info, &row, self.allocator);\n", .{ent.name});
+        try w.print("        defer zent.codegen.deinitEntity(infos, {s}, &row, self.allocator);\n", .{en.info});
         try w.writeAll("        return row.id;\n    }\n\n");
 
         // update + delete (full CRUD)
         try w.print("    /// Update a {s} row by id (sets every declared field).\n", .{ent.name});
-        try w.print("    pub fn update{s}(self: *@This(), id: i64", .{ent.name});
+        try w.print("    pub fn {s}(self: *@This(), id: i64", .{en.update_fn});
         for (ent.fields.items) |f| {
-            try w.print(", {s}: {s}", .{ f.name, f.typ.zigType() });
+            const fid = try zigIdent(allocator, f.name);
+            defer allocator.free(fid);
+            try w.print(", {s}: {s}", .{ fid, f.typ.zigType() });
         }
         try w.writeAll(") !void {\n");
         if (ent.policy) {
-            try w.print("        var ub = self.client.{s}.withContext(.{{}}).Update();\n", .{cname});
+            try w.print("        var ub = self.client.{s}.withContext(.{{}}).Update();\n", .{en.client});
         } else {
-            try w.print("        var ub = self.client.{s}.Update();\n", .{cname});
+            try w.print("        var ub = self.client.{s}.Update();\n", .{en.client});
         }
         try w.writeAll("        defer ub.deinit();\n");
         for (ent.fields.items) |f| {
-            try w.print("        _ = try ub.setFieldValue(\"{s}\", {s});\n", .{ f.name, f.name });
+            const fid = try zigIdent(allocator, f.name);
+            defer allocator.free(fid);
+            try w.print("        _ = try ub.setFieldValue(\"{s}\", {s});\n", .{ try zigStr(na, f.name), fid });
         }
-        try w.print("        _ = try ub.Where(.{{self.client.{s}.predicates.idEQ(.{{ .int = id }})}});\n", .{cname});
+        try w.print("        _ = try ub.Where(.{{self.client.{s}.predicates.idEQ(.{{ .int = id }})}});\n", .{en.client});
         try w.writeAll("        _ = try ub.Save();\n    }\n\n");
 
         try w.print("    /// Delete a {s} row by id.\n", .{ent.name});
-        try w.print("    pub fn delete{s}(self: *@This(), id: i64) !void {{\n", .{ent.name});
+        try w.print("    pub fn {s}(self: *@This(), id: i64) !void {{\n", .{en.delete_fn});
         if (ent.policy) {
-            try w.print("        var db = self.client.{s}.withContext(.{{}}).Delete();\n", .{cname});
+            try w.print("        var db = self.client.{s}.withContext(.{{}}).Delete();\n", .{en.client});
         } else {
-            try w.print("        var db = self.client.{s}.Delete();\n", .{cname});
+            try w.print("        var db = self.client.{s}.Delete();\n", .{en.client});
         }
         try w.writeAll("        defer db.deinit();\n");
-        try w.print("        _ = try db.Where(.{{self.client.{s}.predicates.idEQ(.{{ .int = id }})}});\n", .{cname});
+        try w.print("        _ = try db.Where(.{{self.client.{s}.predicates.idEQ(.{{ .int = id }})}});\n", .{en.client});
         try w.writeAll("        _ = try db.Exec();\n    }\n\n");
 
         // unique lookups (@unique fields) — used by service create/update dedup.
@@ -722,19 +859,25 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
             const vtag = f.typ.valueTag() orelse continue; // time unsupported
             const fp = try pascalize(allocator, f.name);
             defer allocator.free(fp);
+            const fid = try zigIdent(allocator, f.name);
+            defer allocator.free(fid);
+            const fn_name = try zigIdentCat(allocator, "findByUnique", fp, "");
+            defer allocator.free(fn_name);
+            const pred_name = try zigIdentCat(allocator, "", f.name, "EQ");
+            defer allocator.free(pred_name);
             try w.print("    /// Returns the id of the row whose `{s}` equals `value`, or null.\n", .{f.name});
-            try w.print("    pub fn findByUnique{s}(self: *@This(), {s}: {s}) !?i64 {{\n", .{ fp, f.name, f.typ.zigType() });
+            try w.print("    pub fn {s}(self: *@This(), {s}: {s}) !?i64 {{\n", .{ fn_name, fid, f.typ.zigType() });
             if (ent.policy) {
-                try w.print("        var q = self.client.{s}.withContext(.{{}}).Query();\n", .{cname});
+                try w.print("        var q = self.client.{s}.withContext(.{{}}).Query();\n", .{en.client});
             } else {
-                try w.print("        var q = self.client.{s}.Query();\n", .{cname});
+                try w.print("        var q = self.client.{s}.Query();\n", .{en.client});
             }
             try w.writeAll("        defer q.deinit();\n");
-            try w.print("        const preds = self.client.{s}.predicates;\n", .{cname});
-            try w.print("        _ = try q.Where(.{{preds.{s}EQ(.{{ .{s} = {s} }})}});\n", .{ f.name, vtag, f.name });
+            try w.print("        const preds = self.client.{s}.predicates;\n", .{en.client});
+            try w.print("        _ = try q.Where(.{{preds.{s}(.{{ .{s} = {s} }})}});\n", .{ pred_name, vtag, fid });
             try w.writeAll("        var found = try q.All();\n");
             try w.writeAll("        defer {\n            for (found.items) |*p| {\n");
-            try w.print("                zent.codegen.deinitEntity(infos, {s}Info, p, self.allocator);\n", .{ent.name});
+            try w.print("                zent.codegen.deinitEntity(infos, {s}, p, self.allocator);\n", .{en.info});
             try w.writeAll("            }\n            found.deinit();\n        }\n");
             try w.writeAll("        if (found.items.len == 0) return null;\n        return found.items[0].id;\n    }\n\n");
         }
@@ -742,27 +885,33 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
         // composite unique (`unique: a, b`) — int fields, generates findUnique<Ent>
         if (ent.unique_fields.len > 0) {
             try w.print("    /// Composite-unique check: does a row with these values already exist?\n", .{});
-            try w.print("    pub fn findUnique{s}(self: *@This()", .{ent.name});
+            try w.print("    pub fn {s}(self: *@This()", .{en.find_unique_fn});
             for (ent.unique_fields) |uf| {
-                try w.print(", {s}: i64", .{uf});
+                const ufid = try zigIdent(allocator, uf);
+                defer allocator.free(ufid);
+                try w.print(", {s}: i64", .{ufid});
             }
             try w.writeAll(") !?i64 {\n");
             if (ent.policy) {
-                try w.print("        var q = self.client.{s}.withContext(.{{}}).Query();\n", .{cname});
+                try w.print("        var q = self.client.{s}.withContext(.{{}}).Query();\n", .{en.client});
             } else {
-                try w.print("        var q = self.client.{s}.Query();\n", .{cname});
+                try w.print("        var q = self.client.{s}.Query();\n", .{en.client});
             }
             try w.writeAll("        defer q.deinit();\n");
-            try w.print("        const preds = self.client.{s}.predicates;\n", .{cname});
+            try w.print("        const preds = self.client.{s}.predicates;\n", .{en.client});
             try w.writeAll("        _ = try q.Where(.{");
             for (ent.unique_fields, 0..) |uf, i| {
                 if (i > 0) try w.writeAll(", ");
-                try w.print("preds.{s}EQ(.{{ .int = {s} }})", .{ uf, uf });
+                const ufid = try zigIdent(allocator, uf);
+                defer allocator.free(ufid);
+                const pred_name = try zigIdentCat(allocator, "", uf, "EQ");
+                defer allocator.free(pred_name);
+                try w.print("preds.{s}(.{{ .int = {s} }})", .{ pred_name, ufid });
             }
             try w.writeAll("});\n");
             try w.writeAll("        var found = try q.All();\n");
             try w.writeAll("        defer {\n            for (found.items) |*e| {\n");
-            try w.print("                zent.codegen.deinitEntity(infos, {s}Info, e, self.allocator);\n", .{ent.name});
+            try w.print("                zent.codegen.deinitEntity(infos, {s}, e, self.allocator);\n", .{en.info});
             try w.writeAll("            }\n            found.deinit();\n        }\n");
             try w.writeAll("        if (found.items.len == 0) return null;\n        return found.items[0].id;\n    }\n\n");
         }
@@ -770,39 +919,49 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
         if (ent.list_by) |lb| {
             const lb_pascal = try pascalize(allocator, lb);
             defer allocator.free(lb_pascal);
+            const lb_ident = try zigIdent(allocator, lb);
+            defer allocator.free(lb_ident);
+            const list_fn = try listByFn(allocator, ent.name, lb_pascal);
+            defer allocator.free(list_fn);
 
-            try w.print("    pub const {s}Row = struct {{\n", .{ent.name});
+            try w.print("    pub const {s} = struct {{\n", .{en.row});
             try w.writeAll("        id: i64,\n");
             for (ent.fields.items) |f| {
-                try w.print("        {s}: {s},\n", .{ f.name, f.typ.zigType() });
+                const fid = try zigIdent(allocator, f.name);
+                defer allocator.free(fid);
+                try w.print("        {s}: {s},\n", .{ fid, f.typ.zigType() });
             }
             try w.writeAll("    };\n\n");
 
-            try w.print("    pub const {s}Page = struct {{ rows: []{s}Row, total: i64 }};\n\n", .{ ent.name, ent.name });
-            try w.print("    pub fn list{s}By{s}(self: *@This(), {s}: i64, page: usize, size: usize) !{s}Page {{\n", .{
-                ent.name, lb_pascal, lb, ent.name,
+            try w.print("    pub const {s} = struct {{ rows: []{s}, total: i64 }};\n\n", .{ en.page, en.row });
+            try w.print("    pub fn {s}(self: *@This(), {s}: i64, page: usize, size: usize) !{s} {{\n", .{
+                list_fn, lb_ident, en.page,
             });
             if (ent.policy) {
-                try w.print("        var q = self.client.{s}.withContext(.{{}}).Query();\n", .{cname});
+                try w.print("        var q = self.client.{s}.withContext(.{{}}).Query();\n", .{en.client});
             } else {
-                try w.print("        var q = self.client.{s}.Query();\n", .{cname});
+                try w.print("        var q = self.client.{s}.Query();\n", .{en.client});
             }
             try w.writeAll("        defer q.deinit();\n");
-            try w.print("        const preds = self.client.{s}.predicates;\n", .{cname});
-            try w.print("        _ = try q.Where(.{{preds.{s}EQ(.{{ .int = {s} }})}});\n", .{ lb, lb });
+            try w.print("        const preds = self.client.{s}.predicates;\n", .{en.client});
+            const lb_pred = try zigIdentCat(allocator, "", lb, "EQ");
+            defer allocator.free(lb_pred);
+            try w.print("        _ = try q.Where(.{{preds.{s}(.{{ .int = {s} }})}});\n", .{ lb_pred, lb_ident });
             // newest first; total via Count (size=0 → all rows, legacy behavior).
             try w.writeAll("        _ = try q.OrderBy(&.{.{ .column = .{ .name = \"id\", .desc = true } }});\n");
             try w.writeAll("        if (size > 0) {\n");
             try w.writeAll("            var p = try q.paged(page, size);\n");
             try w.writeAll("            defer p.deinit();\n");
-            try w.print("            var out = try self.allocator.alloc({s}Row, p.items.items.len);\n", .{ent.name});
+            try w.print("            var out = try self.allocator.alloc({s}, p.items.items.len);\n", .{en.row});
             try w.writeAll("            errdefer self.allocator.free(out);\n");
             try w.writeAll("            for (p.items.items, 0..) |e, i| {\n                out[i] = .{\n                    .id = e.id,\n");
             for (ent.fields.items) |f| {
+                const fid = try zigIdent(allocator, f.name);
+                defer allocator.free(fid);
                 if (f.typ.isOwnedSlice()) {
-                    try w.print("                    .{s} = try self.allocator.dupe(u8, e.{s}),\n", .{ f.name, f.name });
+                    try w.print("                    .{s} = try self.allocator.dupe(u8, e.{s}),\n", .{ fid, fid });
                 } else {
-                    try w.print("                    .{s} = e.{s},\n", .{ f.name, f.name });
+                    try w.print("                    .{s} = e.{s},\n", .{ fid, fid });
                 }
             }
             try w.writeAll("                };\n            }\n");
@@ -810,22 +969,24 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
             try w.writeAll("        const total = try q.Count();\n");
             try w.writeAll("        var found = try q.All();\n");
             try w.writeAll("        defer {\n            for (found.items) |*p| {\n");
-            try w.print("                zent.codegen.deinitEntity(infos, {s}Info, p, self.allocator);\n", .{ent.name});
+            try w.print("                zent.codegen.deinitEntity(infos, {s}, p, self.allocator);\n", .{en.info});
             try w.writeAll("            }\n            found.deinit();\n        }\n");
-            try w.print("        var out = try self.allocator.alloc({s}Row, found.items.len);\n", .{ent.name});
+            try w.print("        var out = try self.allocator.alloc({s}, found.items.len);\n", .{en.row});
             try w.writeAll("        errdefer self.allocator.free(out);\n");
             try w.writeAll("        for (found.items, 0..) |p, i| {\n            out[i] = .{\n                .id = p.id,\n");
             for (ent.fields.items) |f| {
+                const fid = try zigIdent(allocator, f.name);
+                defer allocator.free(fid);
                 if (f.typ.isOwnedSlice()) {
-                    try w.print("                .{s} = try self.allocator.dupe(u8, p.{s}),\n", .{ f.name, f.name });
+                    try w.print("                .{s} = try self.allocator.dupe(u8, p.{s}),\n", .{ fid, fid });
                 } else {
-                    try w.print("                .{s} = p.{s},\n", .{ f.name, f.name });
+                    try w.print("                .{s} = p.{s},\n", .{ fid, fid });
                 }
             }
             try w.writeAll("            };\n        }\n");
             try w.writeAll("        return .{ .rows = out, .total = total };\n    }\n\n");
 
-            try w.print("    pub fn free{s}s(self: *@This(), rows: []{s}Row) void {{\n", .{ ent.name, ent.name });
+            try w.print("    pub fn {s}(self: *@This(), rows: []{s}) void {{\n", .{ en.free_fn, en.row });
             var has_owned = false;
             for (ent.fields.items) |f| {
                 if (f.typ.isOwnedSlice()) has_owned = true;
@@ -834,7 +995,9 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
                 try w.writeAll("        for (rows) |r| {\n");
                 for (ent.fields.items) |f| {
                     if (f.typ.isOwnedSlice()) {
-                        try w.print("            self.allocator.free(r.{s});\n", .{f.name});
+                        const fid = try zigIdent(allocator, f.name);
+                        defer allocator.free(fid);
+                        try w.print("            self.allocator.free(r.{s});\n", .{fid});
                     }
                 }
                 try w.writeAll("        }\n");
@@ -851,7 +1014,7 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
     );
     for (schema.entities.items) |ent| {
         if (ent.list_by == null) {
-            try w.print("        _ = {s}Info;\n", .{ent.name});
+            try w.print("        _ = {s};\n", .{try zigIdentCat(na, "", ent.name, "Info")});
         }
     }
     try w.writeAll("    }\n};\n");
@@ -863,12 +1026,12 @@ pub fn generateService(allocator: std.mem.Allocator, schema: *const Schema) ![]u
     defer aw.deinit();
     const w = &aw.writer;
 
-    const mod_pascal = try pascalize(allocator, schema.module);
-    defer allocator.free(mod_pascal);
-    const store_name = try std.fmt.allocPrint(allocator, "{s}Store", .{mod_pascal});
-    defer allocator.free(store_name);
-    const svc_name = try std.fmt.allocPrint(allocator, "{s}Service", .{mod_pascal});
-    defer allocator.free(svc_name);
+    var name_arena = std.heap.ArenaAllocator.init(allocator);
+    defer name_arena.deinit();
+    const na = name_arena.allocator();
+    const mn = try moduleNames(na, schema.module);
+    const store_name = mn.store;
+    const svc_name = mn.service;
 
     try w.writeAll("// @generated by `zf crud:zent` — AI: edit inside ai-edit-zone only.\n");
     try w.writeAll("const std = @import(\"std\");\nconst persist = @import(\"persistence.zig\");\n\n");
@@ -877,78 +1040,103 @@ pub fn generateService(allocator: std.mem.Allocator, schema: *const Schema) ![]u
     try w.print("    pub fn init(store: *persist.{s}) @This() {{\n", .{store_name});
     try w.writeAll("        return .{ .store = store };\n    }\n\n");
 
+    var name_buf: [128]u8 = undefined;
     for (schema.entities.items) |ent| {
-        try w.print("    pub fn create{s}(self: *@This()", .{ent.name});
+        const en = try entityNames(na, ent, ent.clientName(&name_buf));
+
+        try w.print("    pub fn {s}(self: *@This()", .{en.create_fn});
         for (ent.fields.items) |f| {
-            try w.print(", {s}: {s}", .{ f.name, f.typ.zigType() });
+            const fid = try zigIdent(allocator, f.name);
+            defer allocator.free(fid);
+            try w.print(", {s}: {s}", .{ fid, f.typ.zigType() });
         }
         try w.writeAll(") !i64 {\n");
         try w.writeAll("        // ── ai-edit-zone: business rules ────────────────────────────\n");
         for (ent.fields.items) |f| {
+            const fid = try zigIdent(allocator, f.name);
+            defer allocator.free(fid);
             if (f.typ.isOwnedSlice()) {
-                try w.print("        if ({s}.len == 0) return error.InvalidInput;\n", .{f.name});
+                try w.print("        if ({s}.len == 0) return error.InvalidInput;\n", .{fid});
             } else if (f.typ == .int and (std.mem.endsWith(u8, f.name, "_id") or std.mem.eql(u8, f.name, "id"))) {
-                try w.print("        if ({s} <= 0) return error.InvalidInput;\n", .{f.name});
+                try w.print("        if ({s} <= 0) return error.InvalidInput;\n", .{fid});
             }
         }
         for (ent.fields.items) |f| {
             if (!f.unique) continue;
             const fp = try pascalize(allocator, f.name);
             defer allocator.free(fp);
-            try w.print("        if (try self.store.findByUnique{s}({s}) != null) return error.Duplicate;\n", .{ fp, f.name });
+            const fid = try zigIdent(allocator, f.name);
+            defer allocator.free(fid);
+            const fn_name = try zigIdentCat(allocator, "findByUnique", fp, "");
+            defer allocator.free(fn_name);
+            try w.print("        if (try self.store.{s}({s}) != null) return error.Duplicate;\n", .{ fn_name, fid });
         }
         if (ent.unique_fields.len > 0) {
-            try w.print("        if (try self.store.findUnique{s}(", .{ent.name});
+            try w.print("        if (try self.store.{s}(", .{en.find_unique_fn});
             for (ent.unique_fields, 0..) |uf, i| {
                 if (i > 0) try w.writeAll(", ");
-                try w.writeAll(uf);
+                const ufid = try zigIdent(allocator, uf);
+                defer allocator.free(ufid);
+                try w.writeAll(ufid);
             }
             try w.writeAll(") != null) return error.Duplicate;\n");
         }
         try w.writeAll("        // ── end ai-edit-zone ──────────────────────────────────────\n");
-        try w.print("        return try self.store.create{s}(", .{ent.name});
+        try w.print("        return try self.store.{s}(", .{en.create_fn});
         for (ent.fields.items, 0..) |f, i| {
             if (i > 0) try w.writeAll(", ");
-            try w.writeAll(f.name);
+            const fid = try zigIdent(allocator, f.name);
+            defer allocator.free(fid);
+            try w.writeAll(fid);
         }
         try w.writeAll(");\n    }\n\n");
 
         // update + delete (no ai-edit-zone: keeps merge order stable when new
         // same-named zones would otherwise mispair with older files)
-        try w.print("    pub fn update{s}(self: *@This(), id: i64", .{ent.name});
+        try w.print("    pub fn {s}(self: *@This(), id: i64", .{en.update_fn});
         for (ent.fields.items) |f| {
-            try w.print(", {s}: {s}", .{ f.name, f.typ.zigType() });
+            const fid = try zigIdent(allocator, f.name);
+            defer allocator.free(fid);
+            try w.print(", {s}: {s}", .{ fid, f.typ.zigType() });
         }
         try w.writeAll(") !void {\n");
         try w.writeAll("        if (id <= 0) return error.InvalidInput;\n");
         for (ent.fields.items) |f| {
+            const fid = try zigIdent(allocator, f.name);
+            defer allocator.free(fid);
             if (f.typ.isOwnedSlice()) {
-                try w.print("        if ({s}.len == 0) return error.InvalidInput;\n", .{f.name});
+                try w.print("        if ({s}.len == 0) return error.InvalidInput;\n", .{fid});
             }
         }
-        try w.print("        return self.store.update{s}(id", .{ent.name});
+        try w.print("        return self.store.{s}(id", .{en.update_fn});
         for (ent.fields.items) |f| {
-            try w.print(", {s}", .{f.name});
+            const fid = try zigIdent(allocator, f.name);
+            defer allocator.free(fid);
+            try w.print(", {s}", .{fid});
         }
         try w.writeAll(");\n    }\n\n");
 
-        try w.print("    pub fn delete{s}(self: *@This(), id: i64) !void {{\n", .{ent.name});
+        try w.print("    pub fn {s}(self: *@This(), id: i64) !void {{\n", .{en.delete_fn});
         try w.writeAll("        if (id <= 0) return error.InvalidInput;\n");
-        try w.print("        return self.store.delete{s}(id);\n    }}\n\n", .{ent.name});
+        try w.print("        return self.store.{s}(id);\n    }}\n\n", .{en.delete_fn});
 
         if (ent.list_by) |lb| {
             const lb_pascal = try pascalize(allocator, lb);
             defer allocator.free(lb_pascal);
-            try w.print("    pub fn list{s}(self: *@This(), {s}: i64, page: usize, size: usize) !persist.{s}.{s}Page {{\n", .{
-                ent.name, lb, store_name, ent.name,
+            const lb_ident = try zigIdent(allocator, lb);
+            defer allocator.free(lb_ident);
+            const list_fn = try listByFn(allocator, ent.name, lb_pascal);
+            defer allocator.free(list_fn);
+            try w.print("    pub fn {s}(self: *@This(), {s}: i64, page: usize, size: usize) !persist.{s}.{s} {{\n", .{
+                en.list_fn, lb_ident, store_name, en.page,
             });
-            try w.print("        if ({s} <= 0) return error.InvalidInput;\n", .{lb});
-            try w.print("        return try self.store.list{s}By{s}({s}, page, size);\n", .{ ent.name, lb_pascal, lb });
+            try w.print("        if ({s} <= 0) return error.InvalidInput;\n", .{lb_ident});
+            try w.print("        return try self.store.{s}({s}, page, size);\n", .{ list_fn, lb_ident });
             try w.writeAll("    }\n\n");
-            try w.print("    pub fn free{s}s(self: *@This(), rows: []persist.{s}.{s}Row) void {{\n", .{
-                ent.name, store_name, ent.name,
+            try w.print("    pub fn {s}(self: *@This(), rows: []persist.{s}.{s}) void {{\n", .{
+                en.free_fn, store_name, en.row,
             });
-            try w.print("        self.store.free{s}s(rows);\n    }}\n\n", .{ent.name});
+            try w.print("        self.store.{s}(rows);\n    }}\n\n", .{en.free_fn});
         }
     }
 
@@ -966,10 +1154,10 @@ pub fn generateHandler(allocator: std.mem.Allocator, schema: *const Schema) ![]u
     defer aw.deinit();
     const w = &aw.writer;
 
-    const mod_pascal = try pascalize(allocator, schema.module);
-    defer allocator.free(mod_pascal);
-    const svc_name = try std.fmt.allocPrint(allocator, "{s}Service", .{mod_pascal});
-    defer allocator.free(svc_name);
+    var name_arena = std.heap.ArenaAllocator.init(allocator);
+    defer name_arena.deinit();
+    const na = name_arena.allocator();
+    const svc_name = (try moduleNames(na, schema.module)).service;
 
     try w.writeAll("// @generated by `zf crud:zent` — AI: edit inside ai-edit-zone only.\n");
     try w.writeAll("const std = @import(\"std\");\nconst zfinal = @import(\"zfinal\");\nconst service = @import(\"service.zig\");\n\n");
@@ -980,34 +1168,42 @@ pub fn generateHandler(allocator: std.mem.Allocator, schema: *const Schema) ![]u
 
     var name_buf: [128]u8 = undefined;
     for (schema.entities.items) |ent| {
-        try w.print("pub fn create{s}(ctx: *zfinal.Context) !void {{\n", .{ent.name});
+        const en = try entityNames(na, ent, ent.clientName(&name_buf));
+
+        try w.print("pub fn {s}(ctx: *zfinal.Context) !void {{\n", .{en.create_fn});
         try w.writeAll("    const svc = try svcOrErr(ctx);\n");
         try w.writeAll("    // ── ai-edit-zone: handler hooks ───────────────────────────────\n");
         for (ent.fields.items) |f| {
+            const fid = try zigIdent(allocator, f.name);
+            defer allocator.free(fid);
             if (f.typ.isOwnedSlice()) {
-                try w.print("    const {s} = try ctx.getPara(\"{s}\") orelse {{\n", .{ f.name, f.name });
-                try w.print("        try ctx.renderJson(.{{ .ok = false, .error_msg = \"Missing {s}\" }});\n", .{f.name});
+                try w.print("    const {s} = try ctx.getPara(\"{s}\") orelse {{\n", .{ fid, try zigStr(na, f.name) });
+                try w.print("        try ctx.renderJson(.{{ .ok = false, .error_msg = \"Missing {s}\" }});\n", .{try zigStr(na, f.name)});
                 try w.writeAll("        return;\n    };\n");
             } else if (f.typ == .int or f.typ == .time) {
                 if (f.default_value) |dv| {
-                    try w.print("    const {s} = try ctx.getParaToLongDefault(\"{s}\", {s});\n", .{ f.name, f.name, dv });
+                    try w.print("    const {s} = try ctx.getParaToLongDefault(\"{s}\", {s});\n", .{ fid, try zigStr(na, f.name), dv });
                 } else {
-                    try w.print("    const {s} = try ctx.getParaToLong(\"{s}\") orelse {{\n", .{ f.name, f.name });
-                    try w.print("        try ctx.renderJson(.{{ .ok = false, .error_msg = \"Missing {s}\" }});\n", .{f.name});
+                    try w.print("    const {s} = try ctx.getParaToLong(\"{s}\") orelse {{\n", .{ fid, try zigStr(na, f.name) });
+                    try w.print("        try ctx.renderJson(.{{ .ok = false, .error_msg = \"Missing {s}\" }});\n", .{try zigStr(na, f.name)});
                     try w.writeAll("        return;\n    };\n");
                 }
             } else if (f.typ == .bool) {
-                try w.print("    const {s}_raw = try ctx.getPara(\"{s}\");\n", .{ f.name, f.name });
-                try w.print("    const {s} = if ({s}_raw) |v| std.mem.eql(u8, v, \"true\") or std.mem.eql(u8, v, \"1\") else false;\n", .{ f.name, f.name });
+                const raw_ident = try zigIdentCat(allocator, "", f.name, "_raw");
+                defer allocator.free(raw_ident);
+                try w.print("    const {s} = try ctx.getPara(\"{s}\");\n", .{ raw_ident, try zigStr(na, f.name) });
+                try w.print("    const {s} = if ({s}) |v| std.mem.eql(u8, v, \"true\") or std.mem.eql(u8, v, \"1\") else false;\n", .{ fid, raw_ident });
             } else {
-                try w.print("    const {s} = try ctx.getParaToLongDefault(\"{s}\", 0);\n", .{ f.name, f.name });
+                try w.print("    const {s} = try ctx.getParaToLongDefault(\"{s}\", 0);\n", .{ fid, try zigStr(na, f.name) });
             }
         }
         try w.writeAll("    // ── end ai-edit-zone ──────────────────────────────────────────\n");
-        try w.print("    const id = svc.create{s}(", .{ent.name});
+        try w.print("    const id = svc.{s}(", .{en.create_fn});
         for (ent.fields.items, 0..) |f, i| {
             if (i > 0) try w.writeAll(", ");
-            try w.writeAll(f.name);
+            const fid = try zigIdent(allocator, f.name);
+            defer allocator.free(fid);
+            try w.writeAll(fid);
         }
         try w.writeAll(") catch |err| {\n");
         try w.writeAll("        try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });\n");
@@ -1016,34 +1212,40 @@ pub fn generateHandler(allocator: std.mem.Allocator, schema: *const Schema) ![]u
 
         // update handler (id via query param; field parsing mirrors create,
         // generated outside ai-edit-zone to keep merge order stable)
-        try w.print("pub fn update{s}(ctx: *zfinal.Context) !void {{\n", .{ent.name});
+        try w.print("pub fn {s}(ctx: *zfinal.Context) !void {{\n", .{en.update_fn});
         try w.writeAll("    const svc = try svcOrErr(ctx);\n");
         try w.writeAll("    const id = try ctx.getParaToLong(\"id\") orelse {\n");
         try w.writeAll("        try ctx.renderJson(.{ .ok = false, .error_msg = \"Missing id\" });\n");
         try w.writeAll("        return;\n    };\n");
         for (ent.fields.items) |f| {
+            const fid = try zigIdent(allocator, f.name);
+            defer allocator.free(fid);
             if (f.typ.isOwnedSlice()) {
-                try w.print("    const {s} = try ctx.getPara(\"{s}\") orelse {{\n", .{ f.name, f.name });
-                try w.print("        try ctx.renderJson(.{{ .ok = false, .error_msg = \"Missing {s}\" }});\n", .{f.name});
+                try w.print("    const {s} = try ctx.getPara(\"{s}\") orelse {{\n", .{ fid, try zigStr(na, f.name) });
+                try w.print("        try ctx.renderJson(.{{ .ok = false, .error_msg = \"Missing {s}\" }});\n", .{try zigStr(na, f.name)});
                 try w.writeAll("        return;\n    };\n");
             } else if (f.typ == .int or f.typ == .time) {
                 if (f.default_value) |dv| {
-                    try w.print("    const {s} = try ctx.getParaToLongDefault(\"{s}\", {s});\n", .{ f.name, f.name, dv });
+                    try w.print("    const {s} = try ctx.getParaToLongDefault(\"{s}\", {s});\n", .{ fid, try zigStr(na, f.name), dv });
                 } else {
-                    try w.print("    const {s} = try ctx.getParaToLong(\"{s}\") orelse {{\n", .{ f.name, f.name });
-                    try w.print("        try ctx.renderJson(.{{ .ok = false, .error_msg = \"Missing {s}\" }});\n", .{f.name});
+                    try w.print("    const {s} = try ctx.getParaToLong(\"{s}\") orelse {{\n", .{ fid, try zigStr(na, f.name) });
+                    try w.print("        try ctx.renderJson(.{{ .ok = false, .error_msg = \"Missing {s}\" }});\n", .{try zigStr(na, f.name)});
                     try w.writeAll("        return;\n    };\n");
                 }
             } else if (f.typ == .bool) {
-                try w.print("    const {s}_raw = try ctx.getPara(\"{s}\");\n", .{ f.name, f.name });
-                try w.print("    const {s} = if ({s}_raw) |v| std.mem.eql(u8, v, \"true\") or std.mem.eql(u8, v, \"1\") else false;\n", .{ f.name, f.name });
+                const raw_ident = try zigIdentCat(allocator, "", f.name, "_raw");
+                defer allocator.free(raw_ident);
+                try w.print("    const {s} = try ctx.getPara(\"{s}\");\n", .{ raw_ident, try zigStr(na, f.name) });
+                try w.print("    const {s} = if ({s}) |v| std.mem.eql(u8, v, \"true\") or std.mem.eql(u8, v, \"1\") else false;\n", .{ fid, raw_ident });
             } else {
-                try w.print("    const {s} = try ctx.getParaToLongDefault(\"{s}\", 0);\n", .{ f.name, f.name });
+                try w.print("    const {s} = try ctx.getParaToLongDefault(\"{s}\", 0);\n", .{ fid, try zigStr(na, f.name) });
             }
         }
-        try w.print("    svc.update{s}(id", .{ent.name});
+        try w.print("    svc.{s}(id", .{en.update_fn});
         for (ent.fields.items) |f| {
-            try w.print(", {s}", .{f.name});
+            const fid = try zigIdent(allocator, f.name);
+            defer allocator.free(fid);
+            try w.print(", {s}", .{fid});
         }
         try w.writeAll(") catch |err| {\n");
         try w.writeAll("        try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });\n");
@@ -1051,12 +1253,12 @@ pub fn generateHandler(allocator: std.mem.Allocator, schema: *const Schema) ![]u
         try w.writeAll("    try ctx.renderJson(.{ .ok = true });\n}\n\n");
 
         // delete handler
-        try w.print("pub fn delete{s}(ctx: *zfinal.Context) !void {{\n", .{ent.name});
+        try w.print("pub fn {s}(ctx: *zfinal.Context) !void {{\n", .{en.delete_fn});
         try w.writeAll("    const svc = try svcOrErr(ctx);\n");
         try w.writeAll("    const id = try ctx.getParaToLong(\"id\") orelse {\n");
         try w.writeAll("        try ctx.renderJson(.{ .ok = false, .error_msg = \"Missing id\" });\n");
         try w.writeAll("        return;\n    };\n");
-        try w.print("    svc.delete{s}(id) catch |err| {{\n", .{ent.name});
+        try w.print("    svc.{s}(id) catch |err| {{\n", .{en.delete_fn});
         try w.writeAll("        try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });\n");
         try w.writeAll("        return;\n    };\n");
         try w.writeAll("    try ctx.renderJson(.{ .ok = true });\n}\n\n");
@@ -1065,18 +1267,20 @@ pub fn generateHandler(allocator: std.mem.Allocator, schema: *const Schema) ![]u
             const cname = ent.clientName(&name_buf);
             const plural = try pluralize(allocator, cname);
             defer allocator.free(plural);
-            try w.print("pub fn list{s}(ctx: *zfinal.Context) !void {{\n", .{ent.name});
+            const lb_ident = try zigIdent(allocator, lb);
+            defer allocator.free(lb_ident);
+            try w.print("pub fn {s}(ctx: *zfinal.Context) !void {{\n", .{en.list_fn});
             try w.writeAll("    const svc = try svcOrErr(ctx);\n");
-            try w.print("    const {s} = try ctx.getParaToLong(\"{s}\") orelse {{\n", .{ lb, lb });
-            try w.print("        try ctx.renderJson(.{{ .ok = false, .error_msg = \"Missing {s}\" }});\n", .{lb});
+            try w.print("    const {s} = try ctx.getParaToLong(\"{s}\") orelse {{\n", .{ lb_ident, try zigStr(na, lb) });
+            try w.print("        try ctx.renderJson(.{{ .ok = false, .error_msg = \"Missing {s}\" }});\n", .{try zigStr(na, lb)});
             try w.writeAll("        return;\n    };\n");
             try w.writeAll("    const page: usize = @intCast(try ctx.getParaToLongDefault(\"page\", 1));\n");
             try w.writeAll("    const size: usize = @intCast(try ctx.getParaToLongDefault(\"size\", 0)); // 0 = all\n");
-            try w.print("    const pageresult = svc.list{s}({s}, page, size) catch |err| {{\n", .{ ent.name, lb });
+            try w.print("    const pageresult = svc.{s}({s}, page, size) catch |err| {{\n", .{ en.list_fn, lb_ident });
             try w.writeAll("        try ctx.renderJson(.{ .ok = false, .error_msg = @errorName(err) });\n");
             try w.writeAll("        return;\n    };\n");
-            try w.print("    defer svc.free{s}s(pageresult.rows);\n", .{ent.name});
-            try w.print("    try ctx.renderJson(.{{ .ok = true, .{s} = pageresult.rows, .meta = .{{ .total = pageresult.total, .page = page, .size = size }} }});\n}}\n\n", .{plural});
+            try w.print("    defer svc.{s}(pageresult.rows);\n", .{en.free_fn});
+            try w.print("    try ctx.renderJson(.{{ .ok = true, .{s} = pageresult.rows, .meta = .{{ .total = pageresult.total, .page = page, .size = size }} }});\n}}\n\n", .{try zigIdent(na, plural)});
         }
     }
 
@@ -1093,6 +1297,9 @@ pub fn generateRoutes(allocator: std.mem.Allocator, schema: *const Schema) ![]u8
     var aw: std.Io.Writer.Allocating = .init(allocator);
     errdefer aw.deinit();
     const w = &aw.writer;
+    var name_arena = std.heap.ArenaAllocator.init(allocator);
+    defer name_arena.deinit();
+    const na = name_arena.allocator();
     try w.writeAll("// @generated by zf routes — DO NOT EDIT\n");
     try w.writeAll("// Regenerate: zf routes  (or: zf crud:zent)\n");
     try w.writeAll("const handler = @import(\"handler.zig\");\n\n");
@@ -1100,6 +1307,7 @@ pub fn generateRoutes(allocator: std.mem.Allocator, schema: *const Schema) ![]u8
     var name_buf: [128]u8 = undefined;
     for (schema.entities.items) |ent| {
         const cname = ent.clientName(&name_buf);
+        const en = try entityNames(na, ent, cname);
         const plural = try pluralize(allocator, cname);
         defer allocator.free(plural);
         const base = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ schema.api_prefix, plural });
@@ -1110,11 +1318,11 @@ pub fn generateRoutes(allocator: std.mem.Allocator, schema: *const Schema) ![]u8
         else
             try allocator.dupe(u8, base);
         defer allocator.free(path);
-        try w.print("    try app.post(\"{s}\", handler.create{s});\n", .{ path, ent.name });
-        try w.print("    try app.put(\"{s}\", handler.update{s});\n", .{ path, ent.name });
-        try w.print("    try app.delete(\"{s}\", handler.delete{s});\n", .{ path, ent.name });
+        try w.print("    try app.post(\"{s}\", handler.{s});\n", .{ try zigStr(na, path), en.create_fn });
+        try w.print("    try app.put(\"{s}\", handler.{s});\n", .{ try zigStr(na, path), en.update_fn });
+        try w.print("    try app.delete(\"{s}\", handler.{s});\n", .{ try zigStr(na, path), en.delete_fn });
         if (ent.list_by != null) {
-            try w.print("    try app.get(\"{s}\", handler.list{s});\n", .{ path, ent.name });
+            try w.print("    try app.get(\"{s}\", handler.{s});\n", .{ try zigStr(na, path), en.list_fn });
         }
     }
     try w.writeAll("}\n");
@@ -1126,13 +1334,17 @@ pub fn generateActions(allocator: std.mem.Allocator, schema: *const Schema) ![]u
     var aw: std.Io.Writer.Allocating = .init(allocator);
     errdefer aw.deinit();
     const w = &aw.writer;
+    var name_arena = std.heap.ArenaAllocator.init(allocator);
+    defer name_arena.deinit();
+    const na = name_arena.allocator();
     try w.writeAll("// @generated by zf crud:zent — AI: edit actions table; then `zf routes`\n");
     try w.writeAll("const handler = @import(\"handler.zig\");\n\n");
-    try w.print("pub const module = .{{\n    .name = \"{s}\",\n    .prefix = \"{s}\",\n}};\n\n", .{ schema.module, schema.api_prefix });
+    try w.print("pub const module = .{{\n    .name = \"{s}\",\n    .prefix = \"{s}\",\n}};\n\n", .{ try zigStr(na, schema.module), try zigStr(na, schema.api_prefix) });
     try w.writeAll("pub const actions = .{\n");
     var name_buf: [128]u8 = undefined;
     for (schema.entities.items) |ent| {
         const cname = ent.clientName(&name_buf);
+        const en = try entityNames(na, ent, cname);
         const plural = try pluralize(allocator, cname);
         defer allocator.free(plural);
         const path = if (schema.api_prefix.len == 0)
@@ -1140,11 +1352,13 @@ pub fn generateActions(allocator: std.mem.Allocator, schema: *const Schema) ![]u
         else
             try std.fmt.allocPrint(allocator, "{s}/{s}", .{ schema.api_prefix, plural });
         defer allocator.free(path);
-        try w.print("    .{{ .name = \"create{s}\", .method = .POST, .action_key = \"{s}\", .handler = handler.create{s} }},\n", .{ ent.name, path, ent.name });
-        try w.print("    .{{ .name = \"update{s}\", .method = .PUT, .action_key = \"{s}\", .handler = handler.update{s} }},\n", .{ ent.name, path, ent.name });
-        try w.print("    .{{ .name = \"delete{s}\", .method = .DELETE, .action_key = \"{s}\", .handler = handler.delete{s} }},\n", .{ ent.name, path, ent.name });
+        const ename = try zigStr(na, ent.name);
+        const epath = try zigStr(na, path);
+        try w.print("    .{{ .name = \"create{s}\", .method = .POST, .action_key = \"{s}\", .handler = handler.{s} }},\n", .{ ename, epath, en.create_fn });
+        try w.print("    .{{ .name = \"update{s}\", .method = .PUT, .action_key = \"{s}\", .handler = handler.{s} }},\n", .{ ename, epath, en.update_fn });
+        try w.print("    .{{ .name = \"delete{s}\", .method = .DELETE, .action_key = \"{s}\", .handler = handler.{s} }},\n", .{ ename, epath, en.delete_fn });
         if (ent.list_by != null) {
-            try w.print("    .{{ .name = \"list{s}\", .method = .GET, .action_key = \"{s}\", .handler = handler.list{s} }},\n", .{ ent.name, path, ent.name });
+            try w.print("    .{{ .name = \"list{s}\", .method = .GET, .action_key = \"{s}\", .handler = handler.{s} }},\n", .{ ename, epath, en.list_fn });
         }
     }
     try w.writeAll(
@@ -1160,23 +1374,22 @@ pub fn generateBootstrapSnippet(allocator: std.mem.Allocator, schema: *const Sch
     var aw: std.Io.Writer.Allocating = .init(allocator);
     defer aw.deinit();
     const w = &aw.writer;
-    const mod_pascal = try pascalize(allocator, schema.module);
-    defer allocator.free(mod_pascal);
-    const store_name = try std.fmt.allocPrint(allocator, "{s}Store", .{mod_pascal});
-    defer allocator.free(store_name);
-    const svc_name = try std.fmt.allocPrint(allocator, "{s}Service", .{mod_pascal});
-    defer allocator.free(svc_name);
+    var name_arena = std.heap.ArenaAllocator.init(allocator);
+    defer name_arena.deinit();
+    const na = name_arena.allocator();
+    const mn = try moduleNames(na, schema.module);
+    const mod = try zigStr(na, schema.module);
 
     try w.writeAll("// ── paste into main.zig (zent primary data layer) ──\n");
     try w.writeAll("const zfinal = @import(\"zfinal\");\nconst zent = zfinal.zent;\n");
-    try w.print("const persist = @import(\"modules/{s}/persistence.zig\");\n", .{schema.module});
-    try w.print("const service = @import(\"modules/{s}/service.zig\");\n", .{schema.module});
-    try w.print("const handler = @import(\"modules/{s}/handler.zig\");\n", .{schema.module});
-    try w.print("const routes = @import(\"modules/{s}/routes.zig\");\n\n", .{schema.module});
+    try w.print("const persist = @import(\"modules/{s}/persistence.zig\");\n", .{mod});
+    try w.print("const service = @import(\"modules/{s}/service.zig\");\n", .{mod});
+    try w.print("const handler = @import(\"modules/{s}/handler.zig\");\n", .{mod});
+    try w.print("const routes = @import(\"modules/{s}/routes.zig\");\n\n", .{mod});
     try w.writeAll("var drv = try zent.sql_sqlite.SQLiteDriver.open(allocator, \"app.db\");\ndefer drv.close();\n");
     try w.writeAll("try zent.sql_schema.migrateSchema(allocator, drv.asDriver(), persist.infos);\n");
-    try w.print("var store = persist.{s}.init(allocator, drv.asDriver());\n", .{store_name});
-    try w.print("var svc = service.{s}.init(&store);\n", .{svc_name});
+    try w.print("var store = persist.{s}.init(allocator, drv.asDriver());\n", .{mn.store});
+    try w.print("var svc = service.{s}.init(&store);\n", .{mn.service});
     try w.writeAll("handler.g_svc = &svc;\ntry routes.register(&app);\n");
     return try aw.toOwnedSlice();
 }
@@ -1185,22 +1398,26 @@ pub fn emitJsonManifest(allocator: std.mem.Allocator, schema_path: []const u8, s
     var aw: std.Io.Writer.Allocating = .init(allocator);
     defer aw.deinit();
     const w = &aw.writer;
+    var name_arena = std.heap.ArenaAllocator.init(allocator);
+    defer name_arena.deinit();
+    const na = name_arena.allocator();
 
     const fw_ver = @import("zfinal_version");
+    const mod_json = try jsonStr(na, schema.module);
     try w.writeAll("{\n  \"$schema\": \"https://zfinal.dev/schemas/zent-manifest-1.json\",\n");
     try w.print("  \"version\": \"{s}\",\n  \"generator\": \"zf crud:zent\",\n", .{fw_ver.semver});
-    try w.print("  \"schema_path\": \"{s}\",\n", .{schema_path});
-    try w.print("  \"module\": \"{s}\",\n", .{schema.module});
-    try w.print("  \"api_prefix\": \"{s}\",\n", .{schema.api_prefix});
+    try w.print("  \"schema_path\": \"{s}\",\n", .{try jsonStr(na, schema_path)});
+    try w.print("  \"module\": \"{s}\",\n", .{mod_json});
+    try w.print("  \"api_prefix\": \"{s}\",\n", .{try jsonStr(na, schema.api_prefix)});
     try w.writeAll("  \"data_layer\": \"zent\",\n");
     try w.writeAll("  \"ai_primary\": true,\n");
     try w.writeAll("  \"files\": {\n");
-    try w.print("    \"model\": \"src/modules/{s}/model.zig\",\n", .{schema.module});
-    try w.print("    \"persistence\": \"src/modules/{s}/persistence.zig\",\n", .{schema.module});
-    try w.print("    \"service\": \"src/modules/{s}/service.zig\",\n", .{schema.module});
-    try w.print("    \"handler\": \"src/modules/{s}/handler.zig\",\n", .{schema.module});
-    try w.print("    \"actions\": \"src/modules/{s}/actions.zig\",\n", .{schema.module});
-    try w.print("    \"routes\": \"src/modules/{s}/routes.zig\"\n", .{schema.module});
+    try w.print("    \"model\": \"src/modules/{s}/model.zig\",\n", .{mod_json});
+    try w.print("    \"persistence\": \"src/modules/{s}/persistence.zig\",\n", .{mod_json});
+    try w.print("    \"service\": \"src/modules/{s}/service.zig\",\n", .{mod_json});
+    try w.print("    \"handler\": \"src/modules/{s}/handler.zig\",\n", .{mod_json});
+    try w.print("    \"actions\": \"src/modules/{s}/actions.zig\",\n", .{mod_json});
+    try w.print("    \"routes\": \"src/modules/{s}/routes.zig\"\n", .{mod_json});
     try w.writeAll("  },\n  \"ai_edit_zones\": [\n");
     try w.writeAll("    { \"file\": \"model.zig\", \"markers\": [\"// ── ai-edit-zone: model hooks\"], \"purpose\": \"edges, privacy, extra Schema\" },\n");
     try w.writeAll("    { \"file\": \"persistence.zig\", \"markers\": [\"// ── ai-edit-zone: custom queries\"], \"purpose\": \"domain queries, joins, aggregates\" },\n");
@@ -1211,12 +1428,12 @@ pub fn emitJsonManifest(allocator: std.mem.Allocator, schema_path: []const u8, s
     for (schema.entities.items, 0..) |ent, i| {
         if (i > 0) try w.writeAll(",\n");
         try w.writeAll("    {\n");
-        try w.print("      \"name\": \"{s}\"", .{ent.name});
-        if (ent.list_by) |lb| try w.print(",\n      \"list_by\": \"{s}\"", .{lb});
+        try w.print("      \"name\": \"{s}\"", .{try jsonStr(na, ent.name)});
+        if (ent.list_by) |lb| try w.print(",\n      \"list_by\": \"{s}\"", .{try jsonStr(na, lb)});
         try w.writeAll(",\n      \"fields\": [\n");
         for (ent.fields.items, 0..) |f, fi| {
             if (fi > 0) try w.writeAll(",\n");
-            try w.print("        {{\"name\": \"{s}\", \"type\": \"{s}\"", .{ f.name, @tagName(f.typ) });
+            try w.print("        {{\"name\": \"{s}\", \"type\": \"{s}\"", .{ try jsonStr(na, f.name), @tagName(f.typ) });
             if (f.indexed) try w.writeAll(", \"index\": true");
             if (f.unique) try w.writeAll(", \"unique\": true");
             if (f.sensitive) try w.writeAll(", \"sensitive\": true");
@@ -1230,7 +1447,7 @@ pub fn emitJsonManifest(allocator: std.mem.Allocator, schema_path: []const u8, s
             try w.writeAll(",\n      \"refs\": [");
             for (ent.refs.items, 0..) |r, ri| {
                 if (ri > 0) try w.writeAll(",");
-                try w.print("{{\"name\": \"{s}\", \"target\": \"{s}\", \"field\": \"{s}\"}}", .{ r.name, r.target, r.field });
+                try w.print("{{\"name\": \"{s}\", \"target\": \"{s}\", \"field\": \"{s}\"}}", .{ try jsonStr(na, r.name), try jsonStr(na, r.target), try jsonStr(na, r.field) });
             }
             try w.writeAll("]");
         }
@@ -1238,7 +1455,7 @@ pub fn emitJsonManifest(allocator: std.mem.Allocator, schema_path: []const u8, s
             try w.writeAll(",\n      \"unique_fields\": [");
             for (ent.unique_fields, 0..) |uf, ui| {
                 if (ui > 0) try w.writeAll(",");
-                try w.print("\"{s}\"", .{uf});
+                try w.print("\"{s}\"", .{try jsonStr(na, uf)});
             }
             try w.writeAll("]");
         }

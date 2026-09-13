@@ -144,12 +144,21 @@ pub const McpClient = struct {
         };
     }
 
+    /// 启动 MCP 子进程（stdio 传输）。
+    ///
+    /// stderr 设为 `inherit`：以前是 `.ignore`，服务端崩溃/握手报错时完全不可见。
+    /// 继承后子进程的诊断信息直接出现在父进程 stderr 上，便于定位问题。
+    /// 不缓冲捕获是为了避免管道写满后阻塞子进程（需要专门的排水线程才能安全）。
+    ///
+    /// 环境变量保持继承（不设置 `environ_map`）：很多 MCP server 依赖
+    /// API key 等环境变量，收窄环境会直接破坏它们。若将来要 allowlist，
+    /// 默认值也必须是「继承父进程环境」。
     pub fn start(allocator: std.mem.Allocator, io: std.Io, argv: []const []const u8) !McpClient {
         var child = try std.process.spawn(io, .{
             .argv = argv,
             .stdin = .pipe,
             .stdout = .pipe,
-            .stderr = .ignore,
+            .stderr = .inherit,
         });
         errdefer {
             child.kill(io);

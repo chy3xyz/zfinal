@@ -269,14 +269,58 @@ grep -o "ai-edit-zone: [a-z ]*" tools/zf/codegen.zig | sort -u
 | P1-5 写入安全 | `safeWrite` 改为 `<path>.tmp` + rename 原子写，覆盖/合并前留 `.bak`；`.gen.new` / `.bak` 入 gitignore | e2e：`--force` 生成 `.bak`，无 `.tmp` 残留 |
 | P1-6 `zf check` | 新增当前单文件布局的 zone 契约检查（`@generated` 但无 zone 且无 `DO NOT EDIT` 即告警） | 新工程 `zf check` → 6 pass / 0 warn / 0 fail |
 
-> **后续（同日）**：工具链进一步前移到 `0.17.0-dev.1970+67f39b551`，修复了 `Io.VTable.netWrite` 移除（改用 `io.operate(.net_write)`）、`PKCS1v1_5Signature.verify` 改为指针参数、以及 `@hasDecl` 变为可见性感知（`renderPage` 的 item `deinit` 必须 `pub`，否则静默泄漏）。`.zig-version` 已更新；在 1970 上 `zig build` / `zig build test`(418/16/0) / `test-zf`(49/49) / `install-zf` / `zig fmt --check` 全部通过。
+> **后续（同日）**：工具链进一步前移到 `0.17.0-dev.1970+67f39b551`，修复了 `Io.VTable.netWrite` 移除（改用 `io.operate(.net_write)`）、`PKCS1v1_5Signature.verify` 改为指针参数、以及 `@hasDecl` 变为可见性感知（`renderPage` 的 item `deinit` 必须 `pub`，否则静默泄漏）。`.zig-version` 已更新；在 1970 上 `zig build` / `zig build test` / `test-zf` / `install-zf` / `zig fmt --check` 全部通过。（当时的计数为 418/49，见下批后的 433/50。）
+
+### 第二批（P2 扫尾）已落地
+
+| 条目 | 修复内容 | 验证 |
+|------|----------|------|
+| `Context.setHeader` | 改为大小写不敏感（RFC 9110），与 `getHeader` 一致，不再产生重复响应头 | 新增单测 |
+| `DB` 越权方法 | `affectedRows` 改 `!i64`；`lastInsertId`/`binlog*` 补 `guard()`/magic 校验，不再绕过池的 use-after-release 检测 | `zig build test` |
+| multipart | 截断（无终止 boundary）返回 `error.InvalidMultipart`，不再把剩余字节当内容 | 新增单测 |
+| `TokenManager.validate` | 去掉每次调用的全表 `cleanExpired`（原为持锁 O(n)），改 ≤60s sweep + 目标 token 自身过期判定 | 新增“过期 token 不被接受”单测 |
+| AI runtime | `HttpClient.timeout_ms` 真正生效（idle 超时 + `Select.concurrent`）；`chatStream` 仅在零增量时回退且走重试循环；MCP 子进程 stderr 改 `inherit` | `src/plugin/http_client.zig` 6/6 |
+| 模板引擎 | **复活**：此前从未编译过（推导错误集互递归 + `readToEndAlloc` 移除），且 `formatValue` 不识别 `*const [N:0]u8` 导致所有字面量 `{{var}}` 渲染为空；新增 `|escape`/`|e`/`|safe`/`|raw` 并导出 `Template`/`TemplateManager`/`RenderEngine` | 8 个模板测试首次运行并通过 |
+| `crud:zent` 标识符 | 与我原先的判断相反——它**没有**自身校验：`const`/`中文` 字段名会生成非法 Zig（`pub fn createItem(self, const: []const u8, 中文: …)`）。现复用 `codegen.zigFieldName`，并修掉非 ASCII `list_by` 的非法函数名 | 复现工程 6/6 `ast-check` 通过；`test-zf` 50/50 |
+| CI / 发布 | 新增 ReleaseSafe 单测 job；删除无法编译的 `test-int` 步骤与 `test_gen_crud.zig`；`release.yml` 增加 `publish` job（GitHub Release + `SHA256SUMS` + CHANGELOG 段落，幂等） | `quality_gate.sh quick` PASS；`test -Doptimize=ReleaseSafe` PASS |
+
+### 第三批（完善）已落地
+
+| 条目 | 内容 | 验证 |
+|------|------|------|
+| `crud:zent` 实体/模块名 | 实体与模块名也做净化（`pub const const` → `pub const @"const"`，`create中文` → `@"create中文"`，`<Mod>Store` → `@"中文Store"`）；所有字符串位转义（Zig 字面量 `zigStr`、manifest `jsonStr`），含 `"`/`\` 的名字不再产生非法 Zig/JSON | 病态 schema（`a"b` 模块 + `const`/`中文` 实体 + 带引号字段 + 非 ASCII ref）全部 `ast-check` 通过；`test-zf` 52/52 |
+| `Logger` 全局竞争 | `pub var global_logger` → `std.atomic.Value(?*Logger)` + 静态存储 + 惰性回退；`initGlobalLogger`/`getLogger` 签名不变（并避免把 `&logger` 存成悬垂指针） | 8 线程并发首次使用测试：单一稳定指针 |
+| `KafkaConsumer` 竞争 | `state_mutex`（map/标量）+ `transport_mutex`（单 socket），**永不嵌套**；`poll` 快照后无锁跑 I/O 与用户 handler。顺带修：`putOffset` 每次更新泄漏旧 key、`stop()` 留下指向已关闭流的 `transport`、`transportPtr()` 竞态 `unreachable` 改 `error.NotConnected` | 3 线程并发测试 + 既有离线用例 |
+| 路由 param cache | `orderedRemove(0)`（请求路径上 O(n) memmove）→ 环形缓冲 O(1)（FIFO 语义不变）；**并修掉 `deinit` 只释放切片描述符、泄漏每个缓存 key 的真实泄漏** | 环形回绕/FIFO 顺序 + 4000 次插入 O(1) 淘汰测试（GPA 查双释放/泄漏） |
+| multipart 属性测试 | 600 条随机输入（纯噪声 + 带 boundary 前缀）断言不崩溃/不挂死/不泄漏 | `zig test src/upload/multipart.zig` 3/3 |
+| Actions 供应链 | `ci.yml` / `release.yml` 全部改用 commit SHA 钉版（行尾注释保留版本号），Dependabot 升级 | YAML 校验通过；无残留可变 tag |
+| 文档索引 | `doc/index.md` 补全全部 46 篇（原 19 篇未链接），按主题分组、不移动文件 | 无未链接文档、无死链 |
+| 测试计数漂移 | 去掉文档/徽章里硬编码的用例数（一周内已从 416 漂到 433）；README 徽章改为 CI 状态，文档统一写 “all green（16 skipped）” | grep 无残留数字 |
+
+### 第四批（Session UAF）已落地
+
+`SessionStore` 与 `src/template/template.zig` 一样属于**从未进入构建**的孤儿模块（没有 `@import`，测试从未运行），所以三处问题同时存在：
+
+| 问题 | 修复 | 验证 |
+|------|------|------|
+| `getSession` 解锁后返回 `?*Session`，与 `destroySession` 存在 UAF 窗口 | 改为返回调用方持有的 `Snapshot`（持锁期间深拷贝，`deinit` 释放）；新增 `Snapshot.get` 只读视图 | 新增“snapshot 在 `destroySession` 之后仍可读”测试；3 线程并发 `getSession` vs `destroySession` 压测 |
+| `createSession` 返回的 id 就是 map key，`destroySession` 会释放它 → 调用方拿到悬垂 id | 改为返回独立的调用方所有副本（map key 与返回值分开分配） | 既有用例改为 `defer allocator.free(id)` 后仍通过 |
+| 0.17-dev.19xx 移除了 `std.fmt.fmtSliceHexLower`（模块从未编译所以无人发现） | 手写 hex 编码，去掉对已移除 API 的依赖 | `zig build test` 编译通过 |
+| `SecurityExt.validateCsrfToken` 调用根本不存在的 `ctx.getSessionAttr`（从未被分析 → 潜伏编译错误） | 改读 `Context.attributes` 的 `session._csrf_token`，并改为常数时间比较 | 模块进入构建后通过 |
+
+另外把 `SessionStore` 从 `main.zig` 导出，使其进入构建与测试（当前计数 **442 passed / 16 skipped / 0 failed**）。
+
+> 说明：`SessionStore` 目前是独立的内存会话设施，`Context` 尚未内置集成；`Context` 侧的 `SessionExt` 走 attribute 模拟。真正的“每请求会话注入 + TTL 回收”属于后续设计，不在本次 UAF 修复范围内。
+
 
 ### 尚未处理（建议下一批）
 
-- **P2-1** 覆盖率采集 / fuzz / sanitizer、Windows job、`test-int` 复活与 CI matrix。
-- **P2-2** GitHub Release 发布物 + SHA256SUMS + 签名；Actions 由 tag 改钉 commit SHA。
-- **P2-3** `doc/` 目录分层与 21 个未链接文档；`AGENTS.md` / `CLAUDE.md` / `.claude/skills/` 规则去重。
-- **P2-4** AI runtime 超时贯穿到 `fetch`/read；`chatStream` 回退去重；模板默认 HTML 转义；MCP 子进程 stderr/env。
+- **P2-1** 覆盖率采集 / `std.testing.fuzz`（0.17 该 API 正在重构）/ sanitizer、Windows job、CI matrix（`test-int` 已按“删掉”处理）。
+- **P2-2** artifact 签名（cosign/GPG）。Actions 已钉 commit SHA。
+- **P2-3** `doc/` 目录分层，以及 `AGENTS.md` / `CLAUDE.md` / `.claude/skills/` 的规则去重。
 - `zf check` 中 `.gen.zig` + `ext/` 的旧检查仍保留（兼容存量工程），可在下个大版本移除。
-- `zent_codegen` 的字段名走其自身校验，未复用 `crud:sql` 的 `zigFieldName`（两条生成路径的净化策略仍不一致）。
+- `KafkaProducer`（非 Consumer）在多线程驱动下仍有同类竞争；`getAssignedPartitions` 返回借用切片（改动即破坏公开签名），已在文档注明生命周期；Kafka 连接暂无超时。
+- `src/template/htmx.zig` 的 `renderTemplate` 仍是 `@compileError` 占位（`doc/jfinal_comparison.md` 亦标注“未实现”）：要么接 `TemplateManager`，要么删除该入口。
+- ~~`SessionManager.getSession` 的 UAF~~ 已在第四批修复（见上）。剩余：`SessionStore` 尚无 `Context` 集成与 TTL 自动回收。
+
 

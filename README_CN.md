@@ -8,7 +8,7 @@
 
 [![Zig](https://img.shields.io/badge/Zig-0.17.0-orange.svg)](https://ziglang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-418%20passed%20%C2%B7%2016%20skipped%20%C2%B7%200%20failed-brightgreen.svg)]()
+[![Tests](https://github.com/chy3xyz/zfinal/actions/workflows/ci.yml/badge.svg)](https://github.com/chy3xyz/zfinal/actions/workflows/ci.yml)
 [![Codegen](https://img.shields.io/badge/codegen%20tests-passing-brightgreen.svg)]()
 [![Production](https://img.shields.io/badge/production--score-9.8%2F10%20(contractual)%20%C2%B7%20~9.2%20honest-brightgreen.svg)](PRODUCTION_AUDIT.md)
 
@@ -86,7 +86,7 @@ fn index(ctx: *zfinal.Context) !void {
 git clone https://github.com/chy3xyz/zfinal.git
 cd zfinal
 zig build                  # 构建框架 + 所有示例
-zig build test             # 基线：418 passed; 16 skipped; 0 failed
+zig build test             # 基线：全部通过（未配置 live env 时 16 skipped）
 zig build test-zf          # codegen 回归（zig build test-zf）
 ```
 
@@ -103,7 +103,7 @@ zig build run-htmx               # HTMX 交互应用
 ### 集成到你的项目
 
 ```bash
-zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.26.1.tar.gz
+zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.27.0.tar.gz
 ```
 
 在 `build.zig.zon`：
@@ -111,7 +111,7 @@ zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.26.1.tar
 ```zon
 .dependencies = .{
     .zfinal = .{
-        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.26.1.tar.gz",
+        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.27.0.tar.gz",
         .hash = "...",  // `zig fetch` 自动填
     },
 },
@@ -203,7 +203,7 @@ pub fn isUsernameTaken(db: *zfinal.DB, username: []const u8) !bool {
 
 ```bash
 zf check           # AI 边界审计
-zig build test     # 418 passed; 16 skipped; 0 failed
+zig build test     # 全部通过（16 skipped）
 ```
 
 ### 第 5 步 — 跑
@@ -453,6 +453,6 @@ MIT — 见 [LICENSE](LICENSE)。
 
 Made with ❤️ by the ZFinal Team
 
-**ZFinal v0.26.1** — Zig 的 AI 极速开发框架
+**ZFinal v0.27.0** — Zig 的 AI 极速开发框架
 
 </div>

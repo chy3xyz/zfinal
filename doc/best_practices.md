@@ -1,8 +1,8 @@
 # ZFinal 最佳实践总索
 
-> **版本**：v0.26.1 · Zig 工具链见仓库根 `.zig-version` · 修订 **2026-08-02**  
+> **版本**：v0.27.0 · Zig 工具链见仓库根 `.zig-version` · 修订 **2026-08-02**  
 > **受众**：应用开发者、框架贡献者、AI agent  
-> **验证基线**：`zig build gate`（或 `zig build test` → **418 passed; 16 skipped**）· `zig build test-zf`
+> **验证基线**：`zig build gate`（或 `zig build test` → **all green**（16 skipped））· `zig build test-zf`
 
 本文是**最佳实践文档的入口**：按任务选文档，按版本看能力何时可用。细节仍在各专题文中。
 
@@ -38,6 +38,7 @@
 
 | 时段 | 版本 | 写应用时默认采用 |
 |------|------|------------------|
+| 2026-09-14 | **0.27.0** | **破坏性**：`DB.affectedRows` → `!i64`（加 `try`）；`SessionStore.getSession` → 调用方持有的 `Snapshot`（不再返回 `*Session`，修 UAF）；`createSession` 返回调用方所有的 id；新增 `Template`/`TemplateManager`/`RenderEngine` 导出与 `\|escape` 过滤器；`HttpClient.timeout_ms` 生效；`Logger`/`KafkaConsumer` 并发修复；路由 param cache O(1)；CI 增 ReleaseSafe job、Actions 钉 SHA、`release.yml` 发布 GitHub Release |
 | 2026-09-13 | **0.26.1** | Zig `0.17.0-dev.1970` 兼容：`io.operate(.net_write)` 取代被移除的 `VTable.netWrite`；RS256 `verify` 改为指针签名；`@hasDecl` 变为可见性感知（`renderPage` 的 item `deinit` 必须 `pub`，否则静默泄漏）；`.zig-version` 前移到 1970 |
 | 2026-09-13 | **0.26.0** | 工具链单源 `.zig-version`（CI/Docker 同源）；`zf g` 走 safeWrite + `@generated` + `ai-edit-zone` 契约；`--dry-run` 无副作用、用法错误非零退出；manifest 与真实 zone 一致 + `schemas/*.json`；保留字/非 ASCII 列名 `@"..."` 净化；`safeWrite` 原子写 + `.bak`；运行时修复（提交失败回滚 / token 加锁 / XFF 取最右 / body 一次性 / 路由 key 溢出）；`zf check` 覆盖单文件布局 |
 | 2026-08-27 | **0.25.0** | 连接池并发压力回归 + 优雅关闭回归；`Context` 生命周期相位契约（body 重复读在 Debug 下 panic）；`zf crud:sql` DDL 失败诊断；生成器错误示例提示；SQLite 并发写（FULLMUTEX / shared-cache / busy_timeout）修复 |
@@ -63,7 +64,7 @@
 
 ---
 
-## 3. 绿场默认栈（2026-08 / v0.26.1+）
+## 3. 绿场默认栈（2026-08 / v0.27.0+）
 
 一条「今天新建项目」的推荐路径：
 
@@ -122,4 +123,4 @@ zig build gate-quick     # 或完整：zig build gate / zf gate
 
 ## 6. 一句话
 
-**按 v0.26.1+ 能力写：生成器定骨架，三层定方向，路由用 actions，错误用 HttpError，拦截器 cfg 自持有，规模按 L0→L3 只换装配（L3 用 Outbox→Bus）；合并前走 `zig build gate`；keep-alive 与 zapi 默认不翻，用文档与 ADR 锁边界。**
+**按 v0.27.0+ 能力写：生成器定骨架，三层定方向，路由用 actions，错误用 HttpError，拦截器 cfg 自持有，规模按 L0→L3 只换装配（L3 用 Outbox→Bus）；合并前走 `zig build gate`；keep-alive 与 zapi 默认不翻，用文档与 ADR 锁边界。**

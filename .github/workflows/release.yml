@@ -13,14 +13,14 @@ jobs:
     name: Release gate
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
     - name: Read pinned Zig version
       id: zigver
       run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
 
     - name: Setup Zig
-      uses: mlugg/setup-zig@v2
+      uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
       with:
         version: ${{ steps.zigver.outputs.version }}
 
@@ -36,7 +36,7 @@ jobs:
       run: zig build install-zf -Doptimize=ReleaseSafe
 
     - name: Upload zf binary
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:
         name: zf-linux-x86_64
         path: zig-out/bin/zf
@@ -46,14 +46,14 @@ jobs:
     needs: release-gate
     runs-on: macos-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
     - name: Read pinned Zig version
       id: zigver
       run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
 
     - name: Setup Zig
-      uses: mlugg/setup-zig@v2
+      uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
       with:
         version: ${{ steps.zigver.outputs.version }}
 
@@ -64,7 +64,60 @@ jobs:
       run: zig build install-zf -Doptimize=ReleaseSafe
 
     - name: Upload zf binary
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:
         name: zf-macos-aarch64
         path: zig-out/bin/zf
+
+  publish:
+    name: Publish GitHub Release
+    needs: [release-gate, release-macos]
+    runs-on: ubuntu-latest
+    # Only this job may create the release; every other job stays read-only.
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+    - name: Download zf artifacts
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      with:
+        path: dist
+
+    - name: Collect binaries + SHA256SUMS
+      run: |
+        set -euo pipefail
+        mkdir -p release
+        cp dist/zf-linux-x86_64/zf  release/zf-linux-x86_64
+        cp dist/zf-macos-aarch64/zf release/zf-macos-aarch64
+        chmod +x release/zf-*
+        (cd release && sha256sum zf-linux-x86_64 zf-macos-aarch64 > SHA256SUMS && cat SHA256SUMS)
+
+    - name: Extract release notes from CHANGELOG
+      run: |
+        set -euo pipefail
+        version="${GITHUB_REF_NAME#v}"
+        awk -v v="$version" '
+          index($0, "## [" v "]") == 1 { found=1; next }
+          found && index($0, "## [") == 1 { exit }
+          found { print }
+        ' CHANGELOG.md > release/RELEASE_NOTES.md
+        if [ ! -s release/RELEASE_NOTES.md ]; then
+          printf 'ZFinal %s\n' "$GITHUB_REF_NAME" > release/RELEASE_NOTES.md
+        fi
+        head -20 release/RELEASE_NOTES.md
+
+    - name: Create or update the GitHub Release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+          gh release upload "$GITHUB_REF_NAME" release/zf-linux-x86_64 release/zf-macos-aarch64 release/SHA256SUMS --clobber
+          gh release edit "$GITHUB_REF_NAME" --notes-file release/RELEASE_NOTES.md
+        else
+          gh release create "$GITHUB_REF_NAME" \
+            --title "ZFinal $GITHUB_REF_NAME" \
+            --notes-file release/RELEASE_NOTES.md \
+            release/zf-linux-x86_64 release/zf-macos-aarch64 release/SHA256SUMS
+        fi

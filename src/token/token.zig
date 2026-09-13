@@ -24,6 +24,8 @@ pub const TokenManager = struct {
     allocator: std.mem.Allocator,
     mutex: std.Io.Mutex = std.Io.Mutex.init,
     default_: i64 = 3600, // 默认 1 小时
+    /// 上次全表清理时间（unix 秒）。`validate` 用低频 sweep 取代每次都全表扫描。
+    last_sweep: i64 = 0,
 
     pub fn init(allocator: std.mem.Allocator) TokenManager {
         return TokenManager{
@@ -69,23 +71,27 @@ pub const TokenManager = struct {
         return token_ret;
     }
 
-    /// 验证并移除 Token
+    /// 验证并移除 Token。
+    ///
+    /// 热路径 O(1)：只处理目标 token，不再每次调用都全表扫描（旧实现持锁
+    /// `cleanExpired` 是 O(n)，token 多时直接拖慢每次校验）。过期 token 由
+    /// 低频 sweep（最多 60s 一次）或外部 `purgeExpired()` 回收；目标 token
+    /// 本身仍会判过期，所以 sweep 间隙里过期 token 也不会通过校验。
     pub fn validate(self: *TokenManager, token_value: []const u8) !bool {
         try self.mutex.lock(io_instance.io);
         defer self.mutex.unlock(io_instance.io);
 
-        // 清理过期 Token
-        try self.cleanExpired();
-
-        // 查找 Token
-        if (self.tokens.fetchRemove(token_value)) |kv| {
-            self.allocator.free(kv.key);
-            var val = kv.value;
-            val.deinit();
-            return true;
+        const now = TimeKit.now();
+        if (now - self.last_sweep >= 60) {
+            try self.cleanExpired();
+            self.last_sweep = now;
         }
 
-        return false;
+        const kv = self.tokens.fetchRemove(token_value) orelse return false;
+        self.allocator.free(kv.key);
+        var val = kv.value;
+        defer val.deinit();
+        return !val.isExpired(self.default_);
     }
 
     /// 检查 Token 是否存在（不移除）。
@@ -160,4 +166,20 @@ test "token generation and validation" {
     // 再次验证应该失败
     const valid2 = try manager.validate(token);
     try std.testing.expect(!valid2);
+}
+
+test "token: validate rejects an expired token even between sweeps" {
+    const allocator = std.testing.allocator;
+    var manager = TokenManager.init(allocator);
+    defer manager.deinit();
+
+    // Negative TTL makes the freshly generated token already expired, and
+    // `last_sweep` starts at 0 so no full sweep runs first — the target token
+    // itself must still be rejected (this is the security-relevant path).
+    manager.setTTL(-1);
+    const token = try manager.generate();
+    defer allocator.free(token);
+
+    try std.testing.expect(!(try manager.validate(token)));
+    try std.testing.expectEqual(@as(usize, 0), manager.count());
 }

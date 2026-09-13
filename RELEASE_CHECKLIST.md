@@ -16,7 +16,7 @@
       matching `## [semver]` section, `v$semver` tag is free or points at HEAD,
       working tree clean)
 - [ ] `zig build gate` (or `bash scripts/quality_gate.sh full`) passes
-- [ ] `zig build test` — **418 passed; 16 skipped; 0 failed** (live env adds more)
+- [ ] `zig build test` — **all green** (16 skipped without live env)
 - [ ] `zig build test-zf` — codegen regression suites pass
 - [ ] `zig build` — framework + all examples compile
 - [ ] `zig fmt --check src/ test/ tools/ benchmark/ examples/ build.zig`

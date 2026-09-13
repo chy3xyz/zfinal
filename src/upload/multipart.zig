@@ -90,8 +90,10 @@ pub const MultipartParser = struct {
             const headers = body[pos .. pos + headers_end];
             pos += headers_end + 4; // 跳过 \r\n\r\n
 
-            // 查找内容结束位置（下一个 boundary 之前）
-            const next_boundary_pos = std.mem.indexOf(u8, body[pos..], full_boundary) orelse body.len - pos;
+            // 查找内容结束位置（下一个 boundary 之前）。找不到说明请求被截断：
+            // 直接报错，而不是把剩余字节当成该 part 的内容。
+            const next_boundary_pos = std.mem.indexOf(u8, body[pos..], full_boundary) orelse
+                return error.InvalidMultipart;
             var content_end = pos + next_boundary_pos;
 
             // 去除尾部的 \r\n
@@ -179,4 +181,49 @@ test "multipart parsing" {
     try std.testing.expectEqual(@as(usize, 1), files.items.len);
     try std.testing.expectEqualStrings("test.txt", files.items[0].filename);
     try std.testing.expectEqualStrings("Hello, World!", files.items[0].data);
+}
+
+test "multipart: truncated body without a closing boundary errors" {
+    const allocator = std.testing.allocator;
+    const content_type = "multipart/form-data; boundary=----X";
+    const body =
+        "------X\r\n" ++
+        "Content-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\n" ++
+        "Content-Type: text/plain\r\n" ++
+        "\r\n" ++
+        "Hello"; // no terminating --boundary--
+
+    var parser = try MultipartParser.init(allocator, content_type);
+    // Must reject instead of silently treating the remaining bytes as content.
+    try std.testing.expectError(error.InvalidMultipart, parser.parse(body));
+}
+
+test "multipart: randomized inputs never crash, leak, or loop forever" {
+    const allocator = std.testing.allocator;
+    const content_type = "multipart/form-data; boundary=----X";
+    var prng = std.Random.DefaultPrng.init(0xC0FFEE);
+    const rand = prng.random();
+
+    var buf: [512]u8 = undefined;
+    var i: usize = 0;
+    while (i < 600) : (i += 1) {
+        // Half the inputs are raw noise, half are a real boundary prefix with
+        // random payload — the second shape exercises the part parser too.
+        const noise = i % 2 == 0;
+        const len: usize = rand.intRangeAtMost(usize, 0, buf.len);
+        rand.bytes(buf[0..len]);
+        if (!noise and len >= 10) {
+            const prefix = "------X\r\n";
+            @memcpy(buf[0..prefix.len], prefix);
+        }
+
+        var parser = MultipartParser.init(allocator, content_type) catch continue;
+        var files = parser.parse(buf[0..len]) catch |err| switch (err) {
+            error.InvalidMultipart => continue,
+            else => return err,
+        };
+        // The testing allocator fails the test on any leak here.
+        for (files.items) |*file| file.deinit();
+        files.deinit(allocator);
+    }
 }

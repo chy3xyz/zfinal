@@ -165,12 +165,19 @@ pub const DB = struct {
         self.checked_out = false;
     }
 
-    /// Enforce that the connection is checked out + not heap-corrupted.
-    fn guard(self: *DB) !void {
+    /// Panic-only corruption check, for methods whose signature cannot carry an
+    /// error (e.g. `void` / `i64` returns). See `guard` for the error-returning
+    /// variant that also rejects use-after-release.
+    fn checkMagic(self: *DB) void {
         if (self.magic != 0xDBDBDBDB) {
             std.debug.print("DB.magic corrupted: 0x{x}\n", .{self.magic});
             @panic("DB heap corruption detected (magic mismatch)");
         }
+    }
+
+    /// Enforce that the connection is checked out + not heap-corrupted.
+    fn guard(self: *DB) !void {
+        self.checkMagic();
         if (!self.checked_out) return error.CheckedOut;
     }
 
@@ -472,6 +479,7 @@ pub const DB = struct {
     }
 
     pub fn lastInsertId(self: *DB) !i64 {
+        try self.guard();
         return switch (self.driver) {
             .postgres => |*d| d.lastInsertId(),
             .mysql => |*d| d.lastInsertId(),
@@ -479,7 +487,11 @@ pub const DB = struct {
         };
     }
 
-    pub fn affectedRows(self: *DB) i64 {
+    /// Rows affected by the previous statement. Returns `error.CheckedOut` when
+    /// the connection was already returned to the pool — reading a released
+    /// connection's driver state races with whichever request now owns it.
+    pub fn affectedRows(self: *DB) !i64 {
+        try self.guard();
         return switch (self.driver) {
             .postgres => |*d| d.affectedRows(),
             .mysql => |*d| d.affectedRows(),
@@ -488,6 +500,7 @@ pub const DB = struct {
     }
 
     pub fn binlogOpen(self: *DB, file: [:0]const u8, pos: u64) !void {
+        try self.guard();
         switch (self.driver) {
             .mysql => |*d| try d.binlogOpen(file, pos),
             else => return error.UnsupportedDriver,
@@ -495,6 +508,7 @@ pub const DB = struct {
     }
 
     pub fn binlogFetch(self: *DB) !?RawBinlogEvent {
+        try self.guard();
         return switch (self.driver) {
             .mysql => |*d| try d.binlogFetch(),
             else => error.UnsupportedDriver,
@@ -502,6 +516,7 @@ pub const DB = struct {
     }
 
     pub fn binlogClose(self: *DB) void {
+        self.checkMagic();
         switch (self.driver) {
             .mysql => |*d| d.binlogClose(),
             else => {},

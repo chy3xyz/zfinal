@@ -253,10 +253,18 @@ pub const SecurityExt = struct {
         return try zfinal.HashKit.generateRandomString(allocator, 32);
     }
 
-    /// 验证 CSRF Token
+    /// 验证 CSRF Token。
+    /// 会话属性由 `SessionExt` 存在 `Context.attributes` 里（键前缀 `session.`），
+    /// 这里读取 `session._csrf_token` 后做常数时间比较。
+    /// 注意：写 token 的一方需用 `ctx.setAttr("session._csrf_token", …)`；
+    /// 全仓生成代码的 CSRF 走 `TokenManager.validate`（见 `zf crud:sql` 模板）。
     pub fn validateCsrfToken(ctx: *zfinal.Context, token: []const u8) bool {
-        const session_token = ctx.getSessionAttr("_csrf_token") orelse return false;
-        return std.mem.eql(u8, token, session_token);
+        const session_token = ctx.getAttr("session._csrf_token") orelse return false;
+        if (session_token.len != token.len) return false;
+        // 常数时间比较，避免按字节提前返回泄漏前缀信息
+        var diff: u8 = 0;
+        for (session_token, token) |a, b| diff |= a ^ b;
+        return diff == 0;
     }
 };
 

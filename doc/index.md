@@ -5,7 +5,7 @@
 
 ZFinal is a high-performance Zig web framework **designed for AI-driven development**.
 Generated files mark `// ── ai-edit-zone: …`; `zf` emits JSON manifests; `zfinal.ZfTool`
-can invoke generators in-process. Current release: **v0.26.1** (toolchain pinned by repo-root `.zig-version`).
+can invoke generators in-process. Current release: **v0.27.0** (toolchain pinned by repo-root `.zig-version`).
 
 ## Why ZFinal
 
@@ -16,7 +16,7 @@ can invoke generators in-process. Current release: **v0.26.1** (toolchain pinned
 | `zf routes` + `actions.zig` | One routing source of truth (v0.20.9+) |
 | `zfinal.ZfTool` | In-process generator, no shell required |
 | `zf check` / `--heal` / `--prod` | Boundary + HttpError + production contract + L3 heuristics |
-| `zig build test` | **418 passed; 16 skipped; 0 failed** (baseline; live env adds more) |
+| `zig build test` | **all green** (16 skipped without live env; live env adds more) |
 
 ## The 5-minute AI speedrun
 
@@ -62,6 +62,20 @@ Walkthrough: [ai-quickstart.md](ai-quickstart.md) · Demo: `examples/ai-blog-5mi
 | Quality / release gates | [release_and_quality_gates.md](release_and_quality_gates.md) |
 | Framework gap review (best practices) | [best_practices_review_v0.25.md](best_practices_review_v0.25.md) · [zfinal_improvements.md](zfinal_improvements.md) |
 
+## Full documentation index
+
+Every page under `doc/` (46), grouped. The tables above are the recommended paths; this is the complete map.
+
+- **Getting started / tutorials**: [getting_started.md](getting_started.md) · [tutorial_life3.md](tutorial_life3.md) · [ai-quickstart.md](ai-quickstart.md) · [core_concepts.md](core_concepts.md)
+- **CLI / codegen**: [zf_cli.md](zf_cli.md) · [zf_cli_updates.md](zf_cli_updates.md) · [codegen.md](codegen.md) · [aichat.md](aichat.md)
+- **Routing / HTTP**: [router.md](router.md) · [smart_routing.md](smart_routing.md) · [http_ergonomics.md](http_ergonomics.md) · [api_envelope.md](api_envelope.md) · [advanced.md](advanced.md) · [session.md](session.md)
+- **Data layer**: [database.md](database.md) · [db.md](db.md) · [zent.md](zent.md) · [zent-patterns.md](zent-patterns.md) · [zent-commerce-social.md](zent-commerce-social.md) · [performance_adr017.md](performance_adr017.md)
+- **Async / messaging / scale**: [outbox.md](outbox.md) · [bus.md](bus.md) · [nats.md](nats.md) · [robustmq.md](robustmq.md) · [websocket.md](websocket.md) · [oauth2.md](oauth2.md) · [reverse_proxy.md](reverse_proxy.md) · [scale_to_millions.md](scale_to_millions.md) · [progressive_architecture.md](progressive_architecture.md)
+- **Templates / admin / kits**: [htmx_template.md](htmx_template.md) · [admin_template.md](admin_template.md) · [kits.md](kits.md) · [module_marketplace.md](module_marketplace.md) · [saas_kit.md](saas_kit.md)
+- **AI runtime**: [ai.md](ai.md) · [ai_migration_prompts.md](ai_migration_prompts.md)
+- **Migration / comparisons**: [migration.md](migration.md) · [java_migration.md](java_migration.md) · [jfinal_comparison.md](jfinal_comparison.md) · [replicate_zfinal_in_java.md](replicate_zfinal_in_java.md) · [ZIG_016_UPGRADE.md](ZIG_016_UPGRADE.md)
+- **Quality / architecture / reviews**: [best_practices.md](best_practices.md) · [architecture_best_practices.md](architecture_best_practices.md) · [release_and_quality_gates.md](release_and_quality_gates.md) · [zfinal_improvements.md](zfinal_improvements.md) · [best_practices_review_v0.25.md](best_practices_review_v0.25.md)
+
 ## What you get out of the box
 
 - HTTP/1.1 Fiber server, router, interceptors, smart routing (`actions.zig`)
@@ -72,7 +86,7 @@ Walkthrough: [ai-quickstart.md](ai-quickstart.md) · Demo: `examples/ai-blog-5mi
 - Plugins: Cache / Cron / Redis / MQTT / OAuth2 / P2P (HMAC) / …
 - L3 ports: `Store` / `Cache` / `Outbox` (`DbOutbox.drainOnce`) + `Bus` (Memory / NATS / RobustMQ)
 - Stable `QueueNatsClient` / `QueueRobustMQClient`; CI `messaging-live` + `drivers-live`
-- **418** unit tests (+ skips for live DB/MQ/OAuth2) · `test-zf` codegen · 0 leak target
+- unit tests (+ skips for live DB/MQ/OAuth2) · `test-zf` codegen · 0 leak target
 - Cross-platform: macOS, Linux
 
 ## Project structure (for AI agents)
@@ -90,7 +104,7 @@ zfinal/
 
 ## Versioning
 
-Semantic versioning. Current: **v0.26.1** (`src/version.zig` ≡ `build.zig.zon`; supported
+Semantic versioning. Current: **v0.27.0** (`src/version.zig` ≡ `build.zig.zon`; supported
 toolchain single-sourced in repo-root `.zig-version`).  
 Tagged releases on GitHub; manifests use the same `semver`. Unreleased L3/messaging
 hardening is tracked in [CHANGELOG.md](../CHANGELOG.md) `[Unreleased]`.

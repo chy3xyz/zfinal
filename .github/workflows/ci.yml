@@ -22,12 +22,12 @@ jobs:
     name: Quality gate (productized)
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
     - name: Read pinned Zig version
       id: zigver
       run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
     - name: Setup Zig
-      uses: mlugg/setup-zig@v2
+      uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
       with:
         version: ${{ steps.zigver.outputs.version }}
     - name: Install SQLite
@@ -41,12 +41,12 @@ jobs:
     name: Test on macOS
     runs-on: macos-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
     - name: Read pinned Zig version
       id: zigver
       run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
     - name: Setup Zig
-      uses: mlugg/setup-zig@v2
+      uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
       with:
         version: ${{ steps.zigver.outputs.version }}
     - name: Install SQLite
@@ -62,12 +62,12 @@ jobs:
     name: Compile with PG + MySQL + zent
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
     - name: Read pinned Zig version
       id: zigver
       run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
     - name: Setup Zig
-      uses: mlugg/setup-zig@v2
+      uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
       with:
         version: ${{ steps.zigver.outputs.version }}
     - name: Install client libs
@@ -111,12 +111,12 @@ jobs:
           --health-timeout 5s
           --health-retries 15
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
     - name: Read pinned Zig version
       id: zigver
       run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
     - name: Setup Zig
-      uses: mlugg/setup-zig@v2
+      uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
       with:
         version: ${{ steps.zigver.outputs.version }}
     - name: Install client libs
@@ -146,12 +146,12 @@ jobs:
         ports:
           - 4222:4222
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
     - name: Read pinned Zig version
       id: zigver
       run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
     - name: Setup Zig
-      uses: mlugg/setup-zig@v2
+      uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
       with:
         version: ${{ steps.zigver.outputs.version }}
     - name: Install SQLite
@@ -195,6 +195,28 @@ jobs:
         ROBUSTMQ_URL: 127.0.0.1:9092
       run: zig build test
 
+  # Safety-checked optimized build: catches UB / optimization-sensitive
+  # behaviour that the Debug suite cannot. Debug-only helpers (e.g.
+  # ParamQuery.toSql) are compiled out of their tests in this mode.
+  test-releasesafe:
+    name: Unit tests (ReleaseSafe)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+    - name: Read pinned Zig version
+      id: zigver
+      run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
+    - name: Setup Zig
+      uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+      with:
+        version: ${{ steps.zigver.outputs.version }}
+    - name: Install SQLite
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libsqlite3-dev
+    - name: Unit tests (ReleaseSafe)
+      run: zig build test -Doptimize=ReleaseSafe
+
   # Non-blocking early warning for upstream Zig dev breakage. The supported
   # toolchain is pinned in `.zig-version`; this job only tells us *before* an
   # upgrade is attempted which std APIs moved.
@@ -203,9 +225,9 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
     - name: Setup Zig (master)
-      uses: mlugg/setup-zig@v2
+      uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
       with:
         version: master
     - name: Install SQLite

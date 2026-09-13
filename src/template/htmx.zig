@@ -24,10 +24,18 @@ pub const HtmxHelper = struct {
     }
 };
 
-/// Context 扩展：添加模板渲染方法
+/// Context 扩展：模板渲染入口。
+///
+/// ⚠️ 这是一个**未实现的占位**。原实现丢弃全部参数并静默返回成功，调用方会误以为
+/// 渲染成功。经全仓 grep，`renderTemplate` 没有任何调用方（`src/template/htmx.zig`
+/// 也未被任何文件 @import），因此改成 `@compileError`：未来的调用方会在**编译期**
+/// 得到明确错误，而不是运行时静默 no-op。
+///
+/// 若要真正启用：接入 `src/template/template.zig` 的 `TemplateManager` 完成渲染，
+/// 或删除该入口。
 pub fn renderTemplate(ctx: *Context, template_name: []const u8, data: anytype) !void {
-    // TODO: 集成 TemplateManager
     _ = ctx;
     _ = template_name;
     _ = data;
+    @compileError("HtmxHelper.renderTemplate is a stub: wire it to TemplateManager or remove this entry point");
 }

@@ -244,18 +244,65 @@ pub const RequestLogger = struct {
     }
 };
 
-/// Global logger instance (set by application at startup).
-pub var global_logger: ?Logger = null;
+/// Global logger, published atomically.
+///
+/// Thread-safety contract (exact):
+/// * `initGlobalLogger` must be called **once, before any request fiber can
+///   run** (i.e. before `ZFinal.start` / `Server.start`), typically from
+///   `main`. It copies the `Logger` into static storage and then publishes the
+///   pointer with a release store, so a reader racing the call sees either the
+///   unset state or the fully copied `Logger` — never a torn one.
+/// * `getLogger()` never returns null. With no installed logger it lazily
+///   publishes `default_logger` (a static, so the pointer is valid for the
+///   whole process). The lazy path is safe for **concurrent lazy callers**: a
+///   3-state flag ensures only one fiber writes the static, the rest spin
+///   (microseconds, once per process) until it is ready.
+/// * The pointee is immutable after publication; nothing here mutates it, so
+///   the same `*Logger` may be shared by every thread. Configure a custom
+///   `min_level` / backend on your own `Logger` and install it with
+///   `initGlobalLogger` — do not mutate the global via `getLogger()`.
+/// * Calling `initGlobalLogger` concurrently with a lazy first-use is the one
+///   unsupported case (it would race the copy in `logger_value`); the startup
+///   contract above makes it impossible in normal use.
+var logger_store: std.atomic.Value(?*Logger) = std.atomic.Value(?*Logger).init(null);
+
+/// Static storage for the logger installed by `initGlobalLogger`.
+/// `initGlobalLogger` takes `Logger` by value, so the copy must live here —
+/// publishing `&logger` (the parameter) would be a use-after-return.
+var logger_value: Logger = undefined;
+
+/// Static target for the lazy "no logger configured" fallback. Kept separate
+/// from `logger_value` so the lazy path can never race an explicit install.
+var default_logger: Logger = undefined;
+
+/// 0 = uninitialized, 1 = a fiber is initializing, 2 = ready.
+/// Only the lazy `default_logger` uses this; `logger_value` is guarded by the
+/// startup contract documented above.
+var default_logger_state: std.atomic.Value(u8) = std.atomic.Value(u8).init(0);
 
 pub fn initGlobalLogger(logger: Logger) void {
-    global_logger = logger;
+    logger_value = logger;
+    logger_store.store(&logger_value, .release);
 }
 
 pub fn getLogger() *Logger {
-    if (global_logger) |*gl| return gl;
-    // Fallback: init on first use
-    global_logger = Logger.init(std.heap.page_allocator);
-    return &global_logger.?;
+    if (logger_store.load(.acquire)) |gl| return gl;
+
+    // Lazily build the fallback exactly once. The CAS reserves write access, so
+    // only one fiber ever stores into `default_logger` — losers spin until the
+    // winner publishes state 2 (a single store; effectively immediate).
+    if (default_logger_state.cmpxchgStrong(0, 1, .acquire, .acquire) == null) {
+        default_logger = Logger.init(std.heap.page_allocator);
+        default_logger_state.store(2, .release);
+    } else {
+        while (default_logger_state.load(.acquire) != 2) std.atomic.spinLoopHint();
+    }
+
+    // Publish once. The loser of this CAS observes the winner's pointer on the
+    // next load, so an explicit `initGlobalLogger` after the fallback still wins
+    // only if it runs before any reader caches the fallback pointer.
+    _ = logger_store.cmpxchgStrong(null, &default_logger, .release, .acquire);
+    return logger_store.load(.acquire).?;
 }
 
 // ============================================================================
@@ -324,4 +371,52 @@ test "backend writer" {
     const output = try writer.toOwnedSlice();
     defer allocator.free(output);
     try std.testing.expect(std.mem.indexOf(u8, output, "writer log test") != null);
+}
+
+test "global logger: getLogger pointer is stable and initGlobalLogger publishes it" {
+    // The global store is process-wide; restore it so test order cannot leak.
+    const saved = logger_store.load(.acquire);
+    defer logger_store.store(saved, .release);
+
+    // Lazy path: never null, and the address is stable across calls.
+    const lazy_a = getLogger();
+    const lazy_b = getLogger();
+    try std.testing.expect(lazy_a == lazy_b);
+    try std.testing.expect(lazy_a == &default_logger);
+
+    // Explicit install publishes exactly the static copy's address.
+    var custom = Logger.init(std.testing.allocator);
+    custom.setLevel(.err);
+    initGlobalLogger(custom);
+    const installed = getLogger();
+    try std.testing.expect(installed == &logger_value);
+    try std.testing.expectEqual(LogLevel.err, installed.min_level);
+    // Lazy fallback is not reused once a logger is installed.
+    try std.testing.expect(installed != &default_logger);
+}
+
+test "global logger: concurrent first use resolves to one stable pointer" {
+    if (@import("builtin").single_threaded) return error.SkipZigTest;
+    const saved = logger_store.load(.acquire);
+    defer logger_store.store(saved, .release);
+
+    // Reset to the unset state so the lazy CAS path is actually exercised.
+    logger_store.store(null, .release);
+    default_logger_state.store(0, .release);
+
+    const Worker = struct {
+        fn run(out: *?*Logger) void {
+            out.* = getLogger();
+        }
+    };
+    var results: [8]?*Logger = @splat(null);
+    var threads: [8]std.Thread = undefined;
+    for (&threads, &results) |*t, *r| t.* = try std.Thread.spawn(.{}, Worker.run, .{r});
+    for (&threads) |t| t.join();
+
+    for (results) |r| {
+        try std.testing.expect(r != null);
+        try std.testing.expect(r.? == &default_logger);
+    }
+    try std.testing.expectEqual(@as(u8, 2), default_logger_state.load(.acquire));
 }

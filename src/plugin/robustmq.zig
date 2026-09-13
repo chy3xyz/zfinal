@@ -578,6 +578,21 @@ pub const KafkaConsumer = struct {
     generation_id: i32 = -1,
     /// Owned after successful `join()`; empty otherwise.
     member_id: []u8 = &.{},
+    /// Guards the in-memory maps + scalars above (`subscriptions`, `offsets`,
+    /// `assigned`, `is_running`, `generation_id`, `member_id`, `transport`
+    /// pointer). `poll` interacts with them from a poll worker while the app
+    /// thread may `subscribe`/`unsubscribe`/`commitLocal`/`stop`, so they need
+    /// a lock. Held only for short map/scalar work — NEVER across a network
+    /// call or a user handler (see `poll`), which keeps it re-entrant-safe if a
+    /// handler calls back into the consumer.
+    state_mutex: std.Io.Mutex = .init,
+    /// Serializes access to `transport`'s single socket. `poll`, `join`,
+    /// `heartbeat`, `leave` and `commitBroker` can be driven from different
+    /// threads; the Kafka wire protocol is strict request/response with a
+    /// monotonic correlation id, so two concurrent writers would corrupt the
+    /// stream. Held across one network round-trip and always acquired AFTER
+    /// `state_mutex` is released (never nested) to avoid lock-order deadlock.
+    transport_mutex: std.Io.Mutex = .init,
 
     pub const Subscription = struct {
         topic: []const u8,
@@ -611,10 +626,54 @@ pub const KafkaConsumer = struct {
         };
     }
 
+    // ── Locking helpers ────────────────────────────────────────────────────
+    // Discipline: `state_mutex` for in-memory fields only (short critical
+    // sections); `transport_mutex` for one network round-trip at a time. Never
+    // hold `state_mutex` while acquiring `transport_mutex`, and never call a
+    // `*Locked` helper without holding `state_mutex`.
+
+    fn lockState(self: *Self) void {
+        self.state_mutex.lockUncancelable(io_instance.io);
+    }
+
+    fn unlockState(self: *Self) void {
+        self.state_mutex.unlock(io_instance.io);
+    }
+
+    fn lockTransport(self: *Self) void {
+        self.transport_mutex.lockUncancelable(io_instance.io);
+    }
+
+    fn unlockTransport(self: *Self) void {
+        self.transport_mutex.unlock(io_instance.io);
+    }
+
+    /// Connected transport for one round-trip. Caller MUST hold
+    /// `transport_mutex` for the whole call it is used in; `stop`/`deinit`
+    /// mutate `self.transport` only under that same lock, so the returned
+    /// pointer stays paired with the lock.
+    ///
+    /// Returns `error.NotConnected` rather than panicking: a concurrent
+    /// `stop()` can legitimately win the race between `ensureTransport()` and
+    /// the first use on another thread. Every caller propagates it.
+    fn transportPtr(self: *Self) !*RobustMQTransport {
+        return &(self.transport orelse return error.NotConnected);
+    }
+
     pub fn deinit(self: *Self) void {
-        if (self.transport) |*t| t.deinit();
+        // Lifetime contract: called once by the owner after `poll` has stopped
+        // (there is no join here, so a concurrent poller is a programming
+        // error). Lock defensively so a last in-flight round-trip cannot race
+        // the socket teardown.
+        self.transport_mutex.lockUncancelable(io_instance.io);
+        if (self.transport) |*t| {
+            t.deinit();
+            self.transport = null;
+        }
+        self.transport_mutex.unlock(io_instance.io);
+
         if (self.member_id.len > 0) self.allocator.free(self.member_id);
-        self.clearAssignments();
+        self.clearAssignmentsLocked();
         var iter = self.subscriptions.iterator();
         while (iter.next()) |entry| {
             self.allocator.free(entry.value_ptr.topic);
@@ -630,23 +689,43 @@ pub const KafkaConsumer = struct {
     pub fn subscribe(self: *Self, topic: []const u8, handler: *const fn (KafkaMessage) void) !void {
         const topic_copy = try self.allocator.dupe(u8, topic);
         errdefer self.allocator.free(topic_copy);
-        try self.subscriptions.put(topic_copy, .{ .topic = topic_copy, .handler = handler });
-        try self.putOffset(topic_copy, 0, 0);
+
+        self.lockState();
+        defer self.unlockState();
+
+        // `put` replaces an existing entry and frees our `topic_copy` on
+        // collision; detect that so we do not leak the duplicate.
+        const gop = try self.subscriptions.getOrPut(topic_copy);
+        if (gop.found_existing) {
+            self.allocator.free(topic_copy);
+            gop.value_ptr.* = .{ .topic = gop.key_ptr.*, .handler = handler };
+        } else {
+            gop.value_ptr.* = .{ .topic = topic_copy, .handler = handler };
+        }
+        try self.putOffsetLocked(topic_copy, 0, 0);
         std.log.info("[KafkaConsumer] Subscribed to topic: {s}", .{topic});
     }
 
     pub fn unsubscribe(self: *Self, topic: []const u8) void {
+        self.lockState();
+        defer self.unlockState();
+
         if (self.subscriptions.fetchRemove(topic)) |removed| {
             self.allocator.free(removed.key);
         }
-        self.removeOffsetsForTopic(topic);
+        self.removeOffsetsForTopicLocked(topic);
         if (self.assigned.fetchRemove(topic)) |rem| {
             self.allocator.free(rem.key);
             self.allocator.free(rem.value);
         }
     }
 
+    /// Keys are borrowed from `subscriptions`; the caller owns only the returned
+    /// slice and must free it with the consumer's allocator.
     pub fn getSubscriptions(self: *Self) ![]const []const u8 {
+        self.lockState();
+        defer self.unlockState();
+
         var result = std.ArrayList([]const u8).empty;
         var iter = self.subscriptions.keyIterator();
         while (iter.next()) |key| {
@@ -656,35 +735,121 @@ pub const KafkaConsumer = struct {
     }
 
     pub fn start(self: *Self) void {
+        self.lockState();
+        defer self.unlockState();
         self.is_running = true;
     }
 
     pub fn stop(self: *Self) void {
+        self.lockState();
         self.is_running = false;
-        if (self.transport) |*t| t.close();
+        self.unlockState();
+
+        // Close off the socket under its own lock; `ensureTransport` will
+        // reconnect on the next `poll` (previously `transport` stayed non-null
+        // pointing at a closed stream).
+        self.lockTransport();
+        defer self.unlockTransport();
+        if (self.transport) |*t| {
+            t.close();
+            t.deinit();
+            self.transport = null;
+        }
     }
 
     /// Poll RobustMQ for each assigned partition (partition 0 before join).
+    ///
+    /// Concurrency: topics/handlers are snapshotted under `state_mutex`, then
+    /// network I/O and user handlers run with NO lock held. Offsets are
+    /// re-read and updated under the lock afterwards, so a concurrent
+    /// `subscribe`/`commitLocal` is serialized and the borrowed topic slice
+    /// cannot be freed underneath us.
     pub fn poll(self: *Self) !usize {
-        if (self.config.offline or !self.is_running) return 0;
+        if (self.config.offline) return 0;
+        if (!self.isRunning()) return 0;
         try self.ensureTransport();
+
+        const SubInfo = struct {
+            topic: []u8,
+            handler: *const fn (KafkaMessage) void,
+        };
+
+        // Snapshot subscriptions (owned topic copies + handler pointers) so
+        // network I/O and user handlers run with no lock held. Function
+        // pointers stay valid even if `unsubscribe` drops the subscription.
+        self.lockState();
+        var subs = std.ArrayList(SubInfo).empty;
+        var topic_it = self.subscriptions.iterator();
+        while (topic_it.next()) |entry| {
+            const dup = self.allocator.dupe(u8, entry.value_ptr.topic) catch |err| {
+                self.unlockState();
+                for (subs.items) |s| self.allocator.free(s.topic);
+                subs.deinit(self.allocator);
+                return err;
+            };
+            subs.append(self.allocator, .{ .topic = dup, .handler = entry.value_ptr.handler }) catch |err| {
+                self.allocator.free(dup);
+                self.unlockState();
+                for (subs.items) |s| self.allocator.free(s.topic);
+                subs.deinit(self.allocator);
+                return err;
+            };
+        }
+        self.unlockState();
+        defer {
+            for (subs.items) |s| self.allocator.free(s.topic);
+            subs.deinit(self.allocator);
+        }
+
         var delivered: usize = 0;
-        var it = self.subscriptions.iterator();
-        while (it.next()) |entry| {
-            const topic = entry.value_ptr.topic;
+        for (subs.items) |sub| {
+            const topic = sub.topic;
+
+            // Copy the assigned partitions out under the lock: `partitionsFor`
+            // returns a slice owned by the `assigned` map, which a concurrent
+            // `join()`/`leave()` frees. Bounded stack copy keeps the poll path
+            // allocation-free; the cap matches the offset-key scratch budget.
+            var parts_buf: [64]i32 = undefined;
+            var parts_len: usize = 0;
+            self.lockState();
             const parts = self.partitionsFor(topic);
-            for (parts) |partition| {
-                const offset = self.getOffset(topic, partition) orelse 0;
-                const values = self.transport.?.fetch(topic, partition, offset, 1024 * 1024) catch |err| {
+            for (parts) |p| {
+                if (parts_len >= parts_buf.len) break;
+                parts_buf[parts_len] = p;
+                parts_len += 1;
+            }
+            self.unlockState();
+            if (parts_len == 0) continue;
+            const parts_view = parts_buf[0..parts_len];
+
+            for (parts_view) |partition| {
+                self.lockState();
+                const offset = self.offsetLocked(topic, partition) orelse 0;
+                self.unlockState();
+
+                self.lockTransport();
+                const t = self.transportPtr() catch |err| {
+                    // A concurrent `stop()` (or `deinit`) tore the socket down
+                    // after `ensureTransport`; nothing left to poll.
+                    self.unlockTransport();
+                    if (err == error.NotConnected) return delivered;
+                    return err;
+                };
+                const values = t.fetch(topic, partition, offset, 1024 * 1024) catch |err| {
+                    self.unlockTransport();
                     std.log.warn("[KafkaConsumer] fetch {s}/{d} failed: {s}", .{ topic, partition, @errorName(err) });
                     continue;
                 };
+                self.unlockTransport();
                 defer {
                     for (values) |v| self.allocator.free(v);
                     self.allocator.free(values);
                 }
+
+                // No lock held across the user handler: it may call back into
+                // the consumer (e.g. `commitLocal`) without deadlocking.
                 for (values) |v| {
-                    entry.value_ptr.handler(.{
+                    sub.handler(.{
                         .topic = topic,
                         .key = null,
                         .value = v,
@@ -694,10 +859,14 @@ pub const KafkaConsumer = struct {
                     });
                     delivered += 1;
                 }
+
                 if (values.len > 0) {
                     const next = offset + @as(i64, @intCast(values.len));
-                    try self.putOffset(topic, partition, next);
-                    if (self.config.enable_auto_commit) {
+                    self.lockState();
+                    self.putOffsetLocked(topic, partition, next) catch {};
+                    const auto_commit = self.config.enable_auto_commit;
+                    self.unlockState();
+                    if (auto_commit) {
                         self.commitBroker(topic, partition, next) catch |err| {
                             std.log.warn("[KafkaConsumer] OffsetCommit {s}/{d} failed: {s}", .{ topic, partition, @errorName(err) });
                         };
@@ -714,14 +883,16 @@ pub const KafkaConsumer = struct {
     }
 
     pub fn commitLocalPartition(self: *Self, topic: []const u8, partition: i32, offset: i64) !void {
+        self.lockState();
+        defer self.unlockState();
         if (!self.subscriptions.contains(topic)) return error.NotSubscribed;
-        try self.putOffset(topic, partition, offset);
+        try self.putOffsetLocked(topic, partition, offset);
     }
 
     pub fn getOffset(self: *Self, topic: []const u8, partition: i32) ?i64 {
-        var key_buf: [512]u8 = undefined;
-        const key = offsetKeyBuf(&key_buf, topic, partition) catch return null;
-        return self.offsets.get(key);
+        self.lockState();
+        defer self.unlockState();
+        return self.offsetLocked(topic, partition);
     }
 
     /// Local commit + best-effort broker OffsetCommit when online.
@@ -736,16 +907,43 @@ pub const KafkaConsumer = struct {
     pub fn join(self: *Self) !void {
         if (self.config.offline) return;
         if (self.config.group_id.len == 0) return error.GroupIdRequired;
-        if (self.subscriptions.count() == 0) return error.NoSubscriptions;
         if (self.config.partition_count < 0) return error.InvalidPartitionCount;
         try self.ensureTransport();
 
+        // Snapshot subscriptions (owned) under the lock; the JoinGroup /
+        // SyncGroup round-trips below run lock-free.
+        self.lockState();
         var topics = std.ArrayList([]const u8).empty;
-        defer topics.deinit(self.allocator);
-        var it = self.subscriptions.keyIterator();
-        while (it.next()) |key| {
-            try topics.append(self.allocator, key.*);
+        var topic_it = self.subscriptions.keyIterator();
+        while (topic_it.next()) |key| {
+            const dup = self.allocator.dupe(u8, key.*) catch |err| {
+                self.unlockState();
+                for (topics.items) |t| self.allocator.free(t);
+                topics.deinit(self.allocator);
+                return err;
+            };
+            topics.append(self.allocator, dup) catch |err| {
+                self.allocator.free(dup);
+                self.unlockState();
+                for (topics.items) |t| self.allocator.free(t);
+                topics.deinit(self.allocator);
+                return err;
+            };
         }
+        const member = self.allocator.dupe(u8, self.member_id) catch |err| {
+            self.unlockState();
+            for (topics.items) |t| self.allocator.free(t);
+            topics.deinit(self.allocator);
+            return err;
+        };
+        self.unlockState();
+        defer {
+            for (topics.items) |t| self.allocator.free(t);
+            topics.deinit(self.allocator);
+            self.allocator.free(member);
+        }
+
+        if (topics.items.len == 0) return error.NoSubscriptions;
 
         const meta = try KafkaWireFormat.buildConsumerProtocolMetadata(self.allocator, topics.items);
         defer self.allocator.free(meta);
@@ -755,59 +953,109 @@ pub const KafkaConsumer = struct {
             .sticky => "sticky",
         };
 
-        var result = try self.transport.?.joinGroup(
+        self.lockTransport();
+        const t = self.transportPtr() catch |err| {
+            self.unlockTransport();
+            return err;
+        };
+        var result = t.joinGroup(
             self.config.group_id,
-            self.member_id,
+            member,
             @intCast(self.config.session_timeout_ms),
             30000,
             "consumer",
             protocol_name,
             meta,
-        );
+        ) catch |err| {
+            self.unlockTransport();
+            return err;
+        };
+        self.unlockTransport();
         defer result.deinit(self.allocator);
 
+        self.lockState();
         if (self.member_id.len > 0) self.allocator.free(self.member_id);
-        self.member_id = try self.allocator.dupe(u8, result.member_id);
+        const new_member = self.allocator.dupe(u8, result.member_id) catch |err| {
+            self.member_id = &.{};
+            self.unlockState();
+            return err;
+        };
+        self.member_id = new_member;
         self.generation_id = result.generation_id;
+        const generation = self.generation_id;
+        self.unlockState();
 
         const assignment_bytes = if (result.isLeader())
             try self.leaderSyncAssign(&result, topics.items)
-        else
-            try self.transport.?.syncGroup(
+        else blk: {
+            self.lockTransport();
+            defer self.unlockTransport();
+            const sync_transport = try self.transportPtr();
+            break :blk try sync_transport.syncGroup(
                 self.config.group_id,
-                self.generation_id,
-                self.member_id,
+                generation,
+                new_member,
                 &.{},
             );
+        };
         defer self.allocator.free(assignment_bytes);
 
-        try self.applyAssignmentBytes(assignment_bytes);
+        self.lockState();
+        defer self.unlockState();
+        try self.applyAssignmentBytesLocked(assignment_bytes);
     }
 
     pub fn heartbeat(self: *Self) !void {
         if (self.config.offline) return;
-        if (self.generation_id < 0 or self.member_id.len == 0) return error.NotJoined;
+        self.lockState();
+        const generation = self.generation_id;
+        const member = self.allocator.dupe(u8, self.member_id) catch |err| {
+            self.unlockState();
+            return err;
+        };
+        self.unlockState();
+        defer self.allocator.free(member);
+        if (generation < 0 or member.len == 0) return error.NotJoined;
         try self.ensureTransport();
-        try self.transport.?.heartbeat(self.config.group_id, self.generation_id, self.member_id);
+        self.lockTransport();
+        defer self.unlockTransport();
+        try self.transportPtr().heartbeat(self.config.group_id, generation, member);
     }
 
     pub fn leave(self: *Self) !void {
         if (self.config.offline) {
+            self.lockState();
+            defer self.unlockState();
             self.generation_id = -1;
             if (self.member_id.len > 0) {
                 self.allocator.free(self.member_id);
                 self.member_id = &.{};
             }
-            self.clearAssignments();
+            self.clearAssignmentsLocked();
             return;
         }
-        if (self.member_id.len == 0) return;
+
+        self.lockState();
+        const member = self.allocator.dupe(u8, self.member_id) catch |err| {
+            self.unlockState();
+            return err;
+        };
+        self.unlockState();
+        defer self.allocator.free(member);
+        if (member.len == 0) return;
+
         try self.ensureTransport();
-        try self.transport.?.leaveGroup(self.config.group_id, self.member_id);
+        self.lockTransport();
+        const leave_result = try self.transportPtr().leaveGroup(self.config.group_id, member);
+        self.unlockTransport();
+        try leave_result;
+
+        self.lockState();
+        defer self.unlockState();
         self.generation_id = -1;
-        self.allocator.free(self.member_id);
+        if (self.member_id.len > 0) self.allocator.free(self.member_id);
         self.member_id = &.{};
-        self.clearAssignments();
+        self.clearAssignmentsLocked();
     }
 
     pub fn fetchCommittedOffset(self: *Self, topic: []const u8) !?i64 {
@@ -818,14 +1066,39 @@ pub const KafkaConsumer = struct {
         if (self.config.offline) return self.getOffset(topic, partition);
         if (self.config.group_id.len == 0) return error.GroupIdRequired;
         try self.ensureTransport();
-        const off = try self.transport.?.offsetFetch(self.config.group_id, topic, partition);
+        self.lockTransport();
+        const t = self.transportPtr() catch |err| {
+            self.unlockTransport();
+            return err;
+        };
+        const off = t.offsetFetch(self.config.group_id, topic, partition) catch |err| {
+            self.unlockTransport();
+            return err;
+        };
+        self.unlockTransport();
         if (off < 0) return null;
-        try self.putOffset(topic, partition, off);
+        self.lockState();
+        defer self.unlockState();
+        try self.putOffsetLocked(topic, partition, off);
         return off;
     }
 
+    /// Borrowed view of the assigned partitions for `topic`.
+    ///
+    /// Lifetime: the returned slice points into the consumer's `assigned` map.
+    /// It is valid only until the next `join()` / `leave()` / `unsubscribe()`
+    /// on this consumer (which free and replace it), and must not be retained
+    /// across those calls. Copy the values if you need them longer.
     pub fn getAssignedPartitions(self: *Self, topic: []const u8) []const i32 {
+        self.lockState();
+        defer self.unlockState();
         return self.partitionsFor(topic);
+    }
+
+    pub fn isRunning(self: *Self) bool {
+        self.lockState();
+        defer self.unlockState();
+        return self.is_running;
     }
 
     fn leaderSyncAssign(self: *Self, result: *KafkaWireFormat.JoinGroupResult, topics: []const []const u8) ![]u8 {
@@ -850,7 +1123,13 @@ pub const KafkaConsumer = struct {
             self.allocator.free(topic_ranges);
         }
         for (topics, 0..) |t, ti| {
-            const pc = try self.resolvePartitionCount(t);
+            // resolvePartitionCount may issue a Metadata round-trip.
+            self.lockTransport();
+            const pc = self.resolvePartitionCount(t) catch |err| {
+                self.unlockTransport();
+                return err;
+            };
+            self.unlockTransport();
             topic_ranges[ti] = switch (self.config.assignor) {
                 .range => try KafkaWireFormat.rangeAssign(self.allocator, pc, member_ids.len),
                 .sticky => blk: {
@@ -902,12 +1181,21 @@ pub const KafkaConsumer = struct {
             }
         }
 
-        const received = try self.transport.?.syncGroup(
+        self.lockTransport();
+        const t = self.transportPtr() catch |err| {
+            self.unlockTransport();
+            return err;
+        };
+        const received = t.syncGroup(
             self.config.group_id,
             self.generation_id,
             self.member_id,
             assigns.items,
-        );
+        ) catch |err| {
+            self.unlockTransport();
+            return err;
+        };
+        self.unlockTransport();
         defer self.allocator.free(received);
         if (received.len > 0) {
             if (my_bytes) |owned| self.allocator.free(owned);
@@ -916,13 +1204,16 @@ pub const KafkaConsumer = struct {
         return my_bytes orelse try self.allocator.alloc(u8, 0);
     }
 
+    /// Caller MUST hold `transport_mutex` (may issue a Metadata round-trip).
     fn resolvePartitionCount(self: *Self, topic: []const u8) !i32 {
         if (self.config.partition_count > 0) return self.config.partition_count;
-        return try self.transport.?.topicPartitionCount(topic);
+        const t = try self.transportPtr();
+        return try t.topicPartitionCount(topic);
     }
 
-    fn applyAssignmentBytes(self: *Self, bytes: []const u8) !void {
-        self.clearAssignments();
+    /// Apply a ConsumerProtocolAssignment. Caller MUST hold `state_mutex`.
+    fn applyAssignmentBytesLocked(self: *Self, bytes: []const u8) !void {
+        self.clearAssignmentsLocked();
         if (bytes.len == 0) return;
         var parsed = try KafkaWireFormat.parseMemberAssignment(self.allocator, bytes);
         defer parsed.deinit(self.allocator);
@@ -933,19 +1224,27 @@ pub const KafkaConsumer = struct {
             errdefer self.allocator.free(parts);
             try self.assigned.put(topic_key, parts);
             for (parts) |p| {
-                if (self.getOffset(topic_key, p) == null) {
-                    try self.putOffset(topic_key, p, 0);
+                if (self.offsetLocked(topic_key, p) == null) {
+                    try self.putOffsetLocked(topic_key, p, 0);
                 }
             }
         }
     }
 
+    /// Caller MUST hold `state_mutex`.
     fn partitionsFor(self: *Self, topic: []const u8) []const i32 {
         if (self.assigned.get(topic)) |p| return p;
         return &[_]i32{0};
     }
 
     fn clearAssignments(self: *Self) void {
+        self.lockState();
+        defer self.unlockState();
+        self.clearAssignmentsLocked();
+    }
+
+    /// Caller MUST hold `state_mutex`.
+    fn clearAssignmentsLocked(self: *Self) void {
         var it = self.assigned.iterator();
         while (it.next()) |e| {
             self.allocator.free(e.key_ptr.*);
@@ -955,6 +1254,15 @@ pub const KafkaConsumer = struct {
     }
 
     fn putOffset(self: *Self, topic: []const u8, partition: i32, offset: i64) !void {
+        self.lockState();
+        defer self.unlockState();
+        try self.putOffsetLocked(topic, partition, offset);
+    }
+
+    /// Caller MUST hold `state_mutex`. The map owns its key, so it is duped
+    /// only on first insert (the pre-lock version re-dup `key` every call and
+    /// leaked the previous key on update).
+    fn putOffsetLocked(self: *Self, topic: []const u8, partition: i32, offset: i64) !void {
         var key_buf: [512]u8 = undefined;
         const key = try offsetKeyBuf(&key_buf, topic, partition);
         const gop = try self.offsets.getOrPut(key);
@@ -965,6 +1273,13 @@ pub const KafkaConsumer = struct {
     }
 
     fn removeOffsetsForTopic(self: *Self, topic: []const u8) void {
+        self.lockState();
+        defer self.unlockState();
+        self.removeOffsetsForTopicLocked(topic);
+    }
+
+    /// Caller MUST hold `state_mutex`.
+    fn removeOffsetsForTopicLocked(self: *Self, topic: []const u8) void {
         var doomed: [64][]const u8 = undefined;
         var n: usize = 0;
         var it = self.offsets.keyIterator();
@@ -983,14 +1298,34 @@ pub const KafkaConsumer = struct {
         }
     }
 
+    /// Caller MUST hold `state_mutex`.
+    fn offsetLocked(self: *Self, topic: []const u8, partition: i32) ?i64 {
+        var key_buf: [512]u8 = undefined;
+        const key = offsetKeyBuf(&key_buf, topic, partition) catch return null;
+        return self.offsets.get(key);
+    }
+
     fn commitBroker(self: *Self, topic: []const u8, partition: i32, offset: i64) !void {
         if (self.config.offline) return;
         if (self.config.group_id.len == 0) return;
         try self.ensureTransport();
-        try self.transport.?.offsetCommit(
+
+        self.lockState();
+        const generation = self.generation_id;
+        const member = self.allocator.dupe(u8, self.member_id) catch |err| {
+            self.unlockState();
+            return err;
+        };
+        self.unlockState();
+        defer self.allocator.free(member);
+
+        self.lockTransport();
+        defer self.unlockTransport();
+        const t = try self.transportPtr();
+        try t.offsetCommit(
             self.config.group_id,
-            self.generation_id,
-            self.member_id,
+            generation,
+            member,
             topic,
             partition,
             offset,
@@ -998,7 +1333,12 @@ pub const KafkaConsumer = struct {
         );
     }
 
+    /// Connect lazily. `transport_mutex` serializes the connect so two pollers
+    /// cannot both build a transport (and so `deinit` cannot tear one down
+    /// mid-assignment).
     fn ensureTransport(self: *Self) !void {
+        self.lockTransport();
+        defer self.unlockTransport();
         if (self.transport != null) return;
         const io = self.io orelse return error.IoRequired;
         var t = try RobustMQTransport.init(self.allocator, io, self.config.bootstrap_servers, self.config.client_id);
@@ -2355,6 +2695,45 @@ test "KafkaConsumer commitLocal requires subscribe" {
     }.h);
     try consumer.commitLocal("t", 7);
     try std.testing.expectEqual(@as(i64, 7), consumer.getOffset("t", 0).?);
+}
+
+test "KafkaConsumer: subscribe/unsubscribe/stop are serialized with concurrent readers" {
+    if (@import("builtin").single_threaded) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var consumer = KafkaConsumer.init(allocator, .{});
+    defer consumer.deinit();
+
+    const Reader = struct {
+        fn run(c: *KafkaConsumer) void {
+            var i: usize = 0;
+            while (i < 200) : (i += 1) {
+                _ = c.getOffset("t", 0);
+                _ = c.isRunning();
+            }
+        }
+    };
+
+    var t1 = try std.Thread.spawn(.{}, Reader.run, .{&consumer});
+    var t2 = try std.Thread.spawn(.{}, Reader.run, .{&consumer});
+
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        try consumer.subscribe("t", struct {
+            fn h(_: KafkaMessage) void {}
+        }.h);
+        consumer.unsubscribe("t");
+        consumer.start();
+        consumer.stop();
+    }
+    t1.join();
+    t2.join();
+
+    // The mutex must have kept the maps intact: re-subscribe still works.
+    try consumer.subscribe("t", struct {
+        fn h(_: KafkaMessage) void {}
+    }.h);
+    try consumer.commitLocal("t", 3);
+    try std.testing.expectEqual(@as(i64, 3), consumer.getOffset("t", 0).?);
 }
 
 test "KafkaWireFormat stickyAssign keeps prior partitions" {

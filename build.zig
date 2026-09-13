@@ -170,20 +170,10 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
 
-    // Integration tests (generated CRUD against real DB)
-    const int_mod = b.createModule(.{
-        .root_source_file = b.path("test_gen_crud.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{.{ .name = "zfinal", .module = zfinal_mod }},
-    });
-    int_mod.link_libc = true;
-    int_mod.linkSystemLibrary("sqlite3", .{});
-    linkOptionalDbDrivers(int_mod, driver_mysql, driver_pg);
-    const int_tests = b.addTest(.{ .root_module = int_mod });
-    const run_int_tests = b.addRunArtifact(int_tests);
-    const int_test_step = b.step("test-int", "Run integration tests (requires generated modules)");
-    int_test_step.dependOn(&run_int_tests.step);
+    // NOTE: the old `test-int` step targeted `test_gen_crud.zig`, which imports
+    // app-generated `src/modules/**` paths that do not exist in the framework
+    // repo, so it could never compile. Generated-module integration coverage
+    // lives in `test-zfsaas` / `test-zent-shop` (see examples/).
 
     // DB integration tests — run as part of unit tests (imported via main.zig)
     const db_int_test_step = b.step("test-db", "Run DB integration tests (alias for test)");
@@ -320,17 +310,16 @@ pub fn build(b: *std.Build) void {
     });
     // Expose codegen as a named module so admin_templates.zig can
     // import it as @import("codegen") instead of @import("codegen.zig").
-    {
-        const codegen_for_zf = b.createModule(.{
-            .root_source_file = b.path("tools/zf/codegen.zig"),
-            .target = target,
-            .optimize = optimize,
-        });
-        codegen_for_zf.link_libc = true;
-        codegen_for_zf.linkSystemLibrary("sqlite3", .{});
-        codegen_for_zf.addImport("c_sqlite3", sqlite3_c_mod);
-        zf_mod.addImport("codegen", codegen_for_zf);
-    }
+    // Shared with zent_codegen for the identifier-sanitizing helpers.
+    const codegen_for_zf = b.createModule(.{
+        .root_source_file = b.path("tools/zf/codegen.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    codegen_for_zf.link_libc = true;
+    codegen_for_zf.linkSystemLibrary("sqlite3", .{});
+    codegen_for_zf.addImport("c_sqlite3", sqlite3_c_mod);
+    zf_mod.addImport("codegen", codegen_for_zf);
     {
         const zent_cg = b.createModule(.{
             .root_source_file = b.path("tools/zf/zent_codegen.zig"),
@@ -338,6 +327,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         zent_cg.addImport("zfinal_version", version_mod);
+        zent_cg.addImport("codegen", codegen_for_zf);
         zf_mod.addImport("zent_codegen", zent_cg);
     }
     {
@@ -507,6 +497,8 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         zent_cg_mod.addImport("zfinal_version", version_mod);
+        // Shared identifier-sanitizing helpers from codegen.zig.
+        zent_cg_mod.addImport("codegen", codegen_mod);
 
         const openapi_mod = b.createModule(.{
             .root_source_file = b.path("tools/zf/openapi.zig"),

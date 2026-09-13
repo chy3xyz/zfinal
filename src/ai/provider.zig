@@ -262,6 +262,12 @@ pub const AiProvider = struct {
 
     pub fn chatWith(self: *AiProvider, messages: []const ChatMsg, opts: ChatOpts) !ChatResponse {
         try self.acquireRate();
+        return self.chatRetryLoop(messages, opts);
+    }
+
+    /// 带重试的缓冲式请求主体（不再 acquire 限流）。
+    /// `chatStream` 的零增量回退也复用它，避免直接绕过 `max_retries`。
+    fn chatRetryLoop(self: *AiProvider, messages: []const ChatMsg, opts: ChatOpts) !ChatResponse {
         var attempt: u8 = 0;
         const max_attempts = opts.max_retries + 1;
         var backoff = opts.retry_backoff_ms;
@@ -322,7 +328,13 @@ pub const AiProvider = struct {
     }
 
     /// Stream chat completions (`stream:true`) via HttpClient.requestStream + SSE.
-    /// Falls back to buffered chat if the transport fails before useful data.
+    ///
+    /// 传输失败时：只有在**尚未发出任何增量**的前提下才回退到缓冲式调用
+    /// （并复用 `chatWith` 的重试循环）。一旦已有增量送达消费者，就原样抛出
+    /// 错误 —— 否则回退会把完整内容重发一遍，消费者看到重复文本且原始错误被吞掉。
+    ///
+    /// 注意：流式路径本身只发一次请求，不走 `ChatOpts.max_retries`（重试需要
+    /// 重新开始整个流，语义上不可与已送达的增量混用）；重试仅发生在零增量回退时。
     pub fn chatStream(
         self: *AiProvider,
         messages: []const ChatMsg,
@@ -354,10 +366,17 @@ pub const AiProvider = struct {
         var acc = StreamAccum.init(self.allocator, cb_ctx, on_delta);
         defer acc.deinit();
 
-        var http_resp = self.http.requestStream(.POST, self.endpoint, body, &headers, &acc, StreamAccum.onChunk) catch {
+        var http_resp = self.http.requestStream(.POST, self.endpoint, body, &headers, &acc, StreamAccum.onChunk) catch |err| {
+            // 已发出过增量（或已发出 done）：不能再回退，否则重复输出并吞掉原错误。
+            if (acc.deltas_emitted > 0 or acc.saw_done) {
+                self.metrics.error_count += 1;
+                self.finishKey(resolved.acquired, err);
+                return err;
+            }
+            // 零增量：安全回退，且复用重试循环。
             self.finishKey(resolved.acquired, null);
             o.stream = false;
-            var resp = try self.chatWithUnlocked(messages, o);
+            var resp = try self.chatRetryLoop(messages, o);
             errdefer self.freeResponse(&resp);
             if (resp.content.len > 0) {
                 try on_delta(cb_ctx, .{ .content_delta = resp.content });
@@ -638,6 +657,8 @@ const StreamAccum = struct {
     content: std.ArrayList(u8),
     pending_tools: std.ArrayList(PendingTool),
     saw_done: bool = false,
+    /// 已向消费者发出的增量数量。用于判断传输失败后能否安全回退到缓冲式调用。
+    deltas_emitted: usize = 0,
     prompt_tokens: usize = 0,
     completion_tokens: usize = 0,
 
@@ -718,6 +739,7 @@ const StreamAccum = struct {
             if (d.len > 0) {
                 try self.content.appendSlice(self.allocator, d);
                 try self.on_delta(self.cb_ctx, .{ .content_delta = d });
+                self.deltas_emitted += 1;
             }
         }
 
@@ -732,6 +754,7 @@ const StreamAccum = struct {
                 .tool_name = d.name,
                 .tool_arguments_delta = d.arguments,
             });
+            self.deltas_emitted += 1;
         }
     }
 
@@ -874,10 +897,13 @@ test "AiProvider StreamAccum parses SSE lines" {
     const chunk1 = "data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n";
     const chunk2 = "data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\ndata: [DONE]\n";
     try StreamAccum.onChunk(&acc, chunk1);
+    try std.testing.expectEqual(@as(usize, 1), acc.deltas_emitted);
     try StreamAccum.onChunk(&acc, chunk2);
     try acc.flush();
 
     try std.testing.expect(ctx.done);
+    // 两个 content 增量都应计数（回退门控依赖它，避免重复输出）。
+    try std.testing.expectEqual(@as(usize, 2), acc.deltas_emitted);
     try std.testing.expectEqual(@as(usize, 2), ctx.parts.items.len);
     try std.testing.expectEqualStrings("Hel", ctx.parts.items[0]);
     try std.testing.expectEqualStrings("lo", ctx.parts.items[1]);

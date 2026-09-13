@@ -1,5 +1,23 @@
 const std = @import("std");
-const io_instance = @import("io_instance.zig");
+const io_instance = @import("../io_instance.zig");
+
+/// 读取整个文件（上限 10 MiB）。
+///
+/// Zig 0.17 移除了 `File.readToEndAlloc`，这里沿用仓库其他位置的
+/// `File.reader` + `readSliceShort` 循环写法。
+fn readFileAlloc(allocator: std.mem.Allocator, file: std.Io.File) ![]u8 {
+    var content = std.ArrayList(u8).empty;
+    errdefer content.deinit(allocator);
+    var read_buf: [4096]u8 = undefined;
+    var rdr = file.reader(io_instance.io, &read_buf);
+    while (true) {
+        const n = try rdr.interface.readSliceShort(&read_buf);
+        if (n == 0) break;
+        try content.appendSlice(allocator, read_buf[0..n]);
+        if (content.items.len > 10 * 1024 * 1024) return error.FileTooBig;
+    }
+    return content.toOwnedSlice(allocator);
+}
 
 /// Enhanced template engine with support for:
 /// - Variable interpolation: {{variable}}
@@ -8,7 +26,15 @@ const io_instance = @import("io_instance.zig");
 /// - Includes: {% include "partial.html" %}
 /// - Layouts: {% extends "layout.html" %}, {% block content %}, {% endblock %}
 /// - Comments: {# comment #}
-/// - Filters: {{variable|upper}}, {{variable|lower}}, {{variable|capitalize}}
+/// - Filters: {{variable|upper}}, {{variable|lower}}, {{variable|capitalize}},
+///   {{variable|escape}} / {{variable|e}} (HTML-escape),
+///   {{variable|safe}} / {{variable|raw}} (explicit no-escape marker)
+///
+/// ⚠️ 默认**不转义**：`{{var}}` 以及所有未知过滤器都按原样输出，用于保持既有模板
+/// 的渲染结果不变。要把不可信内容放进 HTML（元素文本/属性）时，必须显式写
+/// `{{var|escape}}`（别名 `{{var|e}}`）。`{{var|safe}}` / `{{var|raw}}` 只是
+/// 「此处有意不转义」的显式标记，输出与默认行为一致。
+/// 之所以不把默认改成转义，是因为那会静默改变现有模板的输出，属于破坏性变更。
 pub const Template = struct {
     allocator: std.mem.Allocator,
     content: []const u8,
@@ -26,7 +52,7 @@ pub const Template = struct {
         const file = try std.Io.Dir.cwd().openFile(io_instance.io, path, .{});
         defer file.close(io_instance.io);
 
-        const content = try file.readToEndAlloc(io_instance.io, allocator, 10 * 1024 * 1024);
+        const content = try readFileAlloc(allocator, file);
         return Template{
             .allocator = allocator,
             .content = content,
@@ -76,7 +102,7 @@ pub const TemplateManager = struct {
         const file = try std.Io.Dir.cwd().openFile(io_instance.io, path, .{});
         defer file.close(io_instance.io);
 
-        const content = try file.readToEndAlloc(io_instance.io, self.allocator, 10 * 1024 * 1024);
+        const content = try readFileAlloc(self.allocator, file);
         const name_copy = try self.allocator.dupe(u8, name);
 
         try self.templates.put(name_copy, content);
@@ -201,7 +227,10 @@ pub const RenderEngine = struct {
         return try self.renderInternal(data);
     }
 
-    fn renderInternal(self: *Self, data: anytype) ![]const u8 {
+    /// Explicit `anyerror` (not inferred): `renderInternal` ↔ `renderTag` ↔
+    /// `renderIf` are mutually recursive, and inferred error sets form a
+    /// dependency loop that Zig rejects. This is the standard workaround.
+    fn renderInternal(self: *Self, data: anytype) anyerror![]const u8 {
         var result = std.ArrayList(u8).empty;
         errdefer result.deinit(self.allocator);
 
@@ -220,7 +249,7 @@ pub const RenderEngine = struct {
             }
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(self.allocator);
     }
 
     /// Check if template starts with extends tag
@@ -316,7 +345,7 @@ pub const RenderEngine = struct {
     }
 
     /// Render template tag
-    fn renderTag(self: *Self, result: *std.ArrayList(u8), data: anytype) !void {
+    fn renderTag(self: *Self, result: *std.ArrayList(u8), data: anytype) anyerror!void {
         self.skipWhitespace();
 
         if (self.matchWord("if")) {
@@ -334,7 +363,7 @@ pub const RenderEngine = struct {
     }
 
     /// Render if statement
-    fn renderIf(self: *Self, result: *std.ArrayList(u8), data: anytype) !void {
+    fn renderIf(self: *Self, result: *std.ArrayList(u8), data: anytype) anyerror!void {
         self.skipWhitespace();
         const condition = try self.parseExpression();
         defer self.allocator.free(condition);
@@ -524,7 +553,7 @@ pub const RenderEngine = struct {
             const file = try std.Io.Dir.cwd().openFile(io_instance.io, resolved, .{});
             defer file.close(io_instance.io);
 
-            return try file.readToEndAlloc(io_instance.io, self.allocator, 10 * 1024 * 1024);
+            return try readFileAlloc(self.allocator, file);
         }
         return error.NoTemplateDir;
     }
@@ -549,7 +578,11 @@ pub const RenderEngine = struct {
         return null;
     }
 
-    /// Format value as string
+    /// Format value as string.
+    ///
+    /// Zig string literals have type `*const [N:0]u8`, not `[]const u8`, so the
+    /// pointer handling must cover pointer-to-array / C strings as well as
+    /// slices — otherwise every `{{var}}` bound to a literal renders empty.
     fn formatValue(self: *Self, value: anytype) !?[]const u8 {
         const T = @TypeOf(value);
         const type_info = @typeInfo(T);
@@ -558,20 +591,27 @@ pub const RenderEngine = struct {
             .int, .comptime_int => try std.fmt.allocPrint(self.allocator, "{d}", .{value}),
             .float, .comptime_float => try std.fmt.allocPrint(self.allocator, "{d}", .{value}),
             .bool => if (value) try self.allocator.dupe(u8, "true") else try self.allocator.dupe(u8, "false"),
-            .pointer => |ptr_info| {
-                if (ptr_info.size == .slice and ptr_info.child == u8) {
-                    return try self.allocator.dupe(u8, value);
+            .@"enum" => try self.allocator.dupe(u8, @tagName(value)),
+            .array => |arr| if (arr.child == u8) try self.allocator.dupe(u8, &value) else null,
+            .pointer => |ptr_info| blk: {
+                if (ptr_info.child == u8) {
+                    break :blk switch (ptr_info.size) {
+                        .slice => try self.allocator.dupe(u8, value),
+                        .one => try self.allocator.dupe(u8, value[0..]),
+                        .many, .c => try self.allocator.dupe(u8, std.mem.span(value)),
+                    };
                 }
-                // Handle arrays/slices of structs
-                return null;
-            },
-            .optional => |opt_value| {
-                if (opt_value) |v| {
-                    return try self.formatValue(v);
-                } else {
-                    return try self.allocator.dupe(u8, "");
+                // `*const [N:0]u8` (string literal) / pointer-to-array.
+                if (ptr_info.size == .one) {
+                    switch (@typeInfo(ptr_info.child)) {
+                        .array => |arr| if (arr.child == u8) break :blk try self.allocator.dupe(u8, value[0..]),
+                        .@"struct" => break :blk try self.formatValue(value.*),
+                        else => {},
+                    }
                 }
+                break :blk null;
             },
+            .optional => if (value) |v| try self.formatValue(v) else try self.allocator.dupe(u8, ""),
             else => null,
         };
     }
@@ -659,7 +699,6 @@ pub const RenderEngine = struct {
 
                             var search_pos: usize = 0;
                             while (search_pos < body.len) {
-                                const pattern = "{{" ++ " " ++ var_name ++ " " ++ "}}";
                                 if (std.mem.indexOfPos(u8, body, search_pos, "{{")) |start| {
                                     try body_result.appendSlice(self.allocator, body[search_pos..start]);
                                     const end = std.mem.indexOfPos(u8, body, start, "}}") orelse {
@@ -714,8 +753,30 @@ pub const RenderEngine = struct {
                 reversed[value.len - 1 - i] = c;
             }
             return reversed;
+        } else if (std.mem.eql(u8, filter_name, "escape") or std.mem.eql(u8, filter_name, "e")) {
+            return try self.htmlEscape(value);
+        } else if (std.mem.eql(u8, filter_name, "safe") or std.mem.eql(u8, filter_name, "raw")) {
+            // 显式「有意不转义」标记；默认行为本就原样输出，故保持等价。
+            return try self.allocator.dupe(u8, value);
         }
         return try self.allocator.dupe(u8, value);
+    }
+
+    /// HTML-escape a value for safe interpolation into element text or attributes.
+    fn htmlEscape(self: *Self, value: []const u8) ![]const u8 {
+        var out = std.ArrayList(u8).empty;
+        errdefer out.deinit(self.allocator);
+        for (value) |c| {
+            switch (c) {
+                '&' => try out.appendSlice(self.allocator, "&amp;"),
+                '<' => try out.appendSlice(self.allocator, "&lt;"),
+                '>' => try out.appendSlice(self.allocator, "&gt;"),
+                '"' => try out.appendSlice(self.allocator, "&quot;"),
+                '\'' => try out.appendSlice(self.allocator, "&#39;"),
+                else => try out.append(self.allocator, c),
+            }
+        }
+        return try out.toOwnedSlice(self.allocator);
     }
 
     /// Skip comment {# ... #}
@@ -915,4 +976,37 @@ test "Template complex" {
 
     try std.testing.expect(std.mem.indexOf(u8, result, "Welcome Alice!") != null);
     try std.testing.expect(std.mem.indexOf(u8, result, "You are an admin.") != null);
+}
+
+test "Template escape filter escapes HTML (escape and e alias)" {
+    const allocator = std.testing.allocator;
+
+    const html = "<p>{{name|escape}}</p><span>{{name|e}}</span>";
+    var template = Template.init(allocator, html);
+
+    const data = .{
+        .name = "<script>alert(\"x\")&'y'</script>",
+    };
+
+    const result = try template.render(data);
+    defer allocator.free(result);
+
+    const escaped = "&lt;script&gt;alert(&quot;x&quot;)&amp;&#39;y&#39;&lt;/script&gt;";
+    try std.testing.expectEqualStrings("<p>" ++ escaped ++ "</p><span>" ++ escaped ++ "</span>", result);
+}
+
+test "Template default and safe/raw markers stay unescaped" {
+    const allocator = std.testing.allocator;
+
+    const html = "{{name}}|{{name|safe}}|{{name|raw}}";
+    var template = Template.init(allocator, html);
+
+    const data = .{
+        .name = "<b>hi</b>",
+    };
+
+    const result = try template.render(data);
+    defer allocator.free(result);
+
+    try std.testing.expectEqualStrings("<b>hi</b>|<b>hi</b>|<b>hi</b>", result);
 }

@@ -1,6 +1,6 @@
 # ZFinal 代码架构最佳实践
 
-> **版本**：对齐 v0.26.1 / Zig 工具链见仓库根 `.zig-version` · 修订 **2026-07-31**  
+> **版本**：对齐 v0.27.0 / Zig 工具链见仓库根 `.zig-version` · 修订 **2026-07-31**  
 > **受众**：框架贡献者、应用开发者、AI agent  
 > **总索**：[best_practices.md](best_practices.md)（任务索引 + 能力时间线）  
 > **相关**：[`AGENTS.md`](../AGENTS.md) · [`PRODUCTION_AUDIT.md`](../PRODUCTION_AUDIT.md) · [`api_envelope.md`](api_envelope.md) · [`.life/decisions/`](../.life/decisions/)
@@ -186,7 +186,7 @@ ADR：[003-experimental-plugins.md](../.life/decisions/003-experimental-plugins.
 
 ```bash
 zig build
-zig build test          # 期望：418 passed; 16 skipped; 0 failed
+zig build test          # 期望：全部通过（16 skipped）
 zig build test-zf
 zig fmt --check src/ test/ tools/ examples/ benchmark/ build.zig
 zf check                # 应用仓库

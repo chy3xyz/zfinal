@@ -161,9 +161,22 @@ pub const Router = struct {
     /// route index (or `null` = no match). Capped at 1024 entries;
     /// oldest entry is evicted on overflow.
     param_route_cache: std.StringHashMap(?usize),
-    param_cache_order: std.ArrayList([]u8),
+    /// Occupied FIFO slots; `slot.key` shares ONE allocation with the matching
+    /// `param_route_cache` entry. This is a **ring**: `head` is the oldest
+    /// entry and `count` is the number of occupied slots. Eviction advances
+    /// `head` instead of shifting the list, so a full cache evicts in O(1)
+    /// rather than `orderedRemove(0)`'s O(n) — that memmove ran while holding
+    /// `param_cache_mutex` on the request path.
+    ///
+    /// Slot semantics: an **empty** slot holds `""` (zero-length). Keys are
+    /// never empty — every caller builds `"{method}:{path}"` — so a non-empty
+    /// slice means occupied. Do not change the marker without also changing
+    /// `ensureRingCapacity` / `deinit`, which rely on it.
+    param_cache_ring: [][]const u8 = &.{},
+    param_cache_head: usize = 0,
+    param_cache_count: usize = 0,
     param_cache_max: u32 = 1024,
-    /// Guards `param_route_cache` + `param_cache_order`. Server dispatches
+    /// Guards `param_route_cache` + the `param_cache_ring`. Server dispatches
     /// concurrent requests on a shared Router; without this lock, FIFO
     /// eviction (enabled after the v0.20.5 double-free fix) races HashMap
     /// mutators and corrupts the heap — often surfacing inside interceptor
@@ -181,7 +194,6 @@ pub const Router = struct {
             .routes = std.ArrayList(Route).empty,
             .static_routes = std.StringHashMap(usize).init(allocator),
             .param_route_cache = std.StringHashMap(?usize).init(allocator),
-            .param_cache_order = std.ArrayList([]u8).empty,
             .global_interceptors = InterceptorChain.init(allocator),
             .allocator = allocator,
         };
@@ -209,7 +221,7 @@ pub const Router = struct {
 
     /// Insert into FIFO cache; evict oldest if over capacity.
     /// Note: this is FIFO, not LRU — cache hits do NOT re-order. The
-    /// oldest entry is always at the front of `param_cache_order`.
+    /// oldest entry is always the slot at `param_cache_head`.
     /// Caller must NOT hold `param_cache_mutex`.
     fn paramCachePut(self: *Router, key: []const u8, value: ?usize) !void {
         self.param_cache_mutex.lockUncancelable(paramCacheIo());
@@ -217,36 +229,75 @@ pub const Router = struct {
         try self.paramCachePutLocked(key, value);
     }
 
+    /// Logical entry count of the parameterized-route cache. Exposed so tests
+    /// can assert the eviction cap without reaching into the ring internals.
+    pub fn paramCacheCount(self: *Router) usize {
+        self.param_cache_mutex.lockUncancelable(paramCacheIo());
+        defer self.param_cache_mutex.unlock(paramCacheIo());
+        return self.param_cache_count;
+    }
+
+    /// `param_cache_max` must be set before the cache accepts its first entry:
+    /// the ring is sized once, on the first insert. Changing it afterwards would
+    /// index outside `param_cache_ring` — and it is read from concurrent
+    /// request fibers, so it is not safe to mutate after `start()` anyway.
+    fn ensureRingCapacity(self: *Router) !void {
+        if (self.param_cache_ring.len > 0) return;
+        const max: usize = @max(self.param_cache_max, 1);
+        const ring = try self.allocator.alloc([]const u8, max);
+        @memset(ring, &.{}); // "" = empty slot
+        self.param_cache_ring = ring;
+        self.param_cache_head = 0;
+        self.param_cache_count = 0;
+    }
+
+    /// Ring slot for logical index `offset` from `head`.
+    fn ringSlot(self: *const Router, offset: usize) *const []const u8 {
+        return &self.param_cache_ring[(self.param_cache_head + offset) % self.param_cache_ring.len];
+    }
+
+    /// Drop the oldest entry: remove the map entry, free the shared allocation
+    /// once, and advance `head`. The map key and the ring slot are the same
+    /// pointer — never free both (that double-frees under GPA, see the v0.20.5
+    /// regression test).
+    fn paramCacheEvictOldestLocked(self: *Router) void {
+        const oldest = self.ringSlot(0).*;
+        if (self.param_route_cache.fetchRemove(oldest)) |kv| self.allocator.free(kv.key);
+        self.param_cache_ring[self.param_cache_head] = &.{};
+        self.param_cache_head = (self.param_cache_head + 1) % self.param_cache_ring.len;
+        self.param_cache_count -= 1;
+    }
+
     fn paramCachePutLocked(self: *Router, key: []const u8, value: ?usize) !void {
-        // Cap the cache at param_cache_max entries. When full, drop the
-        // oldest (FIFO). This is intentionally simple — a true LRU with
-        // doubly-linked list would be ~3x more code for marginal gain
-        // on workloads with hot route tails.
-        //
-        // Ownership: hashmap key and order-list entry share ONE allocation
-        // (same pointer). Evict by removing the map entry then free once —
-        // never free(kv.key) and free(oldest); that double-frees and aborts
-        // under Zig's GPA / ASAN once the cache fills (param_cache_max).
-        while (self.param_cache_order.items.len >= self.param_cache_max) {
-            const oldest = self.param_cache_order.orderedRemove(0);
-            _ = self.param_route_cache.fetchRemove(oldest);
-            self.allocator.free(oldest);
-        }
+        // Ring sizing happens before the map insert so an OOM here leaves the
+        // cache (and the new key) untouched.
+        try self.ensureRingCapacity();
+
         const key_dup = try self.allocator.dupe(u8, key);
         errdefer self.allocator.free(key_dup);
         const gop = try self.param_route_cache.getOrPut(key_dup);
         if (gop.found_existing) {
             // Map already owns a key with this content — drop the duplicate
-            // and refresh the value. Do not append to the order list again.
+            // and refresh the value. Do not append a second ring slot.
             self.allocator.free(key_dup);
             gop.value_ptr.* = value;
             return;
         }
         gop.value_ptr.* = value;
-        // If append fails, drop the map entry so errdefer can free key_dup
-        // without leaving a dangling hashmap pointer.
+        // If any of the remaining steps fail, drop the map entry so errdefer
+        // can free key_dup without leaving a dangling hashmap pointer.
         errdefer _ = self.param_route_cache.fetchRemove(key_dup);
-        try self.param_cache_order.append(self.allocator, key_dup);
+
+        // Evict BEFORE storing the new slot: with a 1-entry ring the oldest
+        // entry is the one just inserted above, so doing this first guarantees
+        // `fetchRemove` never targets the freshly added key.
+        if (self.param_cache_count >= self.param_cache_ring.len) {
+            self.paramCacheEvictOldestLocked();
+        }
+
+        const tail = (self.param_cache_head + self.param_cache_count) % self.param_cache_ring.len;
+        self.param_cache_ring[tail] = gop.key_ptr.*;
+        self.param_cache_count += 1;
     }
 
     pub fn deinit(self: *Router) void {
@@ -261,11 +312,12 @@ pub const Router = struct {
         var key_it = self.static_routes.keyIterator();
         while (key_it.next()) |key| self.allocator.free(key.*);
         self.static_routes.deinit();
-        // The hashmap keys and the order-list items share the same
-        // allocation (we dupe once in paramCachePut and store the
-        // pointer in both). Free them only via the order list.
-        for (self.param_cache_order.items) |item| self.allocator.free(item);
-        self.param_cache_order.deinit(self.allocator);
+        // Occupied ring slots share their allocation with the map entries
+        // (dupe once in paramCachePut); free each exactly once via the ring.
+        for (self.param_cache_ring) |item| {
+            if (item.len > 0) self.allocator.free(item);
+        }
+        self.allocator.free(self.param_cache_ring);
         self.param_route_cache.deinit();
         self.global_interceptors.deinit();
         self.* = undefined;
@@ -371,9 +423,14 @@ pub const Router = struct {
                 gop.value_ptr.* = idx;
             }
         }
-        // Drop param cache — indices may have moved
-        for (self.param_cache_order.items) |item| self.allocator.free(item);
-        self.param_cache_order.clearRetainingCapacity();
+        // Drop param cache — indices may have moved. Keep the ring allocation
+        // (capacity is unchanged) but mark every slot empty and reset the FIFO.
+        for (self.param_cache_ring) |item| {
+            if (item.len > 0) self.allocator.free(item);
+        }
+        @memset(self.param_cache_ring, &.{});
+        self.param_cache_head = 0;
+        self.param_cache_count = 0;
         self.param_route_cache.clearRetainingCapacity();
         self.sealed = true;
     }
@@ -823,10 +880,63 @@ test "param route cache FIFO eviction no double-free" {
         const path = try std.fmt.bufPrint(&buf, "/users/{d}", .{i});
         try std.testing.expect(router.match(path, .GET) != null);
     }
-    try std.testing.expect(router.param_cache_order.items.len <= router.param_cache_max);
+    try std.testing.expect(router.paramCacheCount() <= router.param_cache_max);
     // Hot path after eviction still resolves (may miss cache → rescan → reinsert).
     try std.testing.expect(router.match("/users/0", .GET) != null);
     try std.testing.expect(router.match("/users/63", .GET) != null);
+}
+
+test "param route cache ring wraps and preserves FIFO eviction order" {
+    const allocator = std.testing.allocator;
+    var router = Router.init(allocator);
+    defer router.deinit();
+    router.param_cache_max = 4;
+
+    const h = struct {
+        fn f(_: *Context) !void {}
+    }.f;
+    try router.addWithMethod("/users/:id", .GET, h);
+
+    var buf: [64]u8 = undefined;
+    // Fill exactly to capacity: 4 distinct keys, no eviction yet.
+    var i: usize = 0;
+    while (i < 4) : (i += 1) {
+        const path = try std.fmt.bufPrint(&buf, "/users/{d}", .{i});
+        _ = router.match(path, .GET);
+    }
+    try std.testing.expectEqual(@as(usize, 4), router.paramCacheCount());
+
+    // 5th insert evicts the oldest ("/users/0") and wraps `head` back to 0.
+    _ = router.match("/users/4", .GET);
+    try std.testing.expectEqual(@as(usize, 4), router.paramCacheCount());
+    // Evicted key is a cache miss (rescans + reinserts, evicting /users/1).
+    _ = router.match("/users/0", .GET);
+    try std.testing.expectEqual(@as(usize, 4), router.paramCacheCount());
+}
+
+test "param route cache evicts with O(1) head advance (no orderedRemove)" {
+    const allocator = std.testing.allocator;
+    var router = Router.init(allocator);
+    defer router.deinit();
+    router.param_cache_max = 256;
+
+    const h = struct {
+        fn f(_: *Context) !void {}
+    }.f;
+    try router.addWithMethod("/k/:id", .GET, h);
+
+    var buf: [64]u8 = undefined;
+    // Insert several cache capacity's worth; the ring must never grow past the
+    // cap and `head`/`count` must stay in range (would panic on modulo by 0 or
+    // out-of-bounds slot indexing if eviction were wrong).
+    var i: usize = 0;
+    while (i < 4000) : (i += 1) {
+        const path = try std.fmt.bufPrint(&buf, "/k/{d}", .{i});
+        try std.testing.expect(router.match(path, .GET) != null);
+        try std.testing.expect(router.paramCacheCount() <= 256);
+    }
+    try std.testing.expect(router.paramCacheCount() == 256);
+    try std.testing.expect(router.param_cache_head < router.param_cache_ring.len);
 }
 
 test "param cache + route interceptors survive eviction" {
