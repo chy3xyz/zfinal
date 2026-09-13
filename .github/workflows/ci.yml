@@ -22,7 +22,7 @@ jobs:
     name: Quality gate (productized)
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Read pinned Zig version
       id: zigver
       run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
@@ -41,7 +41,7 @@ jobs:
     name: Test on macOS
     runs-on: macos-latest
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Read pinned Zig version
       id: zigver
       run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
@@ -62,7 +62,7 @@ jobs:
     name: Compile with PG + MySQL + zent
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Read pinned Zig version
       id: zigver
       run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
@@ -111,7 +111,7 @@ jobs:
           --health-timeout 5s
           --health-retries 15
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Read pinned Zig version
       id: zigver
       run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
@@ -146,7 +146,7 @@ jobs:
         ports:
           - 4222:4222
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Read pinned Zig version
       id: zigver
       run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
@@ -202,7 +202,7 @@ jobs:
     name: Unit tests (ReleaseSafe)
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Read pinned Zig version
       id: zigver
       run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
@@ -225,7 +225,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup Zig (master)
       uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
       with:
