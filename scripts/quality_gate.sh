@@ -27,6 +27,26 @@ pass() { printf '  OK  %s\n' "$1"; }
 fail() { printf ' FAIL %s\n' "$1" >&2; exit 1; }
 section() { printf '\n==> [gate:%s] %s\n' "$MODE" "$1"; }
 
+# --- toolchain pin (single source: .zig-version) ---
+section "zig toolchain"
+if [[ ! -f .zig-version ]]; then
+  fail ".zig-version missing (Zig pin must be single-sourced)"
+fi
+PINNED_ZIG="$(tr -d '[:space:]' < .zig-version)"
+ACTUAL_ZIG="$(zig version 2>/dev/null || true)"
+if [[ -z "$ACTUAL_ZIG" ]]; then
+  fail "zig not found on PATH"
+fi
+if [[ "$ACTUAL_ZIG" != "$PINNED_ZIG" ]]; then
+  if [[ "$MODE" == "release" ]]; then
+    fail "zig mismatch: .zig-version=$PINNED_ZIG but running $ACTUAL_ZIG"
+  fi
+  printf ' WARN zig mismatch: .zig-version=%s but running %s (release gate will fail)\n' \
+    "$PINNED_ZIG" "$ACTUAL_ZIG" >&2
+else
+  pass "zig $ACTUAL_ZIG"
+fi
+
 # --- version sync (src/version.zig ↔ build.zig.zon) ---
 section "version sync"
 VER_ZIG="$(sed -n 's/^pub const semver = \"\(.*\)\";/\1/p' src/version.zig | head -1)"
@@ -41,7 +61,7 @@ pass "semver $VER_ZIG"
 
 # --- fmt ---
 section "zig fmt --check"
-zig fmt --check src/ tools/ examples/ benchmark/ build.zig
+zig fmt --check src/ test/ tools/ examples/ benchmark/ build.zig
 pass "fmt"
 
 # --- build + tests ---

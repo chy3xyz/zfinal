@@ -5,7 +5,7 @@
 
 ZFinal is a high-performance Zig web framework **designed for AI-driven development**.
 Generated files mark `// ── ai-edit-zone: …`; `zf` emits JSON manifests; `zfinal.ZfTool`
-can invoke generators in-process. Current release: **v0.20.15** (Zig `0.17.0-dev.1422`).
+can invoke generators in-process. Current release: **v0.26.0** (toolchain pinned by repo-root `.zig-version`).
 
 ## Why ZFinal
 
@@ -16,7 +16,7 @@ can invoke generators in-process. Current release: **v0.20.15** (Zig `0.17.0-dev
 | `zf routes` + `actions.zig` | One routing source of truth (v0.20.9+) |
 | `zfinal.ZfTool` | In-process generator, no shell required |
 | `zf check` / `--heal` / `--prod` | Boundary + HttpError + production contract + L3 heuristics |
-| `zig build test` | **416 passed; 16 skipped; 0 failed** (baseline; live env adds more) |
+| `zig build test` | **418 passed; 16 skipped; 0 failed** (baseline; live env adds more) |
 
 ## The 5-minute AI speedrun
 
@@ -60,6 +60,7 @@ Walkthrough: [ai-quickstart.md](ai-quickstart.md) · Demo: `examples/ai-blog-5mi
 | Getting started / CLI | [getting_started.md](getting_started.md) · [zf_cli.md](zf_cli.md) |
 | Production contract | [`PRODUCTION_AUDIT.md`](../PRODUCTION_AUDIT.md) |
 | Quality / release gates | [release_and_quality_gates.md](release_and_quality_gates.md) |
+| Framework gap review (best practices) | [best_practices_review_v0.25.md](best_practices_review_v0.25.md) · [zfinal_improvements.md](zfinal_improvements.md) |
 
 ## What you get out of the box
 
@@ -71,8 +72,8 @@ Walkthrough: [ai-quickstart.md](ai-quickstart.md) · Demo: `examples/ai-blog-5mi
 - Plugins: Cache / Cron / Redis / MQTT / OAuth2 / P2P (HMAC) / …
 - L3 ports: `Store` / `Cache` / `Outbox` (`DbOutbox.drainOnce`) + `Bus` (Memory / NATS / RobustMQ)
 - Stable `QueueNatsClient` / `QueueRobustMQClient`; CI `messaging-live` + `drivers-live`
-- **369** unit tests (+ skips for live DB/MQ/OAuth2) · `test-zf` codegen · 0 leak target
-- Cross-platform: macOS, Linux, Windows
+- **418** unit tests (+ skips for live DB/MQ/OAuth2) · `test-zf` codegen · 0 leak target
+- Cross-platform: macOS, Linux
 
 ## Project structure (for AI agents)
 
@@ -89,7 +90,8 @@ zfinal/
 
 ## Versioning
 
-Semantic versioning. Current: **v0.20.15** (`src/version.zig` ≡ `build.zig.zon`).  
+Semantic versioning. Current: **v0.26.0** (`src/version.zig` ≡ `build.zig.zon`; supported
+toolchain single-sourced in repo-root `.zig-version`).  
 Tagged releases on GitHub; manifests use the same `semver`. Unreleased L3/messaging
 hardening is tracked in [CHANGELOG.md](../CHANGELOG.md) `[Unreleased]`.
 

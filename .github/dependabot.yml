@@ -1,0 +1,9 @@
+version: 2
+updates:
+  # GitHub Actions are pinned to mutable tags today; Dependabot will propose
+  # version bumps (and, once pinned to SHAs, SHA bumps) as PRs.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

@@ -8,9 +8,9 @@
 
 [![Zig](https://img.shields.io/badge/Zig-0.17.0-orange.svg)](https://ziglang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-145%20passing%2C%200%20leaks-brightgreen.svg)]()
-[![Codegen](https://img.shields.io/badge/codegen%20tests-6%2F6-brightgreen.svg)]()
-[![Production](https://img.shields.io/badge/production--score-6.8%2F10-yellow.svg)](PRODUCTION_AUDIT.md)
+[![Tests](https://img.shields.io/badge/tests-418%20passed%20%C2%B7%2016%20skipped%20%C2%B7%200%20failed-brightgreen.svg)]()
+[![Codegen](https://img.shields.io/badge/codegen%20tests-passing-brightgreen.svg)]()
+[![Production](https://img.shields.io/badge/production--score-9.8%2F10%20(contractual)%20%C2%B7%20~9.2%20honest-brightgreen.svg)](PRODUCTION_AUDIT.md)
 
 [English](README.md) | **中文文档**
 
@@ -86,7 +86,7 @@ fn index(ctx: *zfinal.Context) !void {
 git clone https://github.com/chy3xyz/zfinal.git
 cd zfinal
 zig build                  # 构建框架 + 所有示例
-zig build test             # 基线：416 passed; 16 skipped; 0 failed
+zig build test             # 基线：418 passed; 16 skipped; 0 failed
 zig build test-zf          # codegen 回归（zig build test-zf）
 ```
 
@@ -103,7 +103,7 @@ zig build run-htmx               # HTMX 交互应用
 ### 集成到你的项目
 
 ```bash
-zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.9.3.tar.gz
+zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.26.0.tar.gz
 ```
 
 在 `build.zig.zon`：
@@ -111,7 +111,7 @@ zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.9.3.tar.
 ```zon
 .dependencies = .{
     .zfinal = .{
-        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.9.3.tar.gz",
+        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.26.0.tar.gz",
         .hash = "...",  // `zig fetch` 自动填
     },
 },
@@ -203,7 +203,7 @@ pub fn isUsernameTaken(db: *zfinal.DB, username: []const u8) !bool {
 
 ```bash
 zf check           # AI 边界审计
-zig build test     # 416 passed; 16 skipped; 0 failed
+zig build test     # 418 passed; 16 skipped; 0 failed
 ```
 
 ### 第 5 步 — 跑
@@ -290,7 +290,7 @@ zfinal/
 ├── tools/zf/                     # CLI 工具
 │   ├── main.zig                  # 入口
 │   ├── codegen.zig               # 代码生成器
-│   ├── codegen_test.zig          # 6 个生成器回归测试
+│   ├── codegen_test.zig          # 生成器回归测试
 │   └── templates.zig             # 代码模板
 ├── examples/                     # 10+ 可跑示例
 │   ├── ai-blog-5min/             # 5 分钟 AI 极速演示
@@ -340,16 +340,16 @@ ZFinal 自带 6 个 skill + 1 个 sub-agent：
 
 | 状态 | 维度 | 分数 |
 |------|------|------|
-| ✅ | 构建稳定性 | 95% |
-| ✅ | 安全性 | 90% |
-| ✅ | 内存安全 | 88% |
-| ✅ | 正确性 | 88% |
-| ✅ | 可观测性 | 85% |
-| ✅ | 并发 | 85% |
-| ✅ | 可测试性 | 85% |
-| ✅ | 代码质量 | 85% |
-| 🟡 | 文档 | **85%**（原 60%，AI 化重写） |
-| 🟡 | 示例 | 82% |
+| ✅ | 构建稳定性 | 96% |
+| ✅ | 安全性 | 95% |
+| ✅ | 内存安全 | 95% |
+| ✅ | 正确性 | 94% |
+| ✅ | 可观测性 | 92% |
+| ✅ | 并发 | 93% |
+| ✅ | 可测试性 | 94% |
+| ✅ | 插件成熟度 | 93% |
+| ✅ | 文档 | 94% |
+| ✅ | 示例 | 90% |
 | **→** | **总体** | **~9.2/10（契约 9.8）** |
 
 详见 [PRODUCTION_AUDIT.md](PRODUCTION_AUDIT.md)。
@@ -411,7 +411,7 @@ L3 异步（同 TX Outbox → Bus）与消息连接器：
 
 ## 路线图
 
-### v0.9（当前）— AI 协议层 ✅
+### v0.9 — AI 协议层 ✅
 
 - `zf --json` 机器可读 manifest
 - `// ── ai-edit-zone: ...` 标记
@@ -453,6 +453,6 @@ MIT — 见 [LICENSE](LICENSE)。
 
 Made with ❤️ by the ZFinal Team
 
-**ZFinal v0.9.3** — Zig 的 AI 极速开发框架
+**ZFinal v0.26.0** — Zig 的 AI 极速开发框架
 
 </div>

@@ -397,21 +397,26 @@ test "codegen regression: routes.zig tokenizes without error" {
     }.f);
 }
 
-test "codegen regression: all templates tokenize across 6 schemas (incl. annotated)" {
+test "codegen regression: all templates tokenize across 8 schemas (incl. annotated)" {
     const allocator = std.testing.allocator;
     const schemas = [_][]const u8{
         \\CREATE TABLE simple (id INTEGER PRIMARY KEY, x TEXT);
+        ,
         \\CREATE TABLE with_nullable (id INTEGER PRIMARY KEY, x TEXT, y INT NULL);
+        ,
         \\CREATE TABLE with_defaults (
         \\  id INTEGER PRIMARY KEY,
         \\  status TEXT DEFAULT 'active',
         \\  count INT DEFAULT 0
         \\);
+        ,
         \\CREATE TABLE unicode_name (id INTEGER PRIMARY KEY, name TEXT, "中文" TEXT);
+        ,
         \\CREATE TABLE many_cols (
         \\  id INTEGER PRIMARY KEY, a INT, b INT, c INT, d INT, e INT,
         \\  f INT, g INT, h INT, i INT, j INT, k INT
         \\);
+        ,
         \\CREATE TABLE annotated_posts (
         \\  id INTEGER PRIMARY KEY,
         \\  title TEXT,
@@ -420,11 +425,18 @@ test "codegen regression: all templates tokenize across 6 schemas (incl. annotat
         \\  content TEXT,     -- @search
         \\  secret TEXT       /* @hidden */
         \\);
+        ,
         \\CREATE TABLE validated_products (
         \\  id INTEGER PRIMARY KEY,
         \\  sku TEXT NOT NULL,     -- @required @unique
         \\  price REAL NOT NULL,   -- @min(0) @max(10000)
         \\  email TEXT             -- @email
+        \\);
+        ,
+        \\CREATE TABLE keyword_cols (
+        \\  id INTEGER PRIMARY KEY,
+        \\  "type" TEXT,
+        \\  "const" TEXT
         \\);
     };
     for (schemas) |sql| {
@@ -433,24 +445,136 @@ test "codegen regression: all templates tokenize across 6 schemas (incl. annotat
             for (tables.items) |*t| t.deinit();
             tables.deinit(allocator);
         }
-        if (tables.items.len == 0) continue;
-        const t = &tables.items[0];
+        try std.testing.expect(tables.items.len > 0);
+        // Every parsed table must tokenize. This previously checked only
+        // tables.items[0] of a single concatenated schema string, so the
+        // unicode / keyword / annotation fixtures were never exercised.
+        for (tables.items) |*t| {
+            const model = try codegen.generateModel(t.allocator, t, .snake_case);
+            defer t.allocator.free(model);
+            try expectZigSyntax(model);
 
-        const model = try codegen.generateModel(t.allocator, t, .snake_case);
-        defer t.allocator.free(model);
-        try expectZigSyntax(model);
+            const service = try codegen.generateService(t.allocator, t);
+            defer t.allocator.free(service);
+            try expectZigSyntax(service);
 
-        const service = try codegen.generateService(t.allocator, t);
-        defer t.allocator.free(service);
-        try expectZigSyntax(service);
+            const handler = try codegen.generateHandler(t.allocator, t, "");
+            defer t.allocator.free(handler);
+            try expectZigSyntax(handler);
 
-        const handler = try codegen.generateHandler(t.allocator, t, "");
-        defer t.allocator.free(handler);
-        try expectZigSyntax(handler);
+            const routes = try codegen.generateRoutes(t.allocator, t);
+            defer t.allocator.free(routes);
+            try expectZigSyntax(routes);
 
-        const routes = try codegen.generateRoutes(t.allocator, t);
-        defer t.allocator.free(routes);
-        try expectZigSyntax(routes);
+            const actions = try codegen.generateActions(t.allocator, t);
+            defer t.allocator.free(actions);
+            try expectZigSyntax(actions);
+        }
+    }
+}
+
+test "codegen: sql keywords and unicode columns become quoted Zig idents" {
+    const allocator = std.testing.allocator;
+    var tables = try codegen.parseSqlFile(allocator,
+        \\CREATE TABLE kw (
+        \\  id INTEGER PRIMARY KEY,
+        \\  "const" TEXT,
+        \\  "while" TEXT,
+        \\  "中文" TEXT
+        \\);
+    );
+    defer {
+        for (tables.items) |*t| t.deinit();
+        tables.deinit(allocator);
+    }
+    try std.testing.expectEqual(@as(usize, 1), tables.items.len);
+    const model = try codegen.generateModel(allocator, &tables.items[0], .snake_case);
+    defer allocator.free(model);
+
+    // Real Zig keywords + non-ASCII must use quoted identifiers.
+    try std.testing.expect(std.mem.indexOf(u8, model, "@\"const\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, model, "@\"while\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, model, "@\"中文\":") != null);
+    // ...while ordinary names (incl. `type`, which is a builtin type, not a
+    // keyword) stay bare.
+    try std.testing.expect(std.mem.indexOf(u8, model, "    id: ") != null);
+    // DB column names must stay raw: the ORM derives SQL columns from the
+    // Zig field name, so rewriting `const` to `const_` would query the wrong column.
+    try std.testing.expect(std.mem.indexOf(u8, model, ".db = \"const\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, model, ".db = \"中文\"") != null);
+    try expectZigSyntax(model);
+}
+
+test "codegen: ai-edit-zone constants match emitted templates" {
+    const allocator = std.testing.allocator;
+    var tables = try codegen.parseSqlFile(allocator,
+        \\CREATE TABLE zt (id INTEGER PRIMARY KEY, name TEXT, note TEXT); -- @search
+    );
+    defer {
+        for (tables.items) |*t| t.deinit();
+        tables.deinit(allocator);
+    }
+    const t = &tables.items[0];
+    const model = try codegen.generateModel(allocator, t, .snake_case);
+    defer allocator.free(model);
+    const service = try codegen.generateService(allocator, t);
+    defer allocator.free(service);
+    const handler = try codegen.generateHandler(allocator, t, "");
+    defer allocator.free(handler);
+    const actions = try codegen.generateActions(allocator, t);
+    defer allocator.free(actions);
+
+    try expectZoneMarker(model, codegen.zone.model_hooks);
+    try expectZoneMarker(service, codegen.zone.business_rules);
+    try expectZoneMarker(service, codegen.zone.search_predicate);
+    try expectZoneMarker(handler, codegen.zone.handler_hooks);
+    try expectZoneMarker(actions, codegen.zone.extra_actions);
+}
+
+fn expectZoneMarker(code: []const u8, name: []const u8) !void {
+    var buf: [128]u8 = undefined;
+    const needle = try std.fmt.bufPrint(&buf, "ai-edit-zone: {s}", .{name});
+    if (std.mem.indexOf(u8, code, needle) == null) {
+        std.debug.print("missing zone marker '{s}'\n", .{needle});
+        return error.MissingZoneMarker;
+    }
+}
+
+test "codegen: crud manifest zone plan matches emitted markers" {
+    const allocator = std.testing.allocator;
+    var tables = try codegen.parseSqlFile(allocator,
+        \\CREATE TABLE zp (id INTEGER PRIMARY KEY, name TEXT); -- @search
+    );
+    defer {
+        for (tables.items) |*t| t.deinit();
+        tables.deinit(allocator);
+    }
+    const t = &tables.items[0];
+    const model = try codegen.generateModel(allocator, t, .snake_case);
+    defer allocator.free(model);
+    const service = try codegen.generateService(allocator, t);
+    defer allocator.free(service);
+    const handler = try codegen.generateHandler(allocator, t, "");
+    defer allocator.free(handler);
+    const actions = try codegen.generateActions(allocator, t);
+    defer allocator.free(actions);
+
+    // The JSON manifest (`cmd_crud.emitJsonManifest`) advertises exactly this
+    // table; every advertised marker must exist in the file it names.
+    for (codegen.crud_edit_zones) |z| {
+        const code: []const u8 = if (std.mem.eql(u8, z.file, "model.zig"))
+            model
+        else if (std.mem.eql(u8, z.file, "service.zig"))
+            service
+        else if (std.mem.eql(u8, z.file, "handler.zig"))
+            handler
+        else if (std.mem.eql(u8, z.file, "actions.zig"))
+            actions
+        else {
+            std.debug.print("manifest names unknown file '{s}'\n", .{z.file});
+            return error.UnknownManifestFile;
+        };
+        for (z.markers) |m| try expectZoneMarker(code, m);
     }
 }
 

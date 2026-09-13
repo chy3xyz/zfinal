@@ -273,18 +273,15 @@ pub fn handleCrudZent(
             defer allocator.free(boot);
             std.debug.print("\n{s}\n", .{boot});
             std.debug.print("[dry-run] exiting without writing files.\n", .{});
+            if (json_mode) {
+                const manifest = try zent_codegen.emitJsonManifest(allocator, schema_path, &schema);
+                defer allocator.free(manifest);
+                var out = std.Io.File.stdout();
+                try out.writeStreamingAll(zf_shared.io, manifest);
+            }
             return;
         }
         std.debug.print("\n──── continue ────\n", .{});
-    }
-
-    if (dry_run) {
-        std.debug.print("\n[dry-run] would write under {s}/{s}/:\n", .{ out_root, schema.module });
-        std.debug.print("  model.zig persistence.zig service.zig handler.zig actions.zig routes.zig\n", .{});
-        const boot = try zent_codegen.generateBootstrapSnippet(allocator, &schema);
-        defer allocator.free(boot);
-        std.debug.print("\n{s}\n", .{boot});
-        return;
     }
 
     const mod_dir = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ out_root, schema.module });
@@ -348,27 +345,8 @@ pub fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8, pro
     }
     defer if (!std.fs.path.isAbsolute(sql_path)) allocator.free(resolved_sql);
 
-    // If project name given, create directory and work inside it
-    if (project_name) |name| {
-        std.Io.Dir.cwd().createDirPath(zf_shared.io, name) catch |err| {
-            if (err != error.PathAlreadyExists) return err;
-        };
-        const name_z = try allocator.allocSentinel(u8, name.len, 0);
-        @memcpy(name_z, name);
-        defer allocator.free(name_z);
-        _ = std.c.chdir(name_z.ptr);
-    }
-
-    // Auto-bootstrap project if not already in one
-    // Check if project exists by trying to open build.zig.zon
-    const zon_file = std.Io.Dir.cwd().openFile(zf_shared.io, "build.zig.zon", .{});
-    if (zon_file) |f| {
-        f.close(zf_shared.io);
-    } else |_| {
-        std.debug.print("⚡ Bootstrapping clean project...\n", .{});
-        try bootstrapProject(allocator);
-    }
-
+    // Read + parse the schema BEFORE any filesystem side effect, so
+    // `--dry-run` / `--explain` never create project dirs or bootstrap a project.
     const file = try std.Io.Dir.cwd().openFile(zf_shared.io, resolved_sql, .{});
     defer file.close(zf_shared.io);
 
@@ -425,9 +403,33 @@ pub fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8, pro
         if (dry_run) {
             std.debug.print("\n[dry-run] would generate {d} modules + 1 migration + 1 manifest\n", .{tables.items.len});
             std.debug.print("[dry-run] exiting without writing files.\n", .{});
+            // A dry run must still be machine-readable for AI agents.
+            if (json_mode) try emitJsonManifest(allocator, sql_path, tables.items, true);
             return;
         }
         std.debug.print("\n──── continue ────\n", .{});
+    }
+
+    // ── Side effects start here (dry-run already returned) ──
+    // If project name given, create directory and work inside it
+    if (project_name) |name| {
+        std.Io.Dir.cwd().createDirPath(zf_shared.io, name) catch |err| {
+            if (err != error.PathAlreadyExists) return err;
+        };
+        const name_z = try allocator.allocSentinel(u8, name.len, 0);
+        @memcpy(name_z, name);
+        defer allocator.free(name_z);
+        _ = std.c.chdir(name_z.ptr);
+    }
+
+    // Auto-bootstrap project if not already in one
+    // Check if project exists by trying to open build.zig.zon
+    const zon_file = std.Io.Dir.cwd().openFile(zf_shared.io, "build.zig.zon", .{});
+    if (zon_file) |f| {
+        f.close(zf_shared.io);
+    } else |_| {
+        std.debug.print("⚡ Bootstrapping clean project...\n", .{});
+        try bootstrapProject(allocator);
     }
 
     // Step 2: Generate combined migration package
@@ -488,13 +490,13 @@ pub fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8, pro
 
     // Step 6: Emit machine-readable manifest for AI agents
     if (json_mode) {
-        try emitJsonManifest(allocator, sql_path, tables.items);
+        try emitJsonManifest(allocator, sql_path, tables.items, false);
     }
 }
 
 /// Emit a JSON manifest on stdout describing the generated artifacts.
 /// AI agents parse this to know which files to edit and which fields to fill.
-fn emitJsonManifest(allocator: std.mem.Allocator, sql_path: []const u8, tables: []codegen.Table) !void {
+fn emitJsonManifest(allocator: std.mem.Allocator, sql_path: []const u8, tables: []codegen.Table, dry_run: bool) !void {
     var buf = std.ArrayList(u8).empty;
     defer buf.deinit(allocator);
 
@@ -504,6 +506,9 @@ fn emitJsonManifest(allocator: std.mem.Allocator, sql_path: []const u8, tables: 
     try buf.appendSlice(allocator, zf_cfg.semver);
     try buf.appendSlice(allocator, "\",\n");
     try buf.appendSlice(allocator, "  \"generator\": \"zf crud:sql\",\n");
+    try buf.appendSlice(allocator, "  \"dry_run\": ");
+    try buf.appendSlice(allocator, if (dry_run) "true" else "false");
+    try buf.appendSlice(allocator, ",\n");
 
     // sql_path
     try buf.appendSlice(allocator, "  \"sql_path\": \"");
@@ -540,11 +545,25 @@ fn emitJsonManifest(allocator: std.mem.Allocator, sql_path: []const u8, tables: 
         try buf.appendSlice(allocator, "/routes.zig\"\n");
         try buf.appendSlice(allocator, "      },\n");
 
-        // AI edit zones
+        // AI edit zones — names are taken from `codegen.crud_edit_zones` so the
+        // manifest cannot drift from the markers the templates actually emit.
         try buf.appendSlice(allocator, "      \"ai_edit_zones\": [\n");
-        try buf.appendSlice(allocator, "        { \"file\": \"service.zig\", \"markers\": [\"// ai-edit-zone: business rules\", \"// ai-edit-zone: validation\"], \"purpose\": \"custom business logic beyond generated CRUD\" },\n");
-        try buf.appendSlice(allocator, "        { \"file\": \"handler.zig\", \"markers\": [\"// ai-edit-zone: auth check\", \"// ai-edit-zone: response shaping\"], \"purpose\": \"per-route auth, response transformation\" },\n");
-        try buf.appendSlice(allocator, "        { \"file\": \"actions.zig\", \"markers\": [\"// ai-edit-zone: extra actions\"], \"purpose\": \"add custom routes; run zf routes\" }\n");
+        for (codegen.crud_edit_zones, 0..) |z, zi| {
+            try buf.appendSlice(allocator, "        { \"file\": \"");
+            try appendJsonString(allocator, &buf, z.file);
+            try buf.appendSlice(allocator, "\", \"markers\": [");
+            for (z.markers, 0..) |m, mi| {
+                if (mi > 0) try buf.appendSlice(allocator, ", ");
+                try buf.appendSlice(allocator, "\"// ai-edit-zone: ");
+                try appendJsonString(allocator, &buf, m);
+                try buf.appendSlice(allocator, "\"");
+            }
+            try buf.appendSlice(allocator, "], \"purpose\": \"");
+            try appendJsonString(allocator, &buf, z.purpose);
+            try buf.appendSlice(allocator, "\" }");
+            if (zi + 1 < codegen.crud_edit_zones.len) try buf.appendSlice(allocator, ",");
+            try buf.appendSlice(allocator, "\n");
+        }
         try buf.appendSlice(allocator, "      ],\n");
 
         // Fields

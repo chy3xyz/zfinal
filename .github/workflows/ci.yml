@@ -8,16 +8,28 @@ on:
 
 # Productized gate (scripts/quality_gate.sh full) is the Ubuntu merge gatekeeper.
 # macOS + optional drivers remain for coverage; do not re-run the full gate there.
+# The Zig toolchain is single-sourced from repo-root `.zig-version` (also read by
+# docker/Dockerfile and verified by scripts/quality_gate.sh).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   quality-gate:
     name: Quality gate (productized)
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - name: Read pinned Zig version
+      id: zigver
+      run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
     - name: Setup Zig
       uses: mlugg/setup-zig@v2
       with:
-        version: '0.17.0-dev.1422+e863bf3be'
+        version: ${{ steps.zigver.outputs.version }}
     - name: Install SQLite
       run: |
         sudo apt-get update
@@ -30,10 +42,13 @@ jobs:
     runs-on: macos-latest
     steps:
     - uses: actions/checkout@v4
+    - name: Read pinned Zig version
+      id: zigver
+      run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
     - name: Setup Zig
       uses: mlugg/setup-zig@v2
       with:
-        version: '0.17.0-dev.1422+e863bf3be'
+        version: ${{ steps.zigver.outputs.version }}
     - name: Install SQLite
       run: brew install sqlite3
     - name: Build + unit + codegen
@@ -48,10 +63,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - name: Read pinned Zig version
+      id: zigver
+      run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
     - name: Setup Zig
       uses: mlugg/setup-zig@v2
       with:
-        version: '0.17.0-dev.1422+e863bf3be'
+        version: ${{ steps.zigver.outputs.version }}
     - name: Install client libs
       run: |
         sudo apt-get update
@@ -94,10 +112,13 @@ jobs:
           --health-retries 15
     steps:
     - uses: actions/checkout@v4
+    - name: Read pinned Zig version
+      id: zigver
+      run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
     - name: Setup Zig
       uses: mlugg/setup-zig@v2
       with:
-        version: '0.17.0-dev.1422+e863bf3be'
+        version: ${{ steps.zigver.outputs.version }}
     - name: Install client libs
       run: |
         sudo apt-get update
@@ -126,10 +147,13 @@ jobs:
           - 4222:4222
     steps:
     - uses: actions/checkout@v4
+    - name: Read pinned Zig version
+      id: zigver
+      run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
     - name: Setup Zig
       uses: mlugg/setup-zig@v2
       with:
-        version: '0.17.0-dev.1422+e863bf3be'
+        version: ${{ steps.zigver.outputs.version }}
     - name: Install SQLite
       run: |
         sudo apt-get update
@@ -170,3 +194,25 @@ jobs:
         KAFKA_BOOTSTRAP: 127.0.0.1:9092
         ROBUSTMQ_URL: 127.0.0.1:9092
       run: zig build test
+
+  # Non-blocking early warning for upstream Zig dev breakage. The supported
+  # toolchain is pinned in `.zig-version`; this job only tells us *before* an
+  # upgrade is attempted which std APIs moved.
+  zig-latest-canary:
+    name: Zig latest-dev canary (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Zig (master)
+      uses: mlugg/setup-zig@v2
+      with:
+        version: master
+    - name: Install SQLite
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libsqlite3-dev
+    - name: Build (expected to break on master drift)
+      run: |
+        echo "canary toolchain: $(zig version)"
+        zig build

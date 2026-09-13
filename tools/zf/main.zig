@@ -42,7 +42,7 @@ pub fn main(init: std.process.Init) !void {
 
     const argv0 = args_iter.next() orelse {
         std.debug.print("Usage: zf <command>\n", .{});
-        return;
+        std.process.exit(zf_shared.Exit.fail);
     };
 
     // Collect all args for index-based access
@@ -76,7 +76,7 @@ pub fn main(init: std.process.Init) !void {
                 std.debug.print("Usage: {s} new <project_name> [--clean] [--json]\n", .{argv0});
                 std.debug.print("  --clean  Skip demo files (handler/user.zig, model/user.zig)\n", .{});
                 std.debug.print("  --json   Emit machine-readable manifest on stdout\n", .{});
-                return;
+                std.process.exit(zf_shared.Exit.fail);
             }
             const clean = hasFlag(args, "--clean");
             const json_mode = hasFlag(args, "--json");
@@ -89,7 +89,7 @@ pub fn main(init: std.process.Init) !void {
                 std.debug.print("      port names: store | cache | bus  (L2/L3 ports + adapters)\n", .{});
                 std.debug.print("Flags: --json   Emit machine-readable manifest.\n", .{});
                 std.debug.print("       --force  Overwrite existing files.\n", .{});
-                return;
+                std.process.exit(zf_shared.Exit.fail);
             }
             const json_mode = hasFlag(args, "--json");
             const force = hasFlag(args, "--force");
@@ -99,7 +99,7 @@ pub fn main(init: std.process.Init) !void {
             if (args.len < 3) {
                 std.debug.print("Usage: {s} api <name>\n", .{args[0]});
                 std.debug.print("Generate API handler (JSON output)\n", .{});
-                return;
+                std.process.exit(zf_shared.Exit.fail);
             }
             try cmd_scaffold.generateCode(allocator, "handler", args[2], true, false, false);
         },
@@ -107,7 +107,7 @@ pub fn main(init: std.process.Init) !void {
             if (args.len < 3) {
                 std.debug.print("Usage: {s} migrate <action> [name]\n", .{args[0]});
                 std.debug.print("Actions: new <name>, run\n", .{});
-                return;
+                std.process.exit(zf_shared.Exit.fail);
             }
             try handleMigrate(allocator, args[2], if (args.len > 3) args[3] else "");
         },
@@ -115,7 +115,7 @@ pub fn main(init: std.process.Init) !void {
             if (args.len < 3) {
                 std.debug.print("Usage: {s} seed <action> [name]\n", .{args[0]});
                 std.debug.print("Actions: new <name>, run, list\n", .{});
-                return;
+                std.process.exit(zf_shared.Exit.fail);
             }
             try handleSeed(allocator, args[2], if (args.len > 3) args[3] else "");
         },
@@ -127,7 +127,7 @@ pub fn main(init: std.process.Init) !void {
                 std.debug.print("  --count N    Number of rows (default: 100)\n", .{});
                 std.debug.print("  --run        Insert into database (default: print SQL)\n", .{});
                 std.debug.print("  --format X   Output format: sql (default), json\n", .{});
-                return;
+                std.process.exit(zf_shared.Exit.fail);
             }
             const table = args[2];
             var count: usize = 100;
@@ -154,7 +154,7 @@ pub fn main(init: std.process.Init) !void {
                 std.debug.print("  Load-test an HTTP endpoint.\n", .{});
                 std.debug.print("  --count N       Total requests (default: 1000)\n", .{});
                 std.debug.print("  --concurrency C Parallel workers (default: 10)\n", .{});
-                return;
+                std.process.exit(zf_shared.Exit.fail);
             }
             const url = args[2];
             var count: usize = 1000;
@@ -178,7 +178,7 @@ pub fn main(init: std.process.Init) !void {
                 std.debug.print("  Ask an LLM about your ZFinal project. Auto-loads AGENTS.md + last zf check output.\n", .{});
                 std.debug.print("  Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or DEEPSEEK_API_KEY.\n", .{});
                 std.debug.print("  DeepSeek default model: deepseek-v4-flash (deepseek-chat retired).\n", .{});
-                return;
+                std.process.exit(zf_shared.Exit.fail);
             }
             // Join all non-flag args as the prompt
             var prompt_buf: std.ArrayList(u8) = .empty;
@@ -209,7 +209,7 @@ pub fn main(init: std.process.Init) !void {
         .test_gen => {
             if (args.len < 3) {
                 std.debug.print("Usage: {s} test:gen <name>\n", .{args[0]});
-                return;
+                std.process.exit(zf_shared.Exit.fail);
             }
             try cmd_scaffold.generateTest(allocator, args[2]);
         },
@@ -240,7 +240,7 @@ pub fn main(init: std.process.Init) !void {
             if (args.len < 4) {
                 std.debug.print("Usage: {s} crud <db_path> <table_name>\n", .{args[0]});
                 std.debug.print("Example: {s} crud myapp.db users\n", .{args[0]});
-                return;
+                std.process.exit(zf_shared.Exit.fail);
             }
             try handleCrud(allocator, args[2], args[3]);
         },
@@ -253,7 +253,7 @@ pub fn main(init: std.process.Init) !void {
                 std.debug.print("  --admin       Also emit vben-style admin HTML (htmx + alpine + tailwind, CDN).\n", .{});
                 std.debug.print("  --explain     Print decision rationale for each generated file (AI-friendly).\n", .{});
                 std.debug.print("  --dry-run     Don't write files; only print what would be generated.\n", .{});
-                return;
+                std.process.exit(zf_shared.Exit.fail);
             }
             const project_name = if (args.len > 3 and !std.mem.startsWith(u8, args[3], "--")) args[3] else null;
             const force = hasFlag(args, "--force");
@@ -273,7 +273,7 @@ pub fn main(init: std.process.Init) !void {
                 std.debug.print("  --explain  Print plan + AI edit zones before writing\n", .{});
                 std.debug.print("  --dry-run  Print plan only; do not write files\n", .{});
                 std.debug.print("  --out dir  Output root (default: src/modules)\n", .{});
-                return;
+                std.process.exit(zf_shared.Exit.fail);
             }
             const force = hasFlag(args, "--force");
             const json_mode = hasFlag(args, "--json");
@@ -293,7 +293,7 @@ pub fn main(init: std.process.Init) !void {
                 std.debug.print("Usage: {s} admin <sql_file> [--out <dir>]\n", .{args[0]});
                 std.debug.print("  Generate vben-style admin HTML (htmx + alpine + tailwind, CDN).\n", .{});
                 std.debug.print("  --out <dir>   Output directory (default: src/modules)\n", .{});
-                return;
+                std.process.exit(zf_shared.Exit.fail);
             }
             const out_dir = blk: {
                 var i: usize = 3;
@@ -309,7 +309,7 @@ pub fn main(init: std.process.Init) !void {
                 std.debug.print("Usage: {s} crud:dsn <dsn_url>\n", .{args[0]});
                 std.debug.print("  postgres://user:pass@host:port/dbname\n", .{});
                 std.debug.print("  mysql://user:pass@host:port/dbname\n", .{});
-                return;
+                std.process.exit(zf_shared.Exit.fail);
             }
             try handleCrudFromDsn(allocator, args[2]);
         },

@@ -8,8 +8,8 @@
 
 [![Zig](https://img.shields.io/badge/Zig-0.17.0-orange.svg)](https://ziglang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v0.24.0-blue.svg)](CHANGELOG.md)
-[![Tests](https://img.shields.io/badge/tests-369%20passed%20%C2%B7%2017%20skipped%20%C2%B7%200%20failed-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/version-v0.26.0-blue.svg)](CHANGELOG.md)
+[![Tests](https://img.shields.io/badge/tests-418%20passed%20%C2%B7%2016%20skipped%20%C2%B7%200%20failed-brightgreen.svg)]()
 [![Drivers](https://img.shields.io/badge/drivers-SQLite%20%C2%B7%20PostgreSQL%20%C2%B7%20MySQL-blue.svg)]()
 [![Production](https://img.shields.io/badge/production--score-9.8%2F10%20(contractual)%20%C2%B7%20~9.2%20honest-brightgreen.svg)](PRODUCTION_AUDIT.md)
 
@@ -89,8 +89,8 @@ fn index(ctx: *zfinal.Context) !void {
 git clone https://github.com/chy3xyz/zfinal.git
 cd zfinal
 zig build                  # Build framework + all examples
-zig build test             # Run 146 unit + integration tests (2 skipped)
-zig build test-zf          # Run 17 codegen regression tests
+zig build test             # Baseline: 418 passed; 16 skipped; 0 failed
+zig build test-zf          # Codegen regression tests
 ```
 
 ### Run an example
@@ -108,7 +108,7 @@ zig build run-standalone-admin   # Single-binary admin (all HTML @embedFile'd)
 ### Add ZFinal to your project
 
 ```bash
-zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.24.0.tar.gz
+zig fetch --save https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.26.0.tar.gz
 ```
 
 In your `build.zig.zon`:
@@ -116,7 +116,7 @@ In your `build.zig.zon`:
 ```zon
 .dependencies = .{
     .zfinal = .{
-        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.24.0.tar.gz",
+        .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.26.0.tar.gz",
         .hash = "...",  // auto-filled by `zig fetch`
     },
 },
@@ -208,7 +208,7 @@ pub fn isUsernameTaken(db: *zfinal.DB, username: []const u8) !bool {
 
 ```bash
 zf check           # AI boundary audit
-zig build test     # 146 integration + 17 codegen tests
+zig build test     # baseline: 418 passed; 16 skipped; 0 failed
 ```
 
 ### Step 5 — Run
@@ -310,8 +310,7 @@ not a refactor.
 | v0.13.4 | `defer unlockMut` moved before `destroyMutex` + `checked_out` defaults to `true` for direct `DB.init` conns |
 
 **Result**: pool survives `max_connections=20, burst 10, ~12 borrows`
-without segfault. Verified by `zig build test` (203 integration
-tests, 0 crashes).
+without segfault. Verified by `zig build test` (0 crashes).
 
 ### Security
 
@@ -565,7 +564,7 @@ For detailed benchmarks: `zig build run-bench`
 - `zf ai` — AI assistant with AGENTS.md + skill context (OpenAI / Anthropic)
 - `zf new` bundles all 8 AI skills + GitHub Actions workflow into new projects
 - `zf check --heal` expanded to 6 patches (idempotent on re-run)
-- Zig version aligned with CI: `0.17.0-dev.1422+e863bf3be` (`minimum_zig_version` in `build.zig.zon`).
+- Toolchain single-sourced from repo-root `.zig-version` (mirrored by `minimum_zig_version` in `build.zig.zon`).
 
 ### v0.12.4 → v0.13.4 — Pool Stability ✅
 
@@ -641,7 +640,7 @@ For detailed benchmarks: `zig build run-bench`
 ### v1.0 — Stable Release
 
 - [ ] Stable API surface (no breaking changes without major version)
-- [ ] Comprehensive integration test suite (currently 208 — adding
+- [ ] Comprehensive integration test suite (currently 418 — adding
       PG/MySQL live runs against Docker containers)
 - [ ] Production deployment guide (with v0.14.0 SSL/TLS + v0.15.0
       binary decode tuning notes)
@@ -673,6 +672,6 @@ MIT — see [LICENSE](LICENSE) for details.
 
 Made with ❤️ by the ZFinal Team
 
-**ZFinal v0.24.0** — Zig 的 AI 极速开发框架
+**ZFinal v0.26.0** — Zig 的 AI 极速开发框架
 
 </div>

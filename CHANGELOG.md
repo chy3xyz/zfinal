@@ -1,3 +1,32 @@
+## [Unreleased]
+
+<!-- New changes land here; on release, move them under a new `## [x.y.z]` section. -->
+
+## [0.26.0] - 2026-09-13
+
+### Added
+- **Single-sourced Zig toolchain**: repo-root **`.zig-version`** (currently `0.17.0-dev.1567+f0354179a`) is the only place the Zig version lives. CI, `release.yml` and `docker/Dockerfile` read it, and `scripts/quality_gate.sh` compares the running `zig version` against it (warn in quick/full, hard fail in `release`). CI had been pinned to `0.17.0-dev.1422` — older than the 0.23.2 `.Debug` → `.debug` rename — so the merge gate could not compile `main`. Added a non-blocking `master` canary job and a weekly Dependabot config for Actions.
+- **Committed manifest schemas**: `schemas/manifest-1.json` and `schemas/zent-manifest-1.json` document the `zf … --json` contract that was previously only a URL (and had no artifact behind it).
+- **New regression tests**: quoted-identifier generation for reserved/non-ASCII columns, manifest-zone-plan ↔ emitted-marker equality, `X-Forwarded-For` right-to-left resolution, and over-long router-key rejection. Baseline is now **418 passed; 16 skipped; 0 failed**.
+
+### Fixed
+- **`zf g` now honours the generated-file contract**: `zf g handler|model|middleware|service|task` writes through `safeWrite` (merge `ai-edit-zone` bodies, `.gen.new` fallback, `--force` to overwrite), emits a `// @generated` header plus `ai-edit-zone` markers, and passes `--force` through. Previously `--force` was ignored on five of six types and the plain `writeFile` **silently truncated user-edited files**; output carried no `@generated` header and no zones. The `--json` manifest now reports `written` + `ai_edit_zones` and exits non-zero when the target directory is missing.
+- **`--dry-run` is side-effect free**: `zf crud:sql … --dry-run` no longer creates the project dir, `chdir`s or bootstraps before the flag is checked; `--dry-run --json` emits the manifest (`"dry_run": true`) instead of human text on stderr with empty stdout. `zf crud:zent` dry-run emits its manifest too, and a dead duplicate dry-run branch was removed.
+- **Usage errors exit non-zero**: every missing-argument path in `zf` exits 1 (was 0), so agents/scripts can detect failure.
+- **Manifest ↔ template drift**: `zf crud:sql --json` advertised zone names that do not exist (`validation`, `auth check`, `response shaping`) and omitted real ones (`search predicate`, `model hooks`). Zone names now come from `codegen.zone` / `codegen.crud_edit_zones`, and a test asserts every advertised marker is present in the file it names.
+- **Generator identifier sanitization**: SQL columns that are Zig reserved words or non-ASCII (`"const"`, `"中文"`) are emitted as quoted identifiers (`@"const"`, `@"中文"`) instead of invalid Zig. DB column names are preserved (`std.meta.fields` name == SQL column), which is what the ORM derives SQL from. The codegen regression test now exercises **every** table of **every** fixture (it previously checked only the first table of one concatenated schema string).
+- **Crash-safe generator writes**: `safeWrite` writes through `<path>.tmp` + rename and leaves a `<path>.bak` copy before any merge/overwrite; `*.gen.new` / `*.bak` are gitignored.
+- **`DB.transaction` / `transactionResult`**: a failed `COMMIT` now rolls back before returning, so a connection with an open transaction can no longer be returned to the pool and poison the next request.
+- **`TokenManager.exists`** takes the manager mutex — it read a HashMap that `put`/`validate` can rehash while another thread reads.
+- **`X-Forwarded-For` resolution**: walks from the right, skipping configured trusted proxies, instead of trusting the left-most (client-controlled) entry; with no allow-list the right-most entry wins, and `trusted_proxies` is documented as required for full correctness.
+- **`Context.getFiles`** enforces the same "body once per request" phase contract as `getBodyText` (it previously bypassed `body_consumed`).
+- **Router static fast path**: over-long paths no longer degrade to a method-less key (which could make `GET:/x` and `POST:/x` collide); they skip the static index/param cache and are served by the linear scan.
+- **`zf check`** now validates the current single-file layout: a `@generated` module with no `ai-edit-zone` (and no `DO NOT EDIT` marker) is reported. Checks 2–4 only understood the retired `.gen.zig` + `ext/` layout and were a no-op on new projects.
+- **Version/docs drift**: README, README_CN, `doc/index.md`, `doc/best_practices.md`, `doc/architecture_best_practices.md`, `SECURITY.md` and `RELEASE_CHECKLIST.md` were split between v0.9.3 / v0.20.15 / v0.24.0; all now reference v0.26.0 and the `.zig-version` pin. `test/` is tracked again — `.gitignore`'s `/test*/` had silently excluded it.
+
+### Changed
+- `scripts/quality_gate.sh`: the fmt scope now includes `test/`, and CI/release workflows gained least-privilege `permissions` + `concurrency` cancellation.
+
 ## [0.25.0] - 2026-08-27
 
 ### Added
@@ -10,7 +39,7 @@
 ### Fixed
 - **SQLite driver opened without FULLMUTEX / shared-cache / busy_timeout**: multi-thread pools hit garbled handles and instant `SQLITE_LOCKED` ("database table is locked") under concurrent write transactions. Driver now opens with `SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_URI`, maps `:memory:` to `file::memory:?cache=shared` (a pool's conns share one memory DB instead of N disjoint ones), sets `busy_timeout=5000`, and enables WAL for file-backed DBs.
 
-
+## [0.24.0] - 2026-08-15
 
 ### Added
 - **`WsFanout`** (`zfinal.WsFanout`): bridges a Queue mailbox (in-process `QueueClient`, or Redis/NATS/RobustMQ on the producing side) into a WebSocket sink via `startBroadcast(manager, mailbox, topic)` — the missing multi-instance WS fanout layer; single-instance `WebSocketManager.broadcast` already existed. Callback-style `start(...)` + test.

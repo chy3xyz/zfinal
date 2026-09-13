@@ -4,6 +4,7 @@ const templates = @import("templates.zig");
 const zf_cfg = @import("zf_cfg");
 const zf_shared = @import("zf_shared.zig");
 const cmd_port = @import("cmd_port.zig");
+const codegen = @import("codegen");
 
 const writeFile = zf_shared.writeFile;
 const capitalizeOwned = zf_shared.capitalizeOwned;
@@ -171,42 +172,55 @@ pub fn createProject(allocator: std.mem.Allocator, project_name: []const u8, cle
 pub fn generateCode(allocator: std.mem.Allocator, gen_type: []const u8, name: []const u8, is_api: bool, json_mode: bool, force: bool) !void {
     if (name.len == 0) {
         std.debug.print("Error: Name is required\n", .{});
-        return;
+        std.process.exit(zf_shared.Exit.fail);
     }
 
     var buf = std.ArrayList(u8).empty;
     defer buf.deinit(allocator);
 
+    // `produced` is false when the target directory is missing (e.g. outside a
+    // `zf new` project); the manifest must not claim a file that was not written.
+    var produced = false;
+    var dir_hint: []const u8 = "";
+    const name_lower = try std.ascii.allocLowerString(allocator, name);
+    defer allocator.free(name_lower);
+
     if (std.mem.eql(u8, gen_type, "handler")) {
-        try generateHandler(allocator, name, is_api);
+        dir_hint = "src/handler";
+        produced = try generateHandler(allocator, name, is_api, force);
         try buf.appendSlice(allocator, "src/handler/");
-        try buf.appendSlice(allocator, name);
+        try buf.appendSlice(allocator, name_lower);
         try buf.appendSlice(allocator, ".zig");
     } else if (std.mem.eql(u8, gen_type, "model")) {
-        try generateModel(allocator, name);
+        dir_hint = "src/model";
+        produced = try generateModel(allocator, name, force);
         try buf.appendSlice(allocator, "src/model/");
-        try buf.appendSlice(allocator, name);
+        try buf.appendSlice(allocator, name_lower);
         try buf.appendSlice(allocator, ".zig");
     } else if (std.mem.eql(u8, gen_type, "middleware")) {
-        try generateMiddleware(allocator, name);
+        dir_hint = "src/middleware";
+        produced = try generateMiddleware(allocator, name, force);
         try buf.appendSlice(allocator, "src/middleware/");
-        try buf.appendSlice(allocator, name);
+        try buf.appendSlice(allocator, name_lower);
         try buf.appendSlice(allocator, ".zig");
     } else if (std.mem.eql(u8, gen_type, "service")) {
-        try generateService(allocator, name);
+        dir_hint = "src/service";
+        produced = try generateService(allocator, name, force);
         try buf.appendSlice(allocator, "src/service/");
-        try buf.appendSlice(allocator, name);
+        try buf.appendSlice(allocator, name_lower);
         try buf.appendSlice(allocator, ".zig");
     } else if (std.mem.eql(u8, gen_type, "task")) {
-        try generateTask(allocator, name);
+        dir_hint = "src/task";
+        produced = try generateTask(allocator, name, force);
         try buf.appendSlice(allocator, "src/task/");
-        try buf.appendSlice(allocator, name);
+        try buf.appendSlice(allocator, name_lower);
         try buf.appendSlice(allocator, ".zig");
     } else if (std.mem.eql(u8, gen_type, "controller")) {
         // Backward compat: map controller → handler
-        try generateHandler(allocator, name, is_api);
+        dir_hint = "src/handler";
+        produced = try generateHandler(allocator, name, is_api, force);
         try buf.appendSlice(allocator, "src/handler/");
-        try buf.appendSlice(allocator, name);
+        try buf.appendSlice(allocator, name_lower);
         try buf.appendSlice(allocator, ".zig");
     } else if (std.mem.eql(u8, gen_type, "port")) {
         try cmd_port.generatePort(allocator, name, force, json_mode);
@@ -214,10 +228,17 @@ pub fn generateCode(allocator: std.mem.Allocator, gen_type: []const u8, name: []
     } else {
         std.debug.print("Unknown type: {s}\n", .{gen_type});
         std.debug.print("Available: handler, model, middleware, service, task, port\n", .{});
-        return;
+        std.process.exit(zf_shared.Exit.fail);
     }
 
     if (json_mode) {
+        const zones: []const []const u8 = if (std.mem.eql(u8, gen_type, "handler") or std.mem.eql(u8, gen_type, "controller"))
+            &[_][]const u8{codegen.zone.handler_hooks}
+        else if (std.mem.eql(u8, gen_type, "model"))
+            &[_][]const u8{codegen.zone.model_hooks}
+        else
+            &[_][]const u8{codegen.zone.business_rules};
+
         var out_buf = std.ArrayList(u8).empty;
         defer out_buf.deinit(allocator);
         try out_buf.appendSlice(allocator, "{\n");
@@ -235,8 +256,24 @@ pub fn generateCode(allocator: std.mem.Allocator, gen_type: []const u8, name: []
         try out_buf.appendSlice(allocator, "  \"file\": \"");
         try appendJsonString(allocator, &out_buf, buf.items);
         try out_buf.appendSlice(allocator, "\",\n");
+        try out_buf.appendSlice(allocator, "  \"written\": ");
+        try out_buf.appendSlice(allocator, if (produced) "true" else "false");
+        try out_buf.appendSlice(allocator, ",\n");
+        try out_buf.appendSlice(allocator, "  \"ai_edit_zones\": [");
+        for (zones, 0..) |z, i| {
+            if (i > 0) try out_buf.appendSlice(allocator, ", ");
+            try out_buf.appendSlice(allocator, "\"");
+            try appendJsonString(allocator, &out_buf, z);
+            try out_buf.appendSlice(allocator, "\"");
+        }
+        try out_buf.appendSlice(allocator, "],\n");
+        if (!produced) {
+            try out_buf.appendSlice(allocator, "  \"error\": \"");
+            try appendJsonString(allocator, &out_buf, dir_hint);
+            try out_buf.appendSlice(allocator, "/ not found — run 'zf new' first\",\n");
+        }
         try out_buf.appendSlice(allocator, "  \"next_steps\": [\n");
-        try out_buf.appendSlice(allocator, "    \"Fill the generated handler/service body\",\n");
+        try out_buf.appendSlice(allocator, "    \"Edit only inside ai-edit-zone blocks\",\n");
         try out_buf.appendSlice(allocator, "    \"Add route registration: try app.get(\\\"/<path>\\\", <Name>Handler.<action>)\",\n");
         try out_buf.appendSlice(allocator, "    \"Run: zf check && zig build test\"\n");
         try out_buf.appendSlice(allocator, "  ]\n");
@@ -244,12 +281,14 @@ pub fn generateCode(allocator: std.mem.Allocator, gen_type: []const u8, name: []
         var out = std.Io.File.stdout();
         try out.writeStreamingAll(zf_shared.io, out_buf.items);
     }
+
+    if (!produced) std.process.exit(zf_shared.Exit.fail);
 }
 
-pub fn generateHandler(allocator: std.mem.Allocator, name: []const u8, is_api: bool) !void {
+pub fn generateHandler(allocator: std.mem.Allocator, name: []const u8, is_api: bool, force: bool) !bool {
     std.Io.Dir.cwd().access(zf_shared.io, "src/handler", .{}) catch {
         std.debug.print("Error: src/handler directory not found. Run 'zf new' first.\n", .{});
-        return;
+        return false;
     };
 
     const name_lower = try std.ascii.allocLowerString(allocator, name);
@@ -260,6 +299,8 @@ pub fn generateHandler(allocator: std.mem.Allocator, name: []const u8, is_api: b
     defer allocator.free(filename);
 
     const content = try std.fmt.allocPrint(allocator,
+        \\// @generated — DO NOT EDIT outside ai-edit-zone blocks.
+        \\// Regenerate: zf g handler <name> (matching ai-edit-zone bodies are preserved; --force overwrites)
         \\const std = @import("std");
         \\const zfinal = @import("zfinal");
         \\
@@ -282,25 +323,31 @@ pub fn generateHandler(allocator: std.mem.Allocator, name: []const u8, is_api: b
         \\}}
         \\
         \\pub fn create(ctx: *zfinal.Context) !void {{
+        \\    // ── ai-edit-zone: handler hooks ────────────────────────────────
         \\    ctx.res_status = .created;
         \\    try ctx.renderJson(.{{ .ok = true }});
+        \\    // ── end ai-edit-zone ──────────────────────────────────────────
         \\}}
         \\
         \\pub fn update(ctx: *zfinal.Context) !void {{
+        \\    // ── ai-edit-zone: handler hooks ────────────────────────────────
         \\    ctx.res_status = .not_found;
         \\    try ctx.renderJson(.{{ .err = "Not found" }});
+        \\    // ── end ai-edit-zone ──────────────────────────────────────────
         \\}}
         \\
         \\pub fn delete(ctx: *zfinal.Context) !void {{
+        \\    // ── ai-edit-zone: handler hooks ────────────────────────────────
         \\    ctx.res_status = .not_found;
         \\    try ctx.renderJson(.{{ .err = "Not found" }});
+        \\    // ── end ai-edit-zone ──────────────────────────────────────────
         \\}}
     , .{});
     defer allocator.free(content);
 
-    try std.Io.Dir.cwd().writeFile(zf_shared.io, .{ .sub_path = filename, .data = content });
+    try zf_shared.safeWrite(allocator, filename, content, force);
     const mode_str = if (is_api) "API" else "";
-    std.debug.print("✅ Generated {s} handler: {s}\n", .{ mode_str, filename });
+    std.debug.print("   {s} handler: {s}\n", .{ mode_str, filename });
 
     // Also generate a test stub
     const test_filename = try std.fmt.allocPrint(allocator, "test/handler/{s}_test.zig", .{name_lower});
@@ -310,18 +357,21 @@ pub fn generateHandler(allocator: std.mem.Allocator, name: []const u8, is_api: b
         \\const zfinal = @import("zfinal");
         \\
         \\test "{s} handler: list returns 200" {{
+        \\    // ── ai-edit-zone: handler hooks ────────────────────────────────
         \\    _ = zfinal;
         \\    // TODO: init test App, call handler, assert
+        \\    // ── end ai-edit-zone ──────────────────────────────────────────
         \\}}
     , .{name_lower});
     defer allocator.free(test_content);
-    std.Io.Dir.cwd().writeFile(zf_shared.io, .{ .sub_path = test_filename, .data = test_content }) catch {};
+    zf_shared.safeWrite(allocator, test_filename, test_content, force) catch {};
+    return true;
 }
 
-pub fn generateModel(allocator: std.mem.Allocator, name: []const u8) !void {
+pub fn generateModel(allocator: std.mem.Allocator, name: []const u8, force: bool) !bool {
     std.Io.Dir.cwd().access(zf_shared.io, "src/model", .{}) catch {
         std.debug.print("Error: src/model directory not found. Run 'zf new' first.\n", .{});
-        return;
+        return false;
     };
 
     const name_lower = try std.ascii.allocLowerString(allocator, name);
@@ -337,6 +387,7 @@ pub fn generateModel(allocator: std.mem.Allocator, name: []const u8) !void {
     defer allocator.free(table_name);
 
     const content = try std.fmt.allocPrint(allocator,
+        \\// @generated — DO NOT EDIT outside ai-edit-zone blocks.
         \\const zfinal = @import("zfinal");
         \\
         \\pub const {s} = struct {{
@@ -347,17 +398,21 @@ pub fn generateModel(allocator: std.mem.Allocator, name: []const u8) !void {
         \\
         \\pub const {s}Model = zfinal.Model({s}, "{s}");
         \\
+        \\// ── ai-edit-zone: model hooks ────────────────────────────────────
+        \\// Add custom queries / computed fields here.
+        \\// ── end ai-edit-zone ─────────────────────────────────────────────
+        \\
     , .{ model_name, model_name, model_name, table_name });
     defer allocator.free(content);
 
-    try std.Io.Dir.cwd().writeFile(zf_shared.io, .{ .sub_path = filename, .data = content });
-    std.debug.print("✅ Generated model: {s}\n", .{filename});
+    try zf_shared.safeWrite(allocator, filename, content, force);
+    return true;
 }
 
-pub fn generateMiddleware(allocator: std.mem.Allocator, name: []const u8) !void {
+pub fn generateMiddleware(allocator: std.mem.Allocator, name: []const u8, force: bool) !bool {
     std.Io.Dir.cwd().access(zf_shared.io, "src/middleware", .{}) catch {
         std.debug.print("Error: src/middleware directory not found. Run 'zf new' first.\n", .{});
-        return;
+        return false;
     };
 
     const name_lower = try std.ascii.allocLowerString(allocator, name);
@@ -370,12 +425,14 @@ pub fn generateMiddleware(allocator: std.mem.Allocator, name: []const u8) !void 
     defer allocator.free(mw_name);
 
     const content = try std.fmt.allocPrint(allocator,
+        \\// @generated — DO NOT EDIT outside ai-edit-zone blocks.
         \\const zfinal = @import("zfinal");
         \\
         \\fn {s}Before(ctx: *zfinal.Context) !bool {{
-        \\    // Add middleware logic here
+        \\    // ── ai-edit-zone: business rules ──────────────────────────────
         \\    _ = ctx;
         \\    return true;
+        \\    // ── end ai-edit-zone ──────────────────────────────────────────
         \\}}
         \\
         \\pub const {s}Middleware = zfinal.Interceptor{{
@@ -385,14 +442,14 @@ pub fn generateMiddleware(allocator: std.mem.Allocator, name: []const u8) !void 
     , .{ name_lower, mw_name, name_lower, name_lower });
     defer allocator.free(content);
 
-    try std.Io.Dir.cwd().writeFile(zf_shared.io, .{ .sub_path = filename, .data = content });
-    std.debug.print("✅ Generated: {s}\n", .{filename});
+    try zf_shared.safeWrite(allocator, filename, content, force);
+    return true;
 }
 
-pub fn generateService(allocator: std.mem.Allocator, name: []const u8) !void {
+pub fn generateService(allocator: std.mem.Allocator, name: []const u8, force: bool) !bool {
     std.Io.Dir.cwd().access(zf_shared.io, "src/service", .{}) catch {
         std.debug.print("Error: src/service directory not found. Run 'zf new' first.\n", .{});
-        return;
+        return false;
     };
 
     const name_lower = try std.ascii.allocLowerString(allocator, name);
@@ -405,24 +462,26 @@ pub fn generateService(allocator: std.mem.Allocator, name: []const u8) !void {
     defer allocator.free(svc_name);
 
     const content = try std.fmt.allocPrint(allocator,
+        \\// @generated — DO NOT EDIT outside ai-edit-zone blocks.
         \\const std = @import("std");
         \\const zfinal = @import("zfinal");
         \\
         \\pub fn doWork(ctx: *zfinal.Context) !void {{
+        \\    // ── ai-edit-zone: business rules ──────────────────────────────
         \\    _ = ctx;
-        \\    // TODO: business logic here
+        \\    // ── end ai-edit-zone ──────────────────────────────────────────
         \\}}
     , .{});
     defer allocator.free(content);
 
-    try std.Io.Dir.cwd().writeFile(zf_shared.io, .{ .sub_path = filename, .data = content });
-    std.debug.print("✅ Generated: {s}\n", .{filename});
+    try zf_shared.safeWrite(allocator, filename, content, force);
+    return true;
 }
 
-pub fn generateTask(allocator: std.mem.Allocator, name: []const u8) !void {
+pub fn generateTask(allocator: std.mem.Allocator, name: []const u8, force: bool) !bool {
     std.Io.Dir.cwd().access(zf_shared.io, "src/task", .{}) catch {
         std.debug.print("Error: src/task directory not found. Run 'zf new' first.\n", .{});
-        return;
+        return false;
     };
 
     const name_lower = try std.ascii.allocLowerString(allocator, name);
@@ -435,18 +494,20 @@ pub fn generateTask(allocator: std.mem.Allocator, name: []const u8) !void {
     defer allocator.free(task_name);
 
     const content = try std.fmt.allocPrint(allocator,
+        \\// @generated — DO NOT EDIT outside ai-edit-zone blocks.
         \\const std = @import("std");
         \\const zfinal = @import("zfinal");
         \\
         \\pub fn run() !void {{
+        \\    // ── ai-edit-zone: business rules ──────────────────────────────
         \\    zfinal.getLogger().info("{s}: running", .{{}});
-        \\    // TODO: task logic here
+        \\    // ── end ai-edit-zone ──────────────────────────────────────────
         \\}}
     , .{name_lower});
     defer allocator.free(content);
 
-    try std.Io.Dir.cwd().writeFile(zf_shared.io, .{ .sub_path = filename, .data = content });
-    std.debug.print("✅ Generated: {s}\n", .{filename});
+    try zf_shared.safeWrite(allocator, filename, content, force);
+    return true;
 }
 
 pub fn generateTest(allocator: std.mem.Allocator, name: []const u8) !void {

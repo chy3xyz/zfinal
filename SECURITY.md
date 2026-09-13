@@ -4,11 +4,9 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.20.x  | :white_check_mark: (current) |
-| 0.13.x  | :white_check_mark: (security fixes) |
-| 0.12.x  | :x:                |
-| 0.8.x   | :x:                |
-| ≤0.3.x  | :x:                |
+| 0.26.x  | :white_check_mark: (current) |
+| 0.24.x  | :white_check_mark: (security fixes only) |
+| < 0.24  | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -20,7 +18,7 @@ Please report vulnerabilities privately via [GitHub Security Advisories](https:/
 
 ## Built-in Security Features
 
-ZFinal 0.8+ includes defense-in-depth security across multiple layers:
+ZFinal includes defense-in-depth security across multiple layers:
 
 ### Cryptography
 - **CSPRNG**: All random operations (tokens, captcha, UUIDs, session IDs) use the OS CSPRNG (`arc4random_buf` on macOS/BSD, `getrandom` on Linux). No deterministic PRNG seeding.

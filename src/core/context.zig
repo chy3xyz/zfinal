@@ -1006,6 +1006,13 @@ pub const Context = struct {
             return std.ArrayList(@import("../upload/multipart.zig").UploadFile).empty;
         }
 
+        // Reading the body here consumes it too — enforce the same
+        // "body once per request" contract as getBodyText (phase P2).
+        if (@import("builtin").mode == .debug and self.body_consumed and self.mock_body == null) {
+            @panic("Context body already consumed: getBodyText/bindJson/parseJson/getFiles may only read the request body once per request (see Context phase contract)");
+        }
+        self.body_consumed = true;
+
         // Read request body
         var read_buf: [4096]u8 = undefined;
         var reader = self.req.readerExpectNone(&read_buf);

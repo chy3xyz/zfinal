@@ -1,6 +1,6 @@
 # 发布与质量门（productized）
 
-> **版本**：对齐 v0.20.10+ · ADR-014  
+> **版本**：对齐 v0.26.0 · Zig 工具链见仓库根 `.zig-version` · ADR-014  
 > Related: [best_practices.md](best_practices.md) · [`PRODUCTION_AUDIT.md`](../PRODUCTION_AUDIT.md) · [module_marketplace.md](module_marketplace.md)
 
 本地与 CI 共用**同一入口**，避免“文档里的命令列表”与流水线漂移。

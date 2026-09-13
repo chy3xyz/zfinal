@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zfinal.dev/schemas/zent-manifest-1.json",
+  "title": "ZFinal zf crud:zent manifest (v1)",
+  "description": "Emitted on stdout by `zf crud:zent --json`. Additive contract: consumers MUST ignore unknown keys.",
+  "type": "object",
+  "required": ["version", "generator", "module"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "type": "string" },
+    "generator": { "type": "string" },
+    "dry_run": { "type": "boolean" },
+    "schema_path": { "type": "string" },
+    "module": { "type": "string" },
+    "api_prefix": { "type": "string" },
+    "data_layer": { "type": "string", "const": "zent" },
+    "ai_primary": { "type": "boolean" },
+    "files": { "type": "object", "additionalProperties": { "type": "string" } },
+    "ai_edit_zones": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["file", "markers"],
+        "properties": {
+          "file": { "type": "string" },
+          "markers": { "type": "array", "items": { "type": "string" } },
+          "purpose": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "entities": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "next_steps": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

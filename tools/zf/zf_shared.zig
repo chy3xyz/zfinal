@@ -110,14 +110,39 @@ pub fn flagValue(args: []const []const u8, flag: []const u8) ?[]const u8 {
     return null;
 }
 
+/// Write `data` to `path.tmp` and rename it over `path`, so a crash or a full
+/// disk can never leave a truncated generated file behind.
+fn atomicWrite(allocator: std.mem.Allocator, path: []const u8, data: []const u8) !void {
+    const tmp = try std.fmt.allocPrint(allocator, "{s}.tmp", .{path});
+    defer allocator.free(tmp);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = tmp, .data = data });
+    std.Io.Dir.rename(std.Io.Dir.cwd(), tmp, std.Io.Dir.cwd(), path, io) catch |err| {
+        std.Io.Dir.cwd().deleteFile(io, tmp) catch {};
+        return err;
+    };
+}
+
+/// Best-effort `<path>.bak` copy before an overwrite/merge. Never fails the
+/// caller: a missing backup must not block generation.
+fn backupExisting(allocator: std.mem.Allocator, path: []const u8) void {
+    const existing = readFileAlloc(allocator, path) catch return;
+    defer allocator.free(existing);
+    const bak = std.fmt.allocPrint(allocator, "{s}.bak", .{path}) catch return;
+    defer allocator.free(bak);
+    std.Io.Dir.cwd().writeFile(io, .{ .sub_path = bak, .data = existing }) catch {};
+}
+
 /// Write file safely:
-/// 1. Missing or `--force` → write `data` to `path`.
+/// 1. Missing or `--force` → write `data` to `path` (backing up an existing file).
 /// 2. Existing file with matching `ai-edit-zone` names → merge zones into `path`.
 /// 3. Else → write `data` to `path.gen.new` (no overwrite).
+/// All writes go through a temp file + rename, and every overwrite of an
+/// existing file leaves a `.bak` copy first.
 pub fn safeWrite(allocator: std.mem.Allocator, path: []const u8, data: []const u8, force: bool) !void {
     const exists = std.Io.Dir.cwd().access(io, path, .{}) != error.FileNotFound;
     if (!exists or force) {
-        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = data });
+        if (exists) backupExisting(allocator, path);
+        try atomicWrite(allocator, path, data);
         const tag: []const u8 = if (force and exists) "Overwritten" else "Generated";
         std.debug.print("✅ {s}: {s}\n", .{ tag, path });
         return;
@@ -126,7 +151,7 @@ pub fn safeWrite(allocator: std.mem.Allocator, path: []const u8, data: []const u
     const existing = readFileAlloc(allocator, path) catch {
         const new_path = try std.fmt.allocPrint(allocator, "{s}.gen.new", .{path});
         defer allocator.free(new_path);
-        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = new_path, .data = data });
+        try atomicWrite(allocator, new_path, data);
         std.debug.print("⚠️  EXISTS: {s} — generated to {s} (could not read original)\n", .{ path, new_path });
         return;
     };
@@ -134,14 +159,15 @@ pub fn safeWrite(allocator: std.mem.Allocator, path: []const u8, data: []const u
 
     if (try zone_merge.mergeAiEditZones(allocator, existing, data)) |merged| {
         defer allocator.free(merged);
-        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = merged });
-        std.debug.print("✅ Merged ai-edit-zones: {s}\n", .{path});
+        backupExisting(allocator, path);
+        try atomicWrite(allocator, path, merged);
+        std.debug.print("✅ Merged ai-edit-zones: {s} (backup: {s}.bak)\n", .{ path, path });
         return;
     }
 
     const new_path = try std.fmt.allocPrint(allocator, "{s}.gen.new", .{path});
     defer allocator.free(new_path);
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = new_path, .data = data });
+    try atomicWrite(allocator, new_path, data);
     std.debug.print("⚠️  EXISTS: {s} — no matching ai-edit-zones; wrote {s}\n", .{ path, new_path });
     std.debug.print("   Review with: diff {s} {s}  then merge, or use --force\n", .{ path, new_path });
 }

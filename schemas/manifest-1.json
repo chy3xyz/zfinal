@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zfinal.dev/schemas/manifest-1.json",
+  "title": "ZFinal zf generator manifest (v1)",
+  "description": "Emitted on stdout by `zf crud:sql --json`, `zf g <type> --json` and `zf g port --json`. The contract is additive: consumers MUST ignore unknown keys. `ai_edit_zones` names the only regions a human or AI may hand-edit; the marker strings are the single source of truth shared with tools/zf/codegen.zig.",
+  "type": "object",
+  "required": ["version", "generator"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "type": "string", "description": "ZFinal semver (src/version.zig)" },
+    "generator": { "type": "string", "examples": ["zf crud:sql", "zf g", "zf g port"] },
+    "dry_run": { "type": "boolean", "description": "true when nothing was written" },
+    "sql_path": { "type": "string" },
+    "schema_path": { "type": "string" },
+    "type": { "type": "string", "description": "zf g type: handler | model | middleware | service | task | port" },
+    "name": { "type": "string" },
+    "file": { "type": "string" },
+    "written": { "type": "boolean", "description": "false when the target dir was missing; see `error`" },
+    "error": { "type": "string", "description": "machine-readable failure reason (manifest is still emitted)" },
+    "files": {
+      "type": "object",
+      "description": "logical name -> path, relative to the modules root",
+      "additionalProperties": { "type": "string" }
+    },
+    "ai_edit_zones": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["file", "markers"],
+        "properties": {
+          "file": { "type": "string" },
+          "markers": {
+            "type": "array",
+            "items": { "type": "string", "description": "exact marker text, e.g. \"// ai-edit-zone: business rules\"" }
+          },
+          "purpose": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "tables": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "fields": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "next_steps": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

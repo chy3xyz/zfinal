@@ -44,7 +44,7 @@ desktop.ini
 /test_sqlite*
 /test_transient*
 /test_crud*/
-/test*/
+/test_*/
 /root
 /test_nats_build.zig
 /zfinal_migration.zig
@@ -72,6 +72,9 @@ zig-pkg/
 
 # Generated files
 generated/
+# Generator scratch artifacts (safeWrite fallback + pre-overwrite backup)
+*.gen.new
+*.bak
 
 # Cursor IDE config (local only)
 .cursor/

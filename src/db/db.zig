@@ -252,7 +252,15 @@ pub const DB = struct {
         while (true) {
             try self.begin();
             if (body(self)) {
-                try self.commit();
+                // A failed COMMIT leaves the transaction open. Roll back before
+                // returning so a tainted connection cannot be pooled — the pool's
+                // `defer release(conn)` would otherwise hand it to the next request.
+                self.commit() catch |c_err| {
+                    self.rollback() catch |rb_err| {
+                        std.debug.print("transaction rollback failed after commit error: {s}\n", .{@errorName(rb_err)});
+                    };
+                    return c_err;
+                };
                 return;
             } else |err| {
                 // Always attempt rollback on error. If rollback itself
@@ -282,7 +290,14 @@ pub const DB = struct {
         while (true) {
             try self.begin();
             if (body(self)) |result| {
-                try self.commit();
+                // See `transaction`: a failed COMMIT must not leak an open
+                // transaction back into the pool.
+                self.commit() catch |c_err| {
+                    self.rollback() catch |rb_err| {
+                        std.debug.print("transaction rollback failed after commit error: {s}\n", .{@errorName(rb_err)});
+                    };
+                    return c_err;
+                };
                 return result;
             } else |err| {
                 self.rollback() catch |rb_err| {

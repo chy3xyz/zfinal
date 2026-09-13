@@ -324,14 +324,17 @@ pub const Router = struct {
         // O(1) fast path: index static routes (no params / wildcards)
         if (parsed.param_names.len == 0) {
             var key_buf: [256]u8 = undefined;
-            const key = staticRouteKey(method, owned_path, &key_buf);
-            const key_owned = try self.allocator.dupe(u8, key);
-            errdefer self.allocator.free(key_owned);
-            const gop = try self.static_routes.getOrPut(key_owned);
-            if (gop.found_existing) {
-                self.allocator.free(key_owned);
-            } else {
-                gop.value_ptr.* = self.routes.items.len - 1;
+            // Over-long paths are not indexed here: `staticRouteKey` returns null
+            // rather than a method-less key that would collide across methods.
+            if (staticRouteKey(method, owned_path, &key_buf)) |key| {
+                const key_owned = try self.allocator.dupe(u8, key);
+                errdefer self.allocator.free(key_owned);
+                const gop = try self.static_routes.getOrPut(key_owned);
+                if (gop.found_existing) {
+                    self.allocator.free(key_owned);
+                } else {
+                    gop.value_ptr.* = self.routes.items.len - 1;
+                }
             }
         }
     }
@@ -358,7 +361,7 @@ pub const Router = struct {
         for (self.routes.items, 0..) |*route, idx| {
             if (route.param_names.len != 0) continue;
             var key_buf: [256]u8 = undefined;
-            const key = staticRouteKey(route.method, route.pattern, &key_buf);
+            const key = staticRouteKey(route.method, route.pattern, &key_buf) orelse continue;
             const key_owned = try self.allocator.dupe(u8, key);
             errdefer self.allocator.free(key_owned);
             const gop = try self.static_routes.getOrPut(key_owned);
@@ -376,10 +379,11 @@ pub const Router = struct {
     }
 
     /// Build the hashmap lookup key for a method + path combination.
-    /// Writes into buf, returns the populated slice. If too long for the buffer,
-    /// returns only the path portion (hashmap lookup will miss, falling back to linear scan).
-    fn staticRouteKey(method: HttpMethod, path: []const u8, buf: *[256]u8) []const u8 {
-        return std.fmt.bufPrint(buf, "{s}:{s}", .{ @tagName(method), path }) catch path;
+    /// Returns null when it does not fit `buf`; callers must then fall back to
+    /// the linear scan. Never degrade to a method-less key — that would make
+    /// `GET:/x` and `POST:/x` collide for over-long paths.
+    fn staticRouteKey(method: HttpMethod, path: []const u8, buf: *[256]u8) ?[]const u8 {
+        return std.fmt.bufPrint(buf, "{s}:{s}", .{ @tagName(method), path }) catch null;
     }
 
     /// 查找匹配的路由
@@ -397,24 +401,29 @@ pub const Router = struct {
     }
 
     fn matchIndexForMethod(self: *Router, path: []const u8, method: HttpMethod) ?usize {
-        // O(1) fast path for exact-match static routes
+        // O(1) fast path for exact-match static routes. Over-long paths return
+        // null and skip straight to the linear scan/param-cache-free path.
         var key_buf: [256]u8 = undefined;
-        const method_key = staticRouteKey(method, path, &key_buf);
-        if (self.static_routes.get(method_key)) |idx| {
-            return idx;
+        if (staticRouteKey(method, path, &key_buf)) |method_key| {
+            if (self.static_routes.get(method_key)) |idx| {
+                return idx;
+            }
         }
         // Also try ANY-method static routes
-        const any_key = staticRouteKey(.ANY, path, &key_buf);
-        if (self.static_routes.get(any_key)) |idx| {
-            return idx;
+        if (staticRouteKey(.ANY, path, &key_buf)) |any_key| {
+            if (self.static_routes.get(any_key)) |idx| {
+                return idx;
+            }
         }
 
         // Parameterized / wildcard cache (FIFO). Key includes method.
         const cache_key = staticRouteKey(method, path, &key_buf);
-        switch (self.paramCacheLookup(cache_key)) {
-            .hit => |idx| return idx,
-            .negative => return null,
-            .miss => {},
+        if (cache_key) |ck| {
+            switch (self.paramCacheLookup(ck)) {
+                .hit => |idx| return idx,
+                .negative => return null,
+                .miss => {},
+            }
         }
 
         // 线性扫描：在所有匹配中取特异度最高者（静态 > :param > *wildcard）
@@ -429,7 +438,7 @@ pub const Router = struct {
                 }
             }
         }
-        self.paramCachePut(cache_key, found) catch {};
+        if (cache_key) |ck| self.paramCachePut(ck, found) catch {};
         return found;
     }
 
@@ -852,4 +861,17 @@ test "param cache + route interceptors survive eviction" {
     const again = router.match("/items/0", .GET).?;
     try std.testing.expect(again.interceptors.interceptors.items.len == 1);
     try std.testing.expectEqualStrings("count", again.interceptors.interceptors.items[0].name);
+}
+
+test "router: over-long path key is null instead of dropping the method prefix" {
+    var buf: [256]u8 = undefined;
+    var long_buf: [300]u8 = undefined;
+    @memset(&long_buf, 'a');
+    const long = long_buf[0..];
+    // Must not degrade to a method-less key: GET and POST would then collide.
+    try std.testing.expect(Router.staticRouteKey(.GET, long, &buf) == null);
+    try std.testing.expect(Router.staticRouteKey(.POST, long, &buf) == null);
+    // In-range paths keep the method prefix.
+    const short = Router.staticRouteKey(.GET, "/users", &buf) orelse return error.ExpectedKey;
+    try std.testing.expectEqualStrings("GET:/users", short);
 }

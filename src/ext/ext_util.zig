@@ -6,9 +6,11 @@ pub const ClientIpOptions = struct {
     /// When false (default), proxy headers are ignored — clients cannot spoof IPs.
     trust_proxy_headers: bool = false,
     /// If non-empty, proxy headers are only trusted when the peer socket address
-    /// (formatted) matches one of these entries exactly (e.g. "127.0.0.1:443").
+    /// (formatted) matches one of these entries exactly (e.g. "127.0.0.1:443"),
+    /// and `X-Forwarded-For` is resolved from the right-most non-proxy entry.
     /// When empty and trust_proxy_headers is true, any peer may supply headers
-    /// (private-network convenience; document the risk).
+    /// and the right-most entry is used (private-network convenience; set this
+    /// list in production).
     trusted_proxies: []const []const u8 = &.{},
 };
 
@@ -97,15 +99,32 @@ pub const IpExt = struct {
             if (peer_trusted) {
                 if (ctx.getHeader("X-Real-IP")) |ip| return ip;
                 if (ctx.getHeader("X-Forwarded-For")) |forwarded| {
-                    if (std.mem.indexOf(u8, forwarded, ",")) |comma_pos| {
-                        return std.mem.trim(u8, forwarded[0..comma_pos], &std.ascii.whitespace);
-                    }
-                    return forwarded;
+                    return forwardedClientIp(forwarded, opts.trusted_proxies);
                 }
             }
         }
 
         return remote_str orelse "unknown";
+    }
+
+    /// Pick the client IP from an `X-Forwarded-For` list.
+    ///
+    /// The list is `client, proxy1, proxy2, ...` — each hop appends. The
+    /// left-most entry is the one any client can set for free, so we walk
+    /// forward and keep the **right-most** entry that is not itself a configured
+    /// trusted proxy (i.e. the one written by the hop closest to us). With no
+    /// allow-list we cannot verify the chain, so right-most is still strictly
+    /// safer than left-most; configure `trusted_proxies` for full correctness.
+    pub fn forwardedClientIp(forwarded: []const u8, trusted_proxies: []const []const u8) []const u8 {
+        var chosen: ?[]const u8 = null;
+        var it = std.mem.splitScalar(u8, forwarded, ',');
+        while (it.next()) |raw| {
+            const entry = std.mem.trim(u8, raw, &std.ascii.whitespace);
+            if (entry.len == 0) continue;
+            if (trusted_proxies.len > 0 and isTrustedProxy(entry, trusted_proxies)) continue;
+            chosen = entry;
+        }
+        return chosen orelse std.mem.trim(u8, forwarded, &std.ascii.whitespace);
     }
 
     pub fn isTrustedProxy(remote: []const u8, proxies: []const []const u8) bool {
@@ -274,4 +293,17 @@ test "IpExt.resolveClientIp trusts proxy only when peer matches allow-list" {
         .trusted_proxies = &.{"127.0.0.1"},
     });
     try std.testing.expectEqualStrings("10.0.0.5", untrusted);
+}
+
+test "IpExt.forwardedClientIp resolves from the right, skipping trusted proxies" {
+    // A client-supplied left-most entry must not win.
+    try std.testing.expectEqualStrings("203.0.113.9", IpExt.forwardedClientIp("1.2.3.4, 203.0.113.9", &.{}));
+    // Trusted proxy hop is skipped; the address before it wins.
+    try std.testing.expectEqualStrings("203.0.113.9", IpExt.forwardedClientIp("203.0.113.9, 10.0.0.1", &.{"10.0.0.1"}));
+    // Every hop is a trusted proxy → fall back to the trimmed whole value.
+    try std.testing.expectEqualStrings("10.0.0.1", IpExt.forwardedClientIp("10.0.0.1", &.{"10.0.0.1"}));
+    // Single entry, whitespace trimmed, no allow-list.
+    try std.testing.expectEqualStrings("198.51.100.7", IpExt.forwardedClientIp(" 198.51.100.7 ", &.{}));
+    // Empty list → empty string (caller falls back to the socket peer).
+    try std.testing.expectEqualStrings("", IpExt.forwardedClientIp("", &.{}));
 }

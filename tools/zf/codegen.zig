@@ -46,6 +46,91 @@ pub const Table = struct {
     }
 };
 
+/// Canonical `ai-edit-zone` names. Single source of truth: the JSON manifests
+/// emitted by `cmd_crud`/`cmd_scaffold` must agree with the templates below
+/// (asserted by tests in `codegen_test.zig`).
+pub const zone = struct {
+    pub const search_predicate = "search predicate";
+    pub const business_rules = "business rules";
+    pub const model_hooks = "model hooks";
+    pub const handler_hooks = "handler hooks";
+    pub const extra_actions = "extra actions";
+};
+
+/// `crud:sql` manifest zone plan: which markers live in which generated file.
+/// Single source shared by `cmd_crud.emitJsonManifest` and the codegen tests,
+/// so the JSON manifest can never advertise a marker the templates do not emit.
+pub const EditZone = struct {
+    file: []const u8,
+    markers: []const []const u8,
+    purpose: []const u8,
+};
+
+pub const crud_edit_zones = [_]EditZone{
+    .{ .file = "service.zig", .markers = &.{ zone.business_rules, zone.search_predicate }, .purpose = "custom business logic / search predicate beyond generated CRUD" },
+    .{ .file = "model.zig", .markers = &.{zone.model_hooks}, .purpose = "custom queries / computed fields" },
+    .{ .file = "handler.zig", .markers = &.{zone.handler_hooks}, .purpose = "per-route HTTP hooks (auth, response shaping)" },
+    .{ .file = "actions.zig", .markers = &.{zone.extra_actions}, .purpose = "add custom routes; run zf routes" },
+};
+
+/// Zig 0.17 reserved words that cannot be used as a bare struct-field name.
+const zig_keywords = std.StaticStringMap(void).initComptime(.{
+    .{ "addrspace", {} },      .{ "align", {} },    .{ "allowzero", {} },
+    .{ "and", {} },            .{ "anyframe", {} }, .{ "anytype", {} },
+    .{ "asm", {} },            .{ "async", {} },    .{ "await", {} },
+    .{ "break", {} },          .{ "callconv", {} }, .{ "catch", {} },
+    .{ "comptime", {} },       .{ "const", {} },    .{ "continue", {} },
+    .{ "defer", {} },          .{ "else", {} },     .{ "enum", {} },
+    .{ "errdefer", {} },       .{ "error", {} },    .{ "export", {} },
+    .{ "extern", {} },         .{ "fn", {} },       .{ "for", {} },
+    .{ "if", {} },             .{ "inline", {} },   .{ "linksection", {} },
+    .{ "noalias", {} },        .{ "noinline", {} }, .{ "nosuspend", {} },
+    .{ "opaque", {} },         .{ "or", {} },       .{ "orelse", {} },
+    .{ "packed", {} },         .{ "pub", {} },      .{ "resume", {} },
+    .{ "return", {} },         .{ "struct", {} },   .{ "suspend", {} },
+    .{ "switch", {} },         .{ "test", {} },     .{ "threadlocal", {} },
+    .{ "try", {} },            .{ "union", {} },    .{ "unreachable", {} },
+    .{ "usingnamespace", {} }, .{ "var", {} },      .{ "volatile", {} },
+    .{ "while", {} },
+});
+
+pub fn isValidBareZigIdent(name: []const u8) bool {
+    if (name.len == 0 or std.mem.eql(u8, name, "_")) return false;
+    const first = name[0];
+    const first_ok = (first >= 'a' and first <= 'z') or (first >= 'A' and first <= 'Z') or first == '_';
+    if (!first_ok) return false;
+    for (name[1..]) |c| {
+        const ok = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_';
+        if (!ok) return false;
+    }
+    return !zig_keywords.has(name);
+}
+
+/// Render a SQL column name as a Zig struct-field name. Reserved words and
+/// non-ASCII names use Zig's quoted-identifier syntax (`@"type"`, `@"中文"`),
+/// which keeps `std.meta.fields(T).name` equal to the real DB column name. The
+/// ORM derives SQL columns from field names, so rewriting to e.g. `type_`
+/// would silently query the wrong column.
+pub fn zigFieldName(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
+    if (isValidBareZigIdent(name)) return allocator.dupe(u8, name);
+    var buf = std.ArrayList(u8).empty;
+    errdefer buf.deinit(allocator);
+    try buf.appendSlice(allocator, "@\"");
+    for (name) |c| switch (c) {
+        '\\' => try buf.appendSlice(allocator, "\\\\"),
+        '"' => try buf.appendSlice(allocator, "\\\""),
+        else => if (c < 0x20) {
+            var esc: [8]u8 = undefined;
+            const s = try std.fmt.bufPrint(&esc, "\\x{x:0>2}", .{c});
+            try buf.appendSlice(allocator, s);
+        } else {
+            try buf.append(allocator, c);
+        },
+    };
+    try buf.append(allocator, '"');
+    return buf.toOwnedSlice(allocator);
+}
+
 pub fn zigType(col: Column) []const u8 {
     const t = col.sql_type;
     if (col.is_auto_increment) return "?i64";
@@ -634,6 +719,8 @@ pub fn generateIntegrationTest(allocator: std.mem.Allocator, table: *const Table
     defer test_data.deinit(allocator);
     for (table.columns.items) |col| {
         if (col.is_auto_increment) continue;
+        const zf_name = try zigFieldName(allocator, col.name);
+        defer allocator.free(zf_name);
         const zt = zigType(col);
         const val = if (std.mem.startsWith(u8, zt, "i64") or std.mem.startsWith(u8, zt, "f64") or std.mem.startsWith(u8, zt, "?i64") or std.mem.startsWith(u8, zt, "?f64"))
             "1"
@@ -643,7 +730,7 @@ pub fn generateIntegrationTest(allocator: std.mem.Allocator, table: *const Table
             "\"test@example.com\""
         else
             "\"test\"";
-        const line = try std.fmt.allocPrint(allocator, "        .{s} = {s},\n", .{ col.name, val });
+        const line = try std.fmt.allocPrint(allocator, "        .{s} = {s},\n", .{ zf_name, val });
         defer allocator.free(line);
         try test_data.appendSlice(allocator, line);
     }
@@ -1083,9 +1170,11 @@ pub fn generateModel(allocator: std.mem.Allocator, table: *const Table, naming: 
     var fields = std.ArrayList(u8).empty;
     var json_map = std.ArrayList(u8).empty;
     for (table.columns.items) |col| {
+        const zf_name = try zigFieldName(allocator, col.name);
+        defer allocator.free(zf_name);
         const zt = zigType(col);
         const def = if (col.is_auto_increment or col.is_nullable or std.mem.startsWith(u8, zt, "?")) " = null" else "";
-        const line = try std.fmt.allocPrint(allocator, "    {s}: {s}{s},\n", .{ col.name, zt, def });
+        const line = try std.fmt.allocPrint(allocator, "    {s}: {s}{s},\n", .{ zf_name, zt, def });
         defer allocator.free(line);
         try fields.appendSlice(allocator, line);
 
@@ -1120,10 +1209,12 @@ pub fn generateModel(allocator: std.mem.Allocator, table: *const Table, naming: 
     var validation = std.ArrayList(u8).empty;
     for (table.columns.items) |col| {
         if (col.is_auto_increment) continue;
+        const zf_name = try zigFieldName(allocator, col.name);
+        defer allocator.free(zf_name);
         if (!col.is_nullable) {
             const zt = zigType(col);
             if ((std.mem.startsWith(u8, zt, "[]const u8") or std.mem.startsWith(u8, zt, "[]u8")) and !col.is_nullable) {
-                const vline = try std.fmt.allocPrint(allocator, "    if (data.{s}.len == 0) return error.ValidationError;\n", .{col.name});
+                const vline = try std.fmt.allocPrint(allocator, "    if (data.{s}.len == 0) return error.ValidationError;\n", .{zf_name});
                 defer allocator.free(vline);
                 try validation.appendSlice(allocator, vline);
             }
@@ -1135,7 +1226,7 @@ pub fn generateModel(allocator: std.mem.Allocator, table: *const Table, naming: 
         }
         // Length validation for VARCHAR/text
         if (col.max_length) |max| {
-            const lline = try std.fmt.allocPrint(allocator, "    if (data.{s}.len > {d}) return error.ValidationError;\n", .{ col.name, max });
+            const lline = try std.fmt.allocPrint(allocator, "    if (data.{s}.len > {d}) return error.ValidationError;\n", .{ zf_name, max });
             defer allocator.free(lline);
             try validation.appendSlice(allocator, lline);
         }
@@ -1145,40 +1236,40 @@ pub fn generateModel(allocator: std.mem.Allocator, table: *const Table, naming: 
         const is_text = std.mem.startsWith(u8, zt, "[]const u8");
         if (col.required) {
             if (is_opt_text) {
-                const vline = try std.fmt.allocPrint(allocator, "    if (data.{s} == null or data.{s}.?.len == 0) return error.ValidationError;\n", .{ col.name, col.name });
+                const vline = try std.fmt.allocPrint(allocator, "    if (data.{s} == null or data.{s}.?.len == 0) return error.ValidationError;\n", .{ zf_name, zf_name });
                 defer allocator.free(vline);
                 try validation.appendSlice(allocator, vline);
             } else if (is_text) {
-                const vline = try std.fmt.allocPrint(allocator, "    if (data.{s}.len == 0) return error.ValidationError;\n", .{col.name});
+                const vline = try std.fmt.allocPrint(allocator, "    if (data.{s}.len == 0) return error.ValidationError;\n", .{zf_name});
                 defer allocator.free(vline);
                 try validation.appendSlice(allocator, vline);
             } else if (std.mem.startsWith(u8, zt, "?")) {
-                const vline = try std.fmt.allocPrint(allocator, "    if (data.{s} == null) return error.ValidationError;\n", .{col.name});
+                const vline = try std.fmt.allocPrint(allocator, "    if (data.{s} == null) return error.ValidationError;\n", .{zf_name});
                 defer allocator.free(vline);
                 try validation.appendSlice(allocator, vline);
             }
         }
         if (col.min) |min| {
             const vline = if (std.mem.startsWith(u8, zt, "?"))
-                try std.fmt.allocPrint(allocator, "    if ((data.{s} orelse 0) < {d}) return error.ValidationError;\n", .{ col.name, min })
+                try std.fmt.allocPrint(allocator, "    if ((data.{s} orelse 0) < {d}) return error.ValidationError;\n", .{ zf_name, min })
             else
-                try std.fmt.allocPrint(allocator, "    if (data.{s} < {d}) return error.ValidationError;\n", .{ col.name, min });
+                try std.fmt.allocPrint(allocator, "    if (data.{s} < {d}) return error.ValidationError;\n", .{ zf_name, min });
             defer allocator.free(vline);
             try validation.appendSlice(allocator, vline);
         }
         if (col.max) |max| {
             const vline = if (std.mem.startsWith(u8, zt, "?"))
-                try std.fmt.allocPrint(allocator, "    if ((data.{s} orelse 0) > {d}) return error.ValidationError;\n", .{ col.name, max })
+                try std.fmt.allocPrint(allocator, "    if ((data.{s} orelse 0) > {d}) return error.ValidationError;\n", .{ zf_name, max })
             else
-                try std.fmt.allocPrint(allocator, "    if (data.{s} > {d}) return error.ValidationError;\n", .{ col.name, max });
+                try std.fmt.allocPrint(allocator, "    if (data.{s} > {d}) return error.ValidationError;\n", .{ zf_name, max });
             defer allocator.free(vline);
             try validation.appendSlice(allocator, vline);
         }
         if (col.email) {
             const vline = if (is_opt_text)
-                try std.fmt.allocPrint(allocator, "    if ((data.{s} orelse \"\").len > 0 and std.mem.indexOfScalar(u8, data.{s} orelse \"\", '@') == null) return error.InvalidEmail;\n", .{ col.name, col.name })
+                try std.fmt.allocPrint(allocator, "    if ((data.{s} orelse \"\").len > 0 and std.mem.indexOfScalar(u8, data.{s} orelse \"\", '@') == null) return error.InvalidEmail;\n", .{ zf_name, zf_name })
             else
-                try std.fmt.allocPrint(allocator, "    if (data.{s}.len > 0 and std.mem.indexOfScalar(u8, data.{s}, '@') == null) return error.InvalidEmail;\n", .{ col.name, col.name });
+                try std.fmt.allocPrint(allocator, "    if (data.{s}.len > 0 and std.mem.indexOfScalar(u8, data.{s}, '@') == null) return error.InvalidEmail;\n", .{ zf_name, zf_name });
             defer allocator.free(vline);
             try validation.appendSlice(allocator, vline);
         }
@@ -1249,15 +1340,17 @@ fn buildViewBlock(allocator: std.mem.Allocator, table: *const Table) ![]const u8
     defer view_init.deinit(allocator);
     for (table.columns.items) |col| {
         if (col.hidden) continue;
+        const zf_name = try zigFieldName(allocator, col.name);
+        defer allocator.free(zf_name);
         try view_fields.appendSlice(allocator, "    ");
-        try view_fields.appendSlice(allocator, col.name);
+        try view_fields.appendSlice(allocator, zf_name);
         try view_fields.appendSlice(allocator, ": ");
         try view_fields.appendSlice(allocator, zigType(col));
         try view_fields.appendSlice(allocator, ",\n");
         try view_init.appendSlice(allocator, "        .");
-        try view_init.appendSlice(allocator, col.name);
+        try view_init.appendSlice(allocator, zf_name);
         try view_init.appendSlice(allocator, " = self.data.");
-        try view_init.appendSlice(allocator, col.name);
+        try view_init.appendSlice(allocator, zf_name);
         try view_init.appendSlice(allocator, ",\n");
     }
     return std.fmt.allocPrint(allocator,
@@ -1292,17 +1385,19 @@ pub fn generateHandler(allocator: std.mem.Allocator, table: *const Table, deps_p
     var create_fields = std.ArrayList(u8).empty;
     for (table.columns.items) |col| {
         if (col.is_auto_increment) continue;
+        const zf_name = try zigFieldName(allocator, col.name);
+        defer allocator.free(zf_name);
         const zt = zigType(col);
         const line = if (std.mem.startsWith(u8, zt, "i64") or std.mem.startsWith(u8, zt, "?i64"))
-            try std.fmt.allocPrint(allocator, "            .{s} = if ((try ctx.getPara(\"{s}\"))) |v| (std.fmt.parseInt(i64, v, 10) catch return failHttp(ctx, error.BadRequest, \"{s}\")) else 0,\n", .{ col.name, col.name, col.name })
+            try std.fmt.allocPrint(allocator, "            .{s} = if ((try ctx.getPara(\"{s}\"))) |v| (std.fmt.parseInt(i64, v, 10) catch return failHttp(ctx, error.BadRequest, \"{s}\")) else 0,\n", .{ zf_name, col.name, col.name })
         else if (std.mem.startsWith(u8, zt, "f64") or std.mem.startsWith(u8, zt, "?f64"))
-            try std.fmt.allocPrint(allocator, "            .{s} = if ((try ctx.getPara(\"{s}\"))) |v| (std.fmt.parseFloat(f64, v) catch return failHttp(ctx, error.BadRequest, \"{s}\")) else 0.0,\n", .{ col.name, col.name, col.name })
+            try std.fmt.allocPrint(allocator, "            .{s} = if ((try ctx.getPara(\"{s}\"))) |v| (std.fmt.parseFloat(f64, v) catch return failHttp(ctx, error.BadRequest, \"{s}\")) else 0.0,\n", .{ zf_name, col.name, col.name })
         else if (std.mem.eql(u8, zt, "bool"))
-            try std.fmt.allocPrint(allocator, "            .{s} = if ((try ctx.getPara(\"{s}\"))) |v| (std.mem.eql(u8, v, \"true\") or std.mem.eql(u8, v, \"1\") or std.mem.eql(u8, v, \"t\")) else false,\n", .{ col.name, col.name })
+            try std.fmt.allocPrint(allocator, "            .{s} = if ((try ctx.getPara(\"{s}\"))) |v| (std.mem.eql(u8, v, \"true\") or std.mem.eql(u8, v, \"1\") or std.mem.eql(u8, v, \"t\")) else false,\n", .{ zf_name, col.name })
         else if (std.mem.eql(u8, zt, "?bool"))
-            try std.fmt.allocPrint(allocator, "            .{s} = if ((try ctx.getPara(\"{s}\"))) |v| (std.mem.eql(u8, v, \"true\") or std.mem.eql(u8, v, \"1\") or std.mem.eql(u8, v, \"t\")) else null,\n", .{ col.name, col.name })
+            try std.fmt.allocPrint(allocator, "            .{s} = if ((try ctx.getPara(\"{s}\"))) |v| (std.mem.eql(u8, v, \"true\") or std.mem.eql(u8, v, \"1\") or std.mem.eql(u8, v, \"t\")) else null,\n", .{ zf_name, col.name })
         else
-            try std.fmt.allocPrint(allocator, "            .{s} = (try ctx.getPara(\"{s}\")) orelse {s},\n", .{ col.name, col.name, defaultZigValue(col) });
+            try std.fmt.allocPrint(allocator, "            .{s} = (try ctx.getPara(\"{s}\")) orelse {s},\n", .{ zf_name, col.name, defaultZigValue(col) });
         defer allocator.free(line);
         try create_fields.appendSlice(allocator, line);
     }

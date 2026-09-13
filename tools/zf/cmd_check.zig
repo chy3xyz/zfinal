@@ -95,6 +95,9 @@ pub fn handleCheck(
     // 4. Detect .zig files outside ext/ that should be in ext/
     checkOrphanHandlers(allocator, &warn);
 
+    // 4b. Modern single-file layout: @generated modules must expose ai-edit-zones
+    checkGeneratedZoneContract(allocator, &pass, &warn);
+
     // 5. Smart routing: brace {id} in generated routes, hand-edited @generated routes
     checkSmartRouting(allocator, &pass, &warn, &fail);
 
@@ -601,6 +604,48 @@ fn checkExtDirs(allocator: std.mem.Allocator, ok: *u32, miss: *u32, fail: *u32) 
                 miss.* += 1;
             }
         } else |_| {}
+    }
+}
+
+/// 4b. Modern single-file modules: a file that declares itself `@generated`
+/// must expose at least one `ai-edit-zone`, otherwise there is nowhere legal
+/// to edit and regeneration would silently discard hand-written code. This is
+/// the layout `zf crud:sql` emits today (the `.gen.zig` + `ext/` checks above
+/// only apply to legacy projects).
+fn checkGeneratedZoneContract(allocator: std.mem.Allocator, pass: *u32, warn: *u32) void {
+    var modules_dir = std.Io.Dir.cwd().openDir(zf_shared.io, "src/modules", .{ .iterate = true }) catch return;
+    defer modules_dir.close(zf_shared.io);
+
+    var walker = modules_dir.walk(allocator) catch return;
+    defer walker.deinit();
+
+    var generated: u32 = 0;
+    var missing: u32 = 0;
+    while (walker.next(zf_shared.io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.basename, ".zig")) continue;
+        if (std.mem.endsWith(u8, entry.basename, ".gen.zig")) continue;
+
+        const full = std.fmt.allocPrint(allocator, "src/modules/{s}", .{entry.path}) catch continue;
+        defer allocator.free(full);
+        const content = zf_shared.readFileAlloc(allocator, full) catch continue;
+        defer allocator.free(content);
+        if (std.mem.indexOf(u8, content, "@generated") == null) continue;
+        generated += 1;
+        if (std.mem.indexOf(u8, content, "ai-edit-zone") != null) continue;
+        // No zone is fine when the header tells the reader not to edit the file
+        // at all (e.g. the thin `routes.zig` glue). It is a problem when the
+        // file is presented as editable but offers nowhere legal to edit.
+        if (std.mem.indexOf(u8, content, "DO NOT EDIT") != null) continue;
+        std.debug.print("⚠️  WARN: {s} is @generated but has no ai-edit-zone — hand edits would be lost on regen\n", .{full});
+        missing += 1;
+    }
+    if (generated == 0) return; // framework repo or pre-CRUD project
+    if (missing == 0) {
+        std.debug.print("✅ PASS: {d} generated module file(s) expose ai-edit-zones\n", .{generated});
+        pass.* += 1;
+    } else {
+        warn.* += 1;
     }
 }
 

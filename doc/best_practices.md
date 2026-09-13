@@ -1,8 +1,8 @@
 # ZFinal 最佳实践总索
 
-> **版本**：v0.20.15 · Zig `0.17.0-dev.1422+e863bf3be` · 修订 **2026-08-02**  
+> **版本**：v0.26.0 · Zig 工具链见仓库根 `.zig-version` · 修订 **2026-08-02**  
 > **受众**：应用开发者、框架贡献者、AI agent  
-> **验证基线**：`zig build gate`（或 `zig build test` → **416 passed; 16 skipped**）· `zig build test-zf`
+> **验证基线**：`zig build gate`（或 `zig build test` → **418 passed; 16 skipped**）· `zig build test-zf`
 
 本文是**最佳实践文档的入口**：按任务选文档，按版本看能力何时可用。细节仍在各专题文中。
 
@@ -38,6 +38,9 @@
 
 | 时段 | 版本 | 写应用时默认采用 |
 |------|------|------------------|
+| 2026-09-13 | **0.26.0** | 工具链单源 `.zig-version`（CI/Docker 同源）；`zf g` 走 safeWrite + `@generated` + `ai-edit-zone` 契约；`--dry-run` 无副作用、用法错误非零退出；manifest 与真实 zone 一致 + `schemas/*.json`；保留字/非 ASCII 列名 `@"..."` 净化；`safeWrite` 原子写 + `.bak`；运行时修复（提交失败回滚 / token 加锁 / XFF 取最右 / body 一次性 / 路由 key 溢出）；`zf check` 覆盖单文件布局 |
+| 2026-08-27 | **0.25.0** | 连接池并发压力回归 + 优雅关闭回归；`Context` 生命周期相位契约（body 重复读在 Debug 下 panic）；`zf crud:sql` DDL 失败诊断；生成器错误示例提示；SQLite 并发写（FULLMUTEX / shared-cache / busy_timeout）修复 |
+| 2026-08-15 | **0.24.0** | `WsFanout` 多实例 WebSocket fanout（Queue mailbox → WS sink）；`RedisRateLimiter` 分布式固定窗口限流（fail-closed） |
 | 2026-08-02 | **0.20.15** | KeyPool / ProviderRegistry；MCP client（stdio+HTTP/SSE、resources/prompts、id 缓冲）；`RedisCooldownStore`；DeepSeek `deepseek-v4-flash`；`zf ai` Anthropic |
 | 2026-08-02 | **0.20.14** | `zf doctor` / `check --practice` / catalog help / routes cache / Release zf artifacts / ZfTool schema 对齐；请求路径内存泄漏修复 |
 | 2026-08-02 | **0.20.13** | 修复 `toOpenAiFunctionsAlloc` tools JSON（DeepSeek/OpenAI Agent+tools） |
@@ -55,11 +58,11 @@
 |----|------|
 | 应用侧 keep-alive | 生产 **保持** `force_connection_close=true`；客户端复用放反代（[reverse_proxy.md](reverse_proxy.md) §9；zig#25017） |
 | zapi `{code,msg,data}` | **应用层**成败统一；框架默认不翻（[api_envelope.md](api_envelope.md)） |
-| Zig 0.17 stable | 钉 CI 同款 `-dev`；升级跟 `build.zig.zon` / CI |
+| Zig 0.17 stable | 钉 CI 同款 `-dev`；升级跟仓库根 `.zig-version` / CI |
 
 ---
 
-## 3. 绿场默认栈（2026-08 / v0.20.15+）
+## 3. 绿场默认栈（2026-08 / v0.26.0+）
 
 一条「今天新建项目」的推荐路径：
 
@@ -118,4 +121,4 @@ zig build gate-quick     # 或完整：zig build gate / zf gate
 
 ## 6. 一句话
 
-**按 v0.20.15+ 能力写：生成器定骨架，三层定方向，路由用 actions，错误用 HttpError，拦截器 cfg 自持有，规模按 L0→L3 只换装配（L3 用 Outbox→Bus）；合并前走 `zig build gate`；keep-alive 与 zapi 默认不翻，用文档与 ADR 锁边界。**
+**按 v0.26.0+ 能力写：生成器定骨架，三层定方向，路由用 actions，错误用 HttpError，拦截器 cfg 自持有，规模按 L0→L3 只换装配（L3 用 Outbox→Bus）；合并前走 `zig build gate`；keep-alive 与 zapi 默认不翻，用文档与 ADR 锁边界。**

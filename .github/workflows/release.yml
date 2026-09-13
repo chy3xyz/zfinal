@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: read
+
 jobs:
   release-gate:
     name: Release gate
@@ -12,10 +15,14 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Read pinned Zig version
+      id: zigver
+      run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
+
     - name: Setup Zig
       uses: mlugg/setup-zig@v2
       with:
-        version: '0.17.0-dev.1422+e863bf3be'
+        version: ${{ steps.zigver.outputs.version }}
 
     - name: Install SQLite
       run: |
@@ -41,10 +48,14 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Read pinned Zig version
+      id: zigver
+      run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
+
     - name: Setup Zig
       uses: mlugg/setup-zig@v2
       with:
-        version: '0.17.0-dev.1422+e863bf3be'
+        version: ${{ steps.zigver.outputs.version }}
 
     - name: Install SQLite
       run: brew install sqlite3 || true
