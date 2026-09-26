@@ -2,6 +2,15 @@
 
 <!-- New changes land here; on release, move them under a new `## [x.y.z]` section. -->
 
+## [0.27.1] - 2026-09-27
+
+### Changed
+- **Zig toolchain pin `0.17.0-dev.1970` → `0.17.0-dev.2151`** (`.zig-version`); build/test/gate-quick verified on the new dev.
+- **zent upgraded `v0.31.0` → `v0.78.0`** (root + `examples/zent-shop` pins). API-compatible for everything zfinal generates (build / test / test-zf / test-zent-shop / smoke green). Two upstream semantic changes required adaptation:
+  - **`data_scope` is fail-closed**: an empty `PrivacyContext` (no `.extra`) now **denies** (`1 = 0`) instead of allow-all. `zf crud:zent` attaches an explicit open scope (`DataScopeFilter.init("dept_id", "user_id", .all, .{})`) for policy entities' stock create/update/delete/findUnique/listBy, preserving the open-by-default contract; the zent-shop checkout Tx path got the same treatment in its hand-written zone. Production passes a real per-request `DataScopeFilter` unchanged.
+  - **SQLite `PRAGMA foreign_keys = ON`** per driver connection — FK clauses zent emits are now enforced. `smoke-zent-shop.sh` fixture fixed (create user B before following; 12 → 13 checks).
+  - Status updates for upstream issues #2/#5 recorded in `docs/zent-upstream-issues.md`.
+
 ## [0.27.0] - 2026-09-14
 
 ### Breaking

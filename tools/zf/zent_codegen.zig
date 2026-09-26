@@ -803,9 +803,13 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
         }
         try w.writeAll(") !i64 {\n");
         if (ent.policy) {
-            // data_scope entities need a PrivacyContext; empty ctx → no extra
-            // filter → allow-all (production should pass a real scope).
-            try w.print("        var b = try self.client.{s}.withContext(.{{}}).Create();\n", .{en.client});
+            // data_scope entities need a PrivacyContext. zent ≥0.78 is
+            // fail-closed: an EMPTY context denies (was allow-all before).
+            // Stock CRUD keeps its old open behavior by attaching an explicit
+            // `.all` scope; production replaces it with a per-request filter
+            // via the persistence hooks.
+            try w.writeAll("        var open_scope = zent.data_scope.DataScopeFilter.init(\"dept_id\", \"user_id\", .all, .{});\n");
+            try w.print("        var b = try self.client.{s}.withContext(open_scope.context(.{{}})).Create();\n", .{en.client});
         } else {
             try w.print("        var b = try self.client.{s}.Create();\n", .{en.client});
         }
@@ -829,7 +833,8 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
         }
         try w.writeAll(") !void {\n");
         if (ent.policy) {
-            try w.print("        var ub = self.client.{s}.withContext(.{{}}).Update();\n", .{en.client});
+            try w.writeAll("        var open_scope = zent.data_scope.DataScopeFilter.init(\"dept_id\", \"user_id\", .all, .{});\n");
+            try w.print("        var ub = self.client.{s}.withContext(open_scope.context(.{{}})).Update();\n", .{en.client});
         } else {
             try w.print("        var ub = self.client.{s}.Update();\n", .{en.client});
         }
@@ -845,7 +850,8 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
         try w.print("    /// Delete a {s} row by id.\n", .{ent.name});
         try w.print("    pub fn {s}(self: *@This(), id: i64) !void {{\n", .{en.delete_fn});
         if (ent.policy) {
-            try w.print("        var db = self.client.{s}.withContext(.{{}}).Delete();\n", .{en.client});
+            try w.writeAll("        var open_scope = zent.data_scope.DataScopeFilter.init(\"dept_id\", \"user_id\", .all, .{});\n");
+            try w.print("        var db = self.client.{s}.withContext(open_scope.context(.{{}})).Delete();\n", .{en.client});
         } else {
             try w.print("        var db = self.client.{s}.Delete();\n", .{en.client});
         }
@@ -868,7 +874,8 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
             try w.print("    /// Returns the id of the row whose `{s}` equals `value`, or null.\n", .{f.name});
             try w.print("    pub fn {s}(self: *@This(), {s}: {s}) !?i64 {{\n", .{ fn_name, fid, f.typ.zigType() });
             if (ent.policy) {
-                try w.print("        var q = self.client.{s}.withContext(.{{}}).Query();\n", .{en.client});
+                try w.writeAll("        var open_scope = zent.data_scope.DataScopeFilter.init(\"dept_id\", \"user_id\", .all, .{});\n");
+                try w.print("        var q = self.client.{s}.withContext(open_scope.context(.{{}})).Query();\n", .{en.client});
             } else {
                 try w.print("        var q = self.client.{s}.Query();\n", .{en.client});
             }
@@ -893,7 +900,8 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
             }
             try w.writeAll(") !?i64 {\n");
             if (ent.policy) {
-                try w.print("        var q = self.client.{s}.withContext(.{{}}).Query();\n", .{en.client});
+                try w.writeAll("        var open_scope = zent.data_scope.DataScopeFilter.init(\"dept_id\", \"user_id\", .all, .{});\n");
+                try w.print("        var q = self.client.{s}.withContext(open_scope.context(.{{}})).Query();\n", .{en.client});
             } else {
                 try w.print("        var q = self.client.{s}.Query();\n", .{en.client});
             }
@@ -938,7 +946,8 @@ pub fn generatePersistence(allocator: std.mem.Allocator, schema: *const Schema) 
                 list_fn, lb_ident, en.page,
             });
             if (ent.policy) {
-                try w.print("        var q = self.client.{s}.withContext(.{{}}).Query();\n", .{en.client});
+                try w.writeAll("        var open_scope = zent.data_scope.DataScopeFilter.init(\"dept_id\", \"user_id\", .all, .{});\n");
+                try w.print("        var q = self.client.{s}.withContext(open_scope.context(.{{}})).Query();\n", .{en.client});
             } else {
                 try w.print("        var q = self.client.{s}.Query();\n", .{en.client});
             }

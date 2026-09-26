@@ -36,6 +36,7 @@ check "user created" '{"ok":true,"id":1}' "$(curl -s --max-time 5 -X POST "$B/ap
 TOKEN=$(curl -s --max-time 5 -X POST "$B/api/v1/auth/login?handle=a" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
 check "login issues JWT (JWT header prefix)" 'eyJ' "$TOKEN"
 check "unique handle dedup" 'Duplicate' "$(curl -s --max-time 5 -X POST "$B/api/v1/users?name=B&handle=a&email=b@x.com")"
+check "user B created" '{"ok":true,"id":2}' "$(curl -s --max-time 5 -X POST "$B/api/v1/users?name=B&handle=b&email=b@x.com")"
 check "product created" '{"ok":true,"id":1}' "$(curl -s --max-time 5 -X POST "$B/api/v1/products?seller_id=1&name=W&price_cents=100&stock=5")"
 check "cart item added" '{"ok":true,"id":1}' "$(curl -s --max-time 5 -X POST "$B/api/v1/cart_items?user_id=1&product_id=1&qty=2")"
 check "checkout tx" '{"ok":true,"order_id":1}' "$(curl -s --max-time 5 -X POST "$B/api/v1/orders/checkout?user_id=1")"
@@ -46,4 +47,4 @@ check "composite unique dedup" 'Duplicate' "$(curl -s --max-time 5 -X POST "$B/a
 check "data_scope own order" '"buyer_id":1' "$(curl -s --max-time 5 -H "Authorization: Bearer $TOKEN" "$B/api/v1/orders/mine")"
 check "mine rejects missing token" 'Unauthorized' "$(curl -s --max-time 5 "$B/api/v1/orders/mine")"
 
-echo "== smoke: ${pass}/12 passed =="
+echo "== smoke: ${pass}/13 passed =="

@@ -277,7 +277,8 @@ pub const ShopStore = struct {
     }
 
     pub fn createOrder(self: *@This(), buyer_id: i64, status: []const u8, total_cents: i64) !i64 {
-        var b = try self.client.order.withContext(.{}).Create();
+        var open_scope = zent.data_scope.DataScopeFilter.init("dept_id", "user_id", .all, .{});
+        var b = try self.client.order.withContext(open_scope.context(.{})).Create();
         defer b.deinit();
         _ = try b.setFieldValue("buyer_id", buyer_id);
         _ = try b.setFieldValue("status", status);
@@ -289,7 +290,8 @@ pub const ShopStore = struct {
 
     /// Update a Order row by id (sets every declared field).
     pub fn updateOrder(self: *@This(), id: i64, buyer_id: i64, status: []const u8, total_cents: i64) !void {
-        var ub = self.client.order.withContext(.{}).Update();
+        var open_scope = zent.data_scope.DataScopeFilter.init("dept_id", "user_id", .all, .{});
+        var ub = self.client.order.withContext(open_scope.context(.{})).Update();
         defer ub.deinit();
         _ = try ub.setFieldValue("buyer_id", buyer_id);
         _ = try ub.setFieldValue("status", status);
@@ -300,7 +302,8 @@ pub const ShopStore = struct {
 
     /// Delete a Order row by id.
     pub fn deleteOrder(self: *@This(), id: i64) !void {
-        var db = self.client.order.withContext(.{}).Delete();
+        var open_scope = zent.data_scope.DataScopeFilter.init("dept_id", "user_id", .all, .{});
+        var db = self.client.order.withContext(open_scope.context(.{})).Delete();
         defer db.deinit();
         _ = try db.Where(.{self.client.order.predicates.idEQ(.{ .int = id })});
         _ = try db.Exec();
@@ -861,9 +864,11 @@ pub const ShopStore = struct {
             total_cents += p.price_cents * c.qty;
         }
 
-        // 3. create the order (data_scope entity: attach a context; production
-        //    would carry the buyer's request scope, empty ctx = allow-all)
-        var ob = try txc.client.order.withContext(.{}).Create();
+        // 3. create the order (data_scope entity: zent ≥0.78 denies an EMPTY
+        //    context, so attach an explicit open (.all) scope; production
+        //    would carry the buyer's real request scope instead)
+        var open_scope = zent.data_scope.DataScopeFilter.init("dept_id", "user_id", .all, .{});
+        var ob = try txc.client.order.withContext(open_scope.context(.{})).Create();
         defer ob.deinit();
         _ = try ob.setFieldValue("buyer_id", user_id);
         _ = try ob.setFieldValue("status", "pending");

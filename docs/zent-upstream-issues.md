@@ -67,6 +67,18 @@ comments.
 **Fix**: document the "no context = deny / empty ctx = no restriction" contract
 in `privacy/data_scope.zig` or README.
 
+> **v0.78.0 status update (2026-09-27)**: resolved differently than proposed —
+> upstream **changed the semantics to fail-closed**: an empty context (no
+> `.extra`) now **denies** (`1 = 0` predicate) with a warning, instead of
+> allow-all. The contract is now documented in `privacy/data_scope.zig`.
+> zfinal's generator (v0.27.x+) attaches an explicit
+> `DataScopeFilter.init("dept_id", "user_id", .all, .{})` open scope wherever
+> stock CRUD used to send an empty context, preserving the old open-by-default
+> behavior; production passes a real per-request filter as before. Also new in
+> the SQLite driver: `PRAGMA foreign_keys = ON` per connection — FK clauses
+> zent emits are now actually enforced (zfinal's zent-shop smoke test needed a
+> fixture fix: create the followed user before following).
+
 ## 6. Missing usage examples
 
 - `shard` (hash routing) — implementation exists, no worked example.

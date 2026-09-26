@@ -7,8 +7,8 @@
     //   .zent = .{ .path = "../../../zent" },
     .dependencies = .{
         .zent = .{
-            .url = "git+https://github.com/chy3xyz/zent?ref=v0.29.4#232e38c72c060508bf8913aa69ba963af08229a7",
-            .hash = "zent-0.29.4-oiur-3JtDQB0AvrBPRIPv3R3_CfJpuOMogRvdK2WXlRh",
+            .url = "git+https://github.com/chy3xyz/zent?ref=v0.78.0#fe04124a4ca0ae806193da23745d3c7253eb4bb2",
+            .hash = "zent-0.78.0-oiur-60NIwCJVa685Nmr31bwW2foZoA6SMA7IvATdrgG",
         },
     },
     .paths = .{
