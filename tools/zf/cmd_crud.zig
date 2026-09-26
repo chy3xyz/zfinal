@@ -336,14 +336,14 @@ pub fn handleCrudZent(
 pub fn handleCrudFromSql(allocator: std.mem.Allocator, sql_path: []const u8, project_name: ?[]const u8, force: bool, json_mode: bool, admin_mode: bool, explain_mode: bool, dry_run: bool) !void {
     // Resolve SQL path to absolute before any chdir
     var resolved_sql: []const u8 = undefined;
-    if (std.fs.path.isAbsolute(sql_path)) {
+    if (std.Io.Dir.path.isAbsolute(sql_path)) {
         resolved_sql = sql_path;
     } else {
         var cwd_buf: [4096]u8 = undefined;
         const cwd = std.c.getcwd(&cwd_buf, cwd_buf.len) orelse return error.CwdTooLong;
         resolved_sql = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ std.mem.sliceTo(cwd, 0), sql_path });
     }
-    defer if (!std.fs.path.isAbsolute(sql_path)) allocator.free(resolved_sql);
+    defer if (!std.Io.Dir.path.isAbsolute(sql_path)) allocator.free(resolved_sql);
 
     // Read + parse the schema BEFORE any filesystem side effect, so
     // `--dry-run` / `--explain` never create project dirs or bootstrap a project.

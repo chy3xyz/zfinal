@@ -25,7 +25,7 @@ pub fn createProject(allocator: std.mem.Allocator, project_name: []const u8, cle
 
     std.debug.print("\nCreating project: {s}\n", .{project_name});
 
-    const app_name = std.fs.path.basename(project_name);
+    const app_name = std.Io.Dir.path.basename(project_name);
 
     // Root: build.zig + build.zig.zon + CLAUDE.md
     const build_zig_content = try std.fmt.allocPrint(allocator, templates.build_zig, .{app_name});

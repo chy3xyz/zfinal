@@ -201,7 +201,7 @@ fn applySeeds(allocator: std.mem.Allocator, db: ZfDb, dir: []const u8) !void {
 
     var applied_count: u32 = 0;
     for (paths.items) |path| {
-        const name = std.fs.path.basename(path);
+        const name = std.Io.Dir.path.basename(path);
         const name_no_ext = if (std.mem.endsWith(u8, name, ".sql")) name[0 .. name.len - 4] else name;
         if (try seedApplied(allocator, db, name_no_ext)) {
             std.debug.print("  ⏭  skip {s} (already applied)\n", .{name_no_ext});
@@ -268,7 +268,7 @@ fn printSeedStatus(allocator: std.mem.Allocator, db: ZfDb, dir: []const u8) !voi
 
     var pending: u32 = 0;
     for (paths.items) |path| {
-        const name = std.fs.path.basename(path);
+        const name = std.Io.Dir.path.basename(path);
         const name_no_ext = if (std.mem.endsWith(u8, name, ".sql")) name[0 .. name.len - 4] else name;
         if (try seedApplied(allocator, db, name_no_ext)) {
             std.debug.print("  ✓ {s}\n", .{name_no_ext});
@@ -308,7 +308,7 @@ fn applyMigrations(allocator: std.mem.Allocator, db: ZfDb, dir: []const u8, reve
 
     if (!revert) {
         for (paths.items) |path| {
-            const version = std.fs.path.basename(path);
+            const version = std.Io.Dir.path.basename(path);
             const version_trimmed = if (std.mem.endsWith(u8, version, ".sql"))
                 version[0 .. version.len - 4]
             else
@@ -399,7 +399,7 @@ fn printMigrationStatus(allocator: std.mem.Allocator, db: ZfDb, dir: []const u8)
 
     var pending: u32 = 0;
     for (paths.items) |path| {
-        const version = std.fs.path.basename(path);
+        const version = std.Io.Dir.path.basename(path);
         const version_trimmed = if (std.mem.endsWith(u8, version, ".sql"))
             version[0 .. version.len - 4]
         else

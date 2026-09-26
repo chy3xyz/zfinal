@@ -1134,7 +1134,7 @@ pub const Context = struct {
 /// Get content type from file extension
 /// Get content type from file extension
 fn getContentType(path: []const u8) []const u8 {
-    const extension = std.fs.path.extension(path);
+    const extension = std.Io.Dir.path.extension(path);
     if (extension.len == 0) return "application/octet-stream";
 
     const Map = std.StaticStringMap([]const u8).initComptime(.{

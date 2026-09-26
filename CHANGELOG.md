@@ -2,6 +2,11 @@
 
 <!-- New changes land here; on release, move them under a new `## [x.y.z]` section. -->
 
+## [0.27.2] - 2026-09-27
+
+### Changed
+- **Zig 0.17 deprecated-API sweep** (verified on `0.17.0-dev.2151`): `std.fs.path.*` → `std.Io.Dir.path.*` (13 files: context/template/file_kit/path_kit/multipart + zf CLI tools — the alias target today, hard removal target in 0.18); `std.fs.max_path_bytes` → `std.Io.Dir.max_path_bytes`; `ai/tokenizer` drops deprecated `std.unicode.utf8Decode` for the per-length `utf8Decode2/3/4` (bounds-checked lenient loop kept — `Utf8Iterator.nextCodepoint` is `catch unreachable` on invalid bytes and unsafe for arbitrary LLM input). Audited clean against every deprecation marker in std 0.17-dev.2151: no `debug.runtimeSafety`, no `ArrayHashMap` (deprecated → `Custom`), no legacy `std.io`/`ChildProcess`/managed-`ArrayList` idioms.
+
 ## [0.27.1] - 2026-09-27
 
 ### Changed

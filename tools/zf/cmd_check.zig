@@ -577,7 +577,7 @@ fn checkExtDirs(allocator: std.mem.Allocator, ok: *u32, miss: *u32, fail: *u32) 
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.basename, ".gen.zig")) continue;
 
-        const dir_path = std.fs.path.dirname(entry.path) orelse continue;
+        const dir_path = std.Io.Dir.path.dirname(entry.path) orelse continue;
 
         // Check if we've already processed this directory
         var seen = false;
@@ -666,7 +666,7 @@ fn checkOrphanHandlers(allocator: std.mem.Allocator, warn: *u32) void {
 
         const stem = entry.basename[0 .. entry.basename.len - 4];
         const gen_name = std.fmt.bufPrint(&buf1, "{s}.gen.zig", .{stem}) catch continue;
-        const dir_name = std.fs.path.dirname(entry.path) orelse ".";
+        const dir_name = std.Io.Dir.path.dirname(entry.path) orelse ".";
         const gen_path = std.fmt.bufPrint(&buf2, "{s}/{s}", .{ dir_name, gen_name }) catch continue;
 
         if (std.Io.Dir.cwd().access(zf_shared.io, gen_path, .{})) {
@@ -710,7 +710,7 @@ fn checkSmartRouting(allocator: std.mem.Allocator, pass: *u32, warn: *u32, fail:
                     issues += 1;
                 }
             }
-            const dir_path = std.fs.path.dirname(full) orelse continue;
+            const dir_path = std.Io.Dir.path.dirname(full) orelse continue;
             const actions_path = std.fmt.allocPrint(allocator, "{s}/actions.zig", .{dir_path}) catch continue;
             defer allocator.free(actions_path);
             if (std.Io.Dir.cwd().access(zf_shared.io, actions_path, .{})) |_| {
@@ -1124,7 +1124,7 @@ fn healHttpErrorHandler(allocator: std.mem.Allocator) !u32 {
     ;
 
     for (paths.items) |path| {
-        const base = std.fs.path.basename(path);
+        const base = std.Io.Dir.path.basename(path);
         if (!std.mem.startsWith(u8, base, "handler")) continue;
 
         const f = std.Io.Dir.cwd().openFile(zf_shared.io, path, .{}) catch continue;

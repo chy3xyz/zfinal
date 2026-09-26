@@ -735,8 +735,8 @@ fn resolveImportPath(an: *Analyzer, fi: usize, raw_path: []const u8) ?usize {
     if (!std.mem.endsWith(u8, raw_path, ".zig")) return null;
 
     const file_path = an.files[fi].path;
-    const dir = std.fs.path.dirname(file_path) orelse return null;
-    const joined = std.fs.path.resolve(an.alloc, &.{ dir, raw_path }) catch return null;
+    const dir = std.Io.Dir.path.dirname(file_path) orelse return null;
+    const joined = std.Io.Dir.path.resolve(an.alloc, &.{ dir, raw_path }) catch return null;
     defer an.alloc.free(joined);
     return an.file_by_path.get(joined);
 }

@@ -6,7 +6,7 @@ pub const FileKit = struct {
     /// Validate that `path` does not escape `base_dir` via path traversal.
     /// Resolves the combined path and checks it starts with the base directory.
     pub fn validatePath(allocator: std.mem.Allocator, base_dir: []const u8, path: []const u8) ![]const u8 {
-        const resolved = try std.fs.path.resolve(allocator, &.{ base_dir, path });
+        const resolved = try std.Io.Dir.path.resolve(allocator, &.{ base_dir, path });
         if (!std.mem.startsWith(u8, resolved, base_dir)) {
             allocator.free(resolved);
             return error.PathTraversal;

@@ -16,10 +16,27 @@ pub fn estimateTokens(text: []const u8) usize {
             latin_chars += 1;
             continue;
         }
-        const cp = std.unicode.utf8Decode(text[i .. i + cp_len]) catch {
-            i += 1;
-            latin_chars += 1;
-            continue;
+        const cp: u21 = switch (cp_len) {
+            1 => text[i],
+            // std.unicode.utf8Decode is deprecated (awkward API); the
+            // per-length variants are its non-deprecated pieces and this loop
+            // already guarantees the bounds/length coupling they require.
+            2 => std.unicode.utf8Decode2(text[i .. i + 2][0..2].*) catch {
+                i += 1;
+                latin_chars += 1;
+                continue;
+            },
+            3 => std.unicode.utf8Decode3(text[i .. i + 3][0..3].*) catch {
+                i += 1;
+                latin_chars += 1;
+                continue;
+            },
+            4 => std.unicode.utf8Decode4(text[i .. i + 4][0..4].*) catch {
+                i += 1;
+                latin_chars += 1;
+                continue;
+            },
+            else => text[i],
         };
         if (isCjk(cp)) {
             cjk_chars += 1;

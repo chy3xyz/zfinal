@@ -163,7 +163,7 @@ pub fn scan(
 
     const targets = if (args.len == 0) &[_][]const u8{"."} else args;
     for (targets) |arg| {
-        const abs = std.fs.path.resolve(alloc, &.{ cwd_path, arg }) catch |err| {
+        const abs = std.Io.Dir.path.resolve(alloc, &.{ cwd_path, arg }) catch |err| {
             std.debug.print("zdeadcode: cannot resolve {s}: {s}\n", .{ arg, @errorName(err) });
             continue;
         };
@@ -216,7 +216,7 @@ fn walkDir(ctx: *WalkContext, dir: Dir, rel: []const u8) !void {
         const full_rel = if (rel.len == 0)
             try ctx.alloc.dupe(u8, name)
         else
-            try std.fs.path.join(ctx.alloc, &.{ rel, name });
+            try std.Io.Dir.path.join(ctx.alloc, &.{ rel, name });
 
         switch (entry.kind) {
             .directory => {
@@ -228,7 +228,7 @@ fn walkDir(ctx: *WalkContext, dir: Dir, rel: []const u8) !void {
             .file => {
                 if (!std.mem.endsWith(u8, name, ".zig")) continue;
                 if (ctx.ignore.isIgnored(full_rel, false)) continue;
-                const abs = try std.fs.path.resolve(ctx.alloc, &.{ ctx.root_abs, full_rel });
+                const abs = try std.Io.Dir.path.resolve(ctx.alloc, &.{ ctx.root_abs, full_rel });
                 try addFileAt(ctx, abs);
             },
             else => {},

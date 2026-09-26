@@ -45,7 +45,7 @@ pub fn run(
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var cwd_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const cwd_len = try std.process.currentPath(io, &cwd_buf);
     const cwd = cwd_buf[0..cwd_len];
 
@@ -69,7 +69,7 @@ pub fn run(
     }
 
     for (opts.paths) |p| {
-        const abs = std.fs.path.resolve(arena, &.{ cwd, p }) catch continue;
+        const abs = std.Io.Dir.path.resolve(arena, &.{ cwd, p }) catch continue;
         try root_paths.append(arena, abs);
     }
 

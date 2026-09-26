@@ -96,7 +96,7 @@ pub const TemplateManager = struct {
 
     /// Load template from file
     pub fn load(self: *TemplateManager, name: []const u8) !void {
-        const path = try std.fs.path.join(self.allocator, &.{ self.template_dir, name });
+        const path = try std.Io.Dir.path.join(self.allocator, &.{ self.template_dir, name });
         defer self.allocator.free(path);
 
         const file = try std.Io.Dir.cwd().openFile(io_instance.io, path, .{});
@@ -544,7 +544,7 @@ pub const RenderEngine = struct {
     fn loadTemplateFile(self: *Self, name: []const u8) ![]const u8 {
         if (self.template_dir) |dir| {
             // Prevent path traversal — resolved path must stay within template_dir
-            const resolved = try std.fs.path.resolve(self.allocator, &.{ dir, name });
+            const resolved = try std.Io.Dir.path.resolve(self.allocator, &.{ dir, name });
             defer self.allocator.free(resolved);
             if (!std.mem.startsWith(u8, resolved, dir) or resolved.len <= dir.len) {
                 return error.PathTraversal;

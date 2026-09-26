@@ -241,7 +241,7 @@ fn parseActionsFile(allocator: std.mem.Allocator, path: []const u8, src: []const
 }
 
 fn parseActionsFileAst(allocator: std.mem.Allocator, path: []const u8, src: []const u8) !ParsedModule {
-    const dir = std.fs.path.dirname(path) orelse path;
+    const dir = std.Io.Dir.path.dirname(path) orelse path;
     const zsrc = try allocator.allocSentinel(u8, src.len, 0);
     defer allocator.free(zsrc);
     @memcpy(zsrc[0..src.len], src);
@@ -268,7 +268,7 @@ fn parseActionsFileAst(allocator: std.mem.Allocator, path: []const u8, src: []co
     const mod_si = tree.fullStructInit(&buf, mod_node) orelse return error.AstParseFailed;
 
     const name = try astStructString(allocator, tree, mod_si, "name") orelse
-        try allocator.dupe(u8, std.fs.path.basename(dir));
+        try allocator.dupe(u8, std.Io.Dir.path.basename(dir));
     errdefer allocator.free(name);
 
     const prefix = blk: {
@@ -427,10 +427,10 @@ fn astStructStringList(allocator: std.mem.Allocator, tree: std.zig.Ast, si: std.
 
 /// Legacy brace/string scan — used when Ast.parse fails (recover/malformed).
 fn parseActionsFileHeuristic(allocator: std.mem.Allocator, path: []const u8, src: []const u8) !ParsedModule {
-    const dir = std.fs.path.dirname(path) orelse path;
+    const dir = std.Io.Dir.path.dirname(path) orelse path;
 
     const name = try extractStringField(allocator, src, ".name") orelse
-        try allocator.dupe(u8, std.fs.path.basename(dir));
+        try allocator.dupe(u8, std.Io.Dir.path.basename(dir));
     errdefer allocator.free(name);
 
     const prefix = blk: {
