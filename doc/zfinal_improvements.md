@@ -90,7 +90,12 @@ comptime 检查：`@compileError("bindJson DTO field '" ++ name ++ "' needs a de
 应输出：输入位置（文件:行 / 参数名）+ 期望形态 + 一个合法示例。
 这是 AI agent 自纠正能力的关键——manifest 消费方靠错误信息重试。
 
-### C2（P1）`schema.gen.sql` ↔ `zf migrate` 联动
+### C2（P1）`schema.gen.sql` ↔ `zf migrate` 联动 ✅ 已完成（[Unreleased]）
+`zf migrate diff [--write]`：对比 `src/modules/*/schema.gen.sql`（期望）与项目
+SQLite 库实际结构，生成增量 DDL 草稿（新表/新列 ADD COLUMN/缺失索引 verbatim
+CREATE；删除一律注释化待人工确认；NOT NULL 无默认附回填提醒）。
+`--write` 写入 `migrations/`（带 `-- Up` 段，`zf migrate run` 直接应用）。
+PG/MySQL 内省为后续项。
 `zf migrate` 已有完整 runner（new/run/down/status，tools/zf/cmd_migrate.zig）。
 断点在于：`zf crud` 生成的 `schema.gen.sql`（含注解派生索引）与
 `migrations/` 目录互不知晓。可做 `zf migrate diff`：对比 model 注解与已应用

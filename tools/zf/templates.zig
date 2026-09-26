@@ -59,7 +59,7 @@ pub const build_zig_zon =
     \\    .minimum_zig_version = "0.17.0",
     \\    .dependencies = .{{
     \\        .zfinal = .{{
-    \\            .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.27.2.tar.gz",
+    \\            .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.28.0.tar.gz",
     \\            .hash = "...", // run `zig fetch <url>` to fill the actual hash
     \\        }},
     \\    }},
@@ -114,7 +114,7 @@ pub const app_zig =
     \\pub const App = struct {
     \\    allocator: std.mem.Allocator,
     \\    zf: zfinal.ZFinal,
-    \\    pool: zfinal.ConnectionPool,
+    \\    pool: *zfinal.ConnectionPool,
     \\
     \\    /// Initialize database + pool + ZFinal instance.
     \\    pub fn init(
@@ -122,16 +122,26 @@ pub const app_zig =
     \\        db_cfg: zfinal.DBConfig,
     \\        server_cfg: zfinal.ServerConfig,
     \\    ) !App {
-    \\        var db = try zfinal.DB.init(allocator, db_cfg);
-    \\        errdefer db.deinit();
-    \\        try ensureSchema(&db);
+    \\        // DB.init/ConnectionPool.init return heap pointers (*DB /
+    \\        // *ConnectionPool) — keep them as pointers, never dereference-copy.
+    \\        const db = try zfinal.DB.init(allocator, db_cfg);
+    \\        errdefer db.destroy();
+    \\        try ensureSchema(db);
+    \\        db.destroy(); // schema applied; the pool owns its own connections
+    \\
     \\        var zf = zfinal.ZFinal.init(allocator);
     \\        zf.config = server_cfg;
+    \\
+    \\        const pool = try zfinal.ConnectionPool.init(allocator, db_cfg, 8);
+    \\        errdefer pool.deinit();
+    \\        // Reaper pings idle connections so dead ones are replaced before
+    \\        // a request needs them. 30s is a good default; 0 disables.
+    \\        try pool.startReaper(30_000);
     \\
     \\        return .{
     \\            .allocator = allocator,
     \\            .zf = zf,
-    \\            .pool = try zfinal.ConnectionPool.init(allocator, db_cfg, 8),
+    \\            .pool = pool,
     \\        };
     \\    }
     \\

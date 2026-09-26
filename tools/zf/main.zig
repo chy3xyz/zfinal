@@ -105,11 +105,15 @@ pub fn main(init: std.process.Init) !void {
         },
         .migrate => {
             if (args.len < 3) {
-                std.debug.print("Usage: {s} migrate <action> [name]\n", .{args[0]});
-                std.debug.print("Actions: new <name>, run\n", .{});
+                std.debug.print("Usage: {s} migrate <action> [name] [--write]\n", .{args[0]});
+                std.debug.print("Actions: new <name>, run, down, status, diff [--write]\n", .{});
                 std.process.exit(zf_shared.Exit.fail);
             }
-            try handleMigrate(allocator, args[2], if (args.len > 3) args[3] else "");
+            if (std.mem.eql(u8, args[2], "diff")) {
+                try cmd_migrate.migrateDiff(allocator, hasFlag(args, "--write"));
+            } else {
+                try handleMigrate(allocator, args[2], if (args.len > 3) args[3] else "");
+            }
         },
         .seed => {
             if (args.len < 3) {

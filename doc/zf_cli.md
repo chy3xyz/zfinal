@@ -32,6 +32,21 @@ export PATH="$(pwd)/zig-out/bin:$PATH"
 | `market` | 本地模块市场目录 |
 | `migrate` / `seed` / `admin` / `ai` / … | 见 `zf help` |
 
+### `zf migrate diff [--write]`
+
+对比期望 schema（`src/modules/*/schema.gen.sql`，即 `zf crud:sql` 产物 + 注解派生索引）
+与项目数据库（`ZFINAL_DB_PATH`，默认 `zf.db`；v1 支持 SQLite）的实际结构，
+生成增量 DDL 草稿：
+
+```bash
+zf migrate diff           # 打印草稿
+zf migrate diff --write   # 写入 migrations/<ts>_auto_diff.sql（带 -- Up 段）
+zf migrate run            # 审阅后应用
+```
+
+原则：**删除永不自动**——多余列/表/索引以注释形式列出，人工确认后手动执行；
+`NOT NULL` 无默认值的新列会附带回填提醒。
+
 ## 推荐工作流
 
 ```bash

@@ -30,6 +30,8 @@ test {
 pub const ZFinal = @import("core/zfinal.zig").ZFinal;
 pub const RouteGroup = @import("core/zfinal.zig").RouteGroup;
 pub const Context = @import("core/context.zig").Context;
+/// Comptime-validated DTO constructor for `bindJson` / `bindQuery` — see `Context.dto`.
+pub const dto = @import("core/context.zig").dto;
 pub const Router = @import("core/router.zig").Router;
 pub const Handler = @import("core/router.zig").Handler;
 pub const HttpMethod = @import("core/router.zig").HttpMethod;

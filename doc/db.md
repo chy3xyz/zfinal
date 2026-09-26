@@ -120,18 +120,28 @@ const CustomerModel = zfinal.ModelWithPK(Customer, "crm_customers", "customer_id
 ## Connection Pool
 
 ```zig
-var pool = zfinal.ConnectionPool.init(allocator, config, 8);
+// init returns a heap pointer (*ConnectionPool) — keep it as a pointer.
+var pool = try zfinal.ConnectionPool.init(allocator, config, 8);
 defer pool.deinit();
 
-// Acquire connection
+// Background reaper: pings idle connections every N ms and replaces dead
+// ones proactively. Recommended in production (30s default); without it,
+// dead connections are only cleaned on acquire (first request pays the
+// reconnect). startReaper is idempotent; pool.deinit() joins the thread.
+try pool.startReaper(30_000);
+
+// Acquire connection (returns *DB; waits up to acquire_timeout_ms)
 var conn = try pool.acquire();
 defer pool.release(conn) catch {};
 
 _ = try conn.exec("SELECT 1");
 
-// Health check idle connections
+// Manual health check (reaper runs this for you in the background)
 pool.keepAlive();
 ```
+
+Double `release` is rejected (`error.AlreadyReleased`) instead of corrupting
+the available list; concurrency stress regressions live in `src/db/pool.zig`.
 
 ## ResultSet
 

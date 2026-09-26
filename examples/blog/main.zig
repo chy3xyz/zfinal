@@ -5,13 +5,14 @@ const Routes = @import("config/routes.zig");
 const DbInit = @import("config/db_init.zig");
 const Interceptors = @import("interceptor/interceptors.zig");
 
-pub fn main() !void {
-    const allocator = std.heap.smp_allocator;
+pub fn main(init: std.process.Init) !void {
+    zfinal.io_instance.init(init);
+    const allocator = init.gpa;
 
     // 初始化数据库
     const db_config = Config.DBConfig.get();
     var db = try zfinal.DB.init(allocator, db_config);
-    defer db.deinit();
+    defer db.destroy();
 
     // 创建表
     try DbInit.initDatabase(&db);

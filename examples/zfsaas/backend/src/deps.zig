@@ -1,6 +1,6 @@
 const std = @import("std");
 const zfinal = @import("zfinal");
-pub var pool: zfinal.ConnectionPool = undefined;
+pub var pool: *zfinal.ConnectionPool = undefined;
 pub var tokenMgr: zfinal.TokenManager = undefined;
 pub var rateLimiter: zfinal.RateLimitHandler = undefined;
 
@@ -9,7 +9,10 @@ pub fn initDeps(allocator: std.mem.Allocator, db_config: zfinal.DBConfig) !void 
     tokenMgr.setTTL(3600);
     rateLimiter = zfinal.RateLimitHandler.init(allocator);
     rateLimiter.max_requests = 100;
+    // ConnectionPool.init returns a heap *ConnectionPool — store the pointer.
     pool = try zfinal.ConnectionPool.init(allocator, db_config, 10);
+    // Reaper pings idle connections; dead ones are replaced proactively.
+    try pool.startReaper(30_000);
     _ = pool.acquire() catch {};
 }
 

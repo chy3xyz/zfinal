@@ -1,6 +1,5 @@
 const std = @import("std");
 const zfinal = @import("../main.zig");
-const mutex_init = @import("../db/mutex_init.zig");
 const IpExt = @import("ext_util.zig").IpExt;
 
 /// CORS Handler - 跨域资源共享
@@ -58,11 +57,11 @@ pub const StaticHandler = struct {
         }
 
         // 构建文件路径并规范化
-        var file_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var file_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
         const file_path = try std.fmt.bufPrint(&file_path_buf, "{s}{s}", .{ self.root_path, path });
 
         // 双重校验：确保解析后的路径仍在 root_path 下
-        const resolved = std.fs.cwd().realpath(file_path, &file_path_buf) catch |err| {
+        const resolved = std.posix.realpath(file_path, &file_path_buf) catch |err| {
             if (err == error.FileNotFound) {
                 ctx.res_status = .not_found;
                 try ctx.renderText("404 Not Found");
@@ -76,8 +75,13 @@ pub const StaticHandler = struct {
             return;
         }
 
-        // 读取文件（限制 10MB）
-        const content = std.fs.cwd().readFileAlloc(ctx.allocator, file_path, 10 * 1024 * 1024) catch |err| {
+        // 读取文件（限制 10MB）— via std.Io so it routes through the server Io
+        const content = std.Io.Dir.cwd().readFileAlloc(
+            @import("../io_instance.zig").io,
+            file_path,
+            ctx.allocator,
+            .limited(10 * 1024 * 1024),
+        ) catch |err| {
             if (err == error.FileNotFound) {
                 ctx.res_status = .not_found;
                 try ctx.renderText("404 Not Found");
@@ -108,7 +112,7 @@ pub const StaticHandler = struct {
 pub const RateLimitHandler = struct {
     requests: std.StringHashMap(RequestInfo),
     allocator: std.mem.Allocator,
-    mutex: std.c.pthread_mutex_t = std.c.PTHREAD_MUTEX_INITIALIZER,
+    mutex: std.Io.Mutex = .init,
     max_requests: usize = 100,
     window_seconds: i64 = 60,
     /// Set to true when behind a trusted reverse proxy (nginx, haproxy).
@@ -152,8 +156,9 @@ pub const RateLimitHandler = struct {
             .trusted_proxies = self.trusted_proxies,
         });
 
-        mutex_init.lockMut(&self.mutex);
-        defer mutex_init.unlockMut(&self.mutex);
+        const io = @import("../io_instance.zig").io;
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
 
         var ts: std.c.timespec = undefined;
         _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);

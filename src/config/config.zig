@@ -26,10 +26,12 @@ pub const Config = struct {
         var config = Config.init(allocator);
         errdefer config.deinit();
 
-        const file = try std.fs.cwd().openFile(path, .{});
-        defer file.close();
-
-        const content = try file.readToEndAlloc(allocator, 10 * 1024 * 1024);
+        const content = try std.Io.Dir.cwd().readFileAlloc(
+            @import("../io_instance.zig").io,
+            path,
+            allocator,
+            .limited(10 * 1024 * 1024),
+        );
         defer allocator.free(content);
 
         // 根据扩展名选择解析器

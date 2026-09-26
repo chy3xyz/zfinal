@@ -1,16 +1,19 @@
 const std = @import("std");
 const DB = @import("db.zig").DB;
 const DBConfig = @import("config.zig").DBConfig;
-const mutex_init = @import("mutex_init.zig");
 const logger = @import("../core/logger.zig");
 const io_instance = @import("../io_instance.zig");
 
-/// 数据库连接池 with POSIX thread synchronization.
+/// 数据库连接池 synchronized by `std.Io.Mutex` / `std.Io.Condition`
+/// (futex-backed via the active Io — same primitives the rest of the
+/// framework uses; the pthread wrapper layer is gone as of v0.27.x).
 ///
-/// Heap-allocated (init returns *ConnectionPool) to avoid struct copy
-/// of pthread_mutex_t / pthread_cond_t. pthread_mutex_init /
-/// pthread_cond_init run at allocation time; the caller gets the pointer
-/// directly — no value-copy that could drop internal flags.
+/// Heap-allocated (init returns *ConnectionPool) so the caller holds one
+/// stable pointer — no value-copy of synchronization state.
+///
+/// Cancellation contract: pool-internal locks use `lockUncancelable` /
+/// `waitUncancelable`-grade primitives — an `Io` cancellation request must
+/// never leave a pooled connection checked out or a waiter corrupted.
 ///
 /// **Important:** `ping()` is never called while holding `mutex`. A blocking
 /// MySQL/PG ping under the pool lock starves every other acquire and looks
@@ -18,8 +21,8 @@ const io_instance = @import("../io_instance.zig");
 pub const ConnectionPool = struct {
     connections: std.ArrayList(*DB),
     available: std.ArrayList(*DB),
-    mutex: std.c.pthread_mutex_t,
-    cond: std.c.pthread_cond_t,
+    mutex: std.Io.Mutex = .init,
+    cond: std.Io.Condition = .init,
     config: DBConfig,
     allocator: std.mem.Allocator,
     max_connections: usize,
@@ -46,17 +49,12 @@ pub const ConnectionPool = struct {
         pool.* = ConnectionPool{
             .connections = connections,
             .available = available,
-            .mutex = undefined,
-            .cond = undefined,
             .config = config,
             .allocator = allocator,
             .max_connections = max_connections,
             .current_connections = 0,
             .acquire_timeout_ms = 30000,
         };
-        try mutex_init.initMutex(&pool.mutex);
-        errdefer mutex_init.destroyMutex(&pool.mutex);
-        try mutex_init.initCond(&pool.cond);
 
         // Pre-create all connections on the calling thread (typically main).
         for (0..max_connections) |_| {
@@ -72,27 +70,23 @@ pub const ConnectionPool = struct {
     }
 
     pub fn deinit(self: *ConnectionPool) void {
+        const io = io_instance.io;
         // Signal and join the background reaper if it was started.
         if (self.reaper_thread) |t| {
             self.reaper_stop.store(true, .monotonic);
-            mutex_init.broadcastCond(&self.cond);
+            self.cond.broadcast(io);
             t.join();
             self.reaper_thread = null;
         }
 
-        mutex_init.lockMut(&self.mutex);
+        self.mutex.lockUncancelable(io);
         for (self.connections.items) |conn| {
             conn.deinit();
             self.allocator.destroy(conn);
         }
         self.connections.deinit(self.allocator);
         self.available.deinit(self.allocator);
-        // POSIX requires the mutex to be unlocked before destruction —
-        // a `defer unlock` here would fire after destroyMutex/destroy(self)
-        // and unlock freed memory.
-        mutex_init.unlockMut(&self.mutex);
-        mutex_init.destroyMutex(&self.mutex);
-        mutex_init.destroyCond(&self.cond);
+        self.mutex.unlock(io);
         self.allocator.destroy(self);
     }
 
@@ -113,16 +107,15 @@ pub const ConnectionPool = struct {
         }
     }
 
-    fn nowMs() i64 {
-        var now_ts: std.c.timespec = undefined;
-        _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &now_ts);
-        return @as(i64, @intCast(now_ts.sec)) * 1000 + @divTrunc(@as(i64, @intCast(now_ts.nsec)), 1_000_000);
-    }
-
     /// Pop one available connection or create one, without pinging under lock.
-    fn takeCandidate(self: *ConnectionPool, deadline_ms: i64) !*DB {
-        mutex_init.lockMut(&self.mutex);
-        defer mutex_init.unlockMut(&self.mutex);
+    /// `timeout` bounds the total wait (converted to an absolute deadline on
+    /// the first entry so repeated wakeups cannot extend the window).
+    fn takeCandidate(self: *ConnectionPool, timeout: std.Io.Timeout) !*DB {
+        const io = io_instance.io;
+        const deadline = timeout.toDeadline(io);
+
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
 
         while (true) {
             if (self.available.items.len > 0) {
@@ -138,19 +131,12 @@ pub const ConnectionPool = struct {
                 return conn;
             }
 
-            const now_ms = nowMs();
-            if (now_ms >= deadline_ms) {
-                return error.PoolTimeout;
-            }
-
-            var ts: std.c.timespec = .{
-                .sec = @divTrunc(deadline_ms, 1000),
-                .nsec = @mod(deadline_ms, 1000) * 1_000_000,
+            self.cond.waitTimeout(io, &self.mutex, deadline) catch |err| switch (err) {
+                error.Timeout => return error.PoolTimeout,
+                // A cancellation request must not tear down the waiting
+                // acquire: re-enter the wait (uncancelable-critical section).
+                error.Canceled => continue,
             };
-            const rc = std.c.pthread_cond_timedwait(&self.cond, &self.mutex, &ts);
-            if (rc != .SUCCESS and rc != .INTR) {
-                return error.PoolTimeout;
-            }
         }
     }
 
@@ -167,10 +153,13 @@ pub const ConnectionPool = struct {
     }
 
     pub fn acquire(self: *ConnectionPool) !*DB {
-        const deadline_ms = nowMs() + @as(i64, @intCast(self.acquire_timeout_ms));
+        const timeout: std.Io.Timeout = .{ .duration = .{
+            .raw = std.Io.Duration.fromMilliseconds(@intCast(self.acquire_timeout_ms)),
+            .clock = .awake,
+        } };
 
         while (true) {
-            const candidate = try self.takeCandidate(deadline_ms);
+            const candidate = try self.takeCandidate(timeout);
 
             // Ping OUTSIDE the pool mutex — a blocking driver ping must not
             // serialize every other worker thread.
@@ -181,15 +170,17 @@ pub const ConnectionPool = struct {
                 return candidate;
             }
 
-            mutex_init.lockMut(&self.mutex);
+            const io = io_instance.io;
+            self.mutex.lockUncancelable(io);
             self.destroyLocked(candidate);
-            mutex_init.broadcastCond(&self.cond);
-            mutex_init.unlockMut(&self.mutex);
+            self.cond.broadcast(io);
+            self.mutex.unlock(io);
         }
     }
 
     pub fn release(self: *ConnectionPool, conn: *DB) !void {
-        mutex_init.lockMut(&self.mutex);
+        const io = io_instance.io;
+        self.mutex.lockUncancelable(io);
         defer {
             // Wake all waiters. `signal` is enough for one returned conn in the
             // textbook sense, but under bursty acquire/release a single signal
@@ -198,8 +189,8 @@ pub const ConnectionPool = struct {
             // same mutex) and matches destroy/keepAlive. Note: condvar wake
             // policy does **not** by itself cause process Abort — that usually
             // means heap/magic panic or double-use of a driver connection.
-            mutex_init.broadcastCond(&self.cond);
-            mutex_init.unlockMut(&self.mutex);
+            self.cond.broadcast(io);
+            self.mutex.unlock(io);
         }
 
         // Double-release would append the same *DB twice → two acquire()s get
@@ -220,14 +211,15 @@ pub const ConnectionPool = struct {
     }
 
     pub fn keepAlive(self: *ConnectionPool) void {
+        const io = io_instance.io;
         // Snapshot pointers under lock; ping outside; remove dead under lock.
         // Do NOT clear `available` for the duration of ping — that would block
         // every acquire until the reaper finishes.
         var snapshot = std.ArrayList(*DB).empty;
         defer snapshot.deinit(self.allocator);
         {
-            mutex_init.lockMut(&self.mutex);
-            defer mutex_init.unlockMut(&self.mutex);
+            self.mutex.lockUncancelable(io);
+            defer self.mutex.unlock(io);
             snapshot.appendSlice(self.allocator, self.available.items) catch return;
         }
 
@@ -235,7 +227,7 @@ pub const ConnectionPool = struct {
         for (snapshot.items) |conn| {
             if (conn.ping()) continue;
             had_dead = true;
-            mutex_init.lockMut(&self.mutex);
+            self.mutex.lockUncancelable(io);
             // Only destroy if still sitting in available (not checked out).
             var still_available = false;
             for (self.available.items, 0..) |item, i| {
@@ -246,12 +238,12 @@ pub const ConnectionPool = struct {
                 }
             }
             if (still_available) self.destroyLocked(conn);
-            mutex_init.unlockMut(&self.mutex);
+            self.mutex.unlock(io);
         }
         if (had_dead) {
-            mutex_init.lockMut(&self.mutex);
-            mutex_init.broadcastCond(&self.cond);
-            mutex_init.unlockMut(&self.mutex);
+            self.mutex.lockUncancelable(io);
+            self.cond.broadcast(io);
+            self.mutex.unlock(io);
         }
     }
 

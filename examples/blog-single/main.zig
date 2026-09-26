@@ -285,8 +285,9 @@ pub const AuthInterceptor = zfinal.Interceptor{
 
 // ============ Main Application ============
 
-pub fn main() !void {
-    const allocator = std.heap.smp_allocator;
+pub fn main(init: std.process.Init) !void {
+    zfinal.io_instance.init(init);
+    const allocator = init.gpa;
 
     // 初始化数据库
     const config = zfinal.DBConfig.sqlite("blog.db");

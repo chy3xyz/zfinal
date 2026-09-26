@@ -112,7 +112,10 @@ SQL schema  ──zf──►  生成物 + JSON manifest
 - **单一 Fiber Server**（`Io.Threaded` + `Group.async`），不要再分 Sync / Async 两套。
 - Fiber 返回值约束：`acceptLoop` 包一层 → `Cancelable!void`；真错误用 ErrorHandle 隔离，避免拖垮 accept 循环。
 - 连接路径目标：**每连接尽量零堆**；业务分配用 `ctx.allocator`，请求结束释放（不要臆造 per-request Arena，除非框架已提供）。
-- 跨线程与测试 IO：慎用依赖 futex 的 `std.Io.Mutex`；P2P 等场景用 `atomic.Mutex` + spin 是有意选择。
+- 同步原语：**全框架统一 `std.Io.Mutex` / `std.Io.Condition`**（dev.2151 起 futex 后端成熟：
+  Linux futex / macOS ulock / parking fallback；`std.http.Client` 同源自用）。
+  池内部锁一律 `lockUncancelable`；`lock()`/`wait()` 是取消点，只在可以安全放弃的位置用。
+  例外：P2P 的 `atomic.Mutex` + spin 为零依赖有意选择。旧 `mutex_init` pthread 包装层已删除（v0.27.2）。
   生产 mesh 建议 `setHmacKey`（帧级 HMAC-SHA256），否则任意能连上端口的对端可注入 inbox。
 - 池 / Session：`lockUncancelable`、**先 unlock 再 destroy**；禁止用 `@panic` 当错误处理。
 

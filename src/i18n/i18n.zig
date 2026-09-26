@@ -147,10 +147,12 @@ pub const I18n = struct {
 
     /// Load locale from JSON file
     pub fn loadLocale(self: *I18n, locale: []const u8, file_path: []const u8) !void {
-        const file = try std.fs.cwd().openFile(file_path, .{});
-        defer file.close();
-
-        const content = try file.readToEndAlloc(self.allocator, 1024 * 1024);
+        const content = try std.Io.Dir.cwd().readFileAlloc(
+            @import("../io_instance.zig").io,
+            file_path,
+            self.allocator,
+            .limited(1024 * 1024),
+        );
         defer self.allocator.free(content);
 
         const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, content, .{});

@@ -38,19 +38,22 @@ pub const PathKit = struct {
 
     /// 检查文件是否存在
     pub fn exists(path: []const u8) bool {
-        std.fs.cwd().access(path, .{}) catch return false;
+        const io = @import("../io_instance.zig").io;
+        std.Io.Dir.cwd().access(io, path, .{}) catch return false;
         return true;
     }
 
     /// 检查是否是目录
     pub fn isDir(path: []const u8) bool {
-        const stat = std.fs.cwd().statFile(path) catch return false;
+        const io = @import("../io_instance.zig").io;
+        const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch return false;
         return stat.kind == .directory;
     }
 
     /// 检查是否是文件
     pub fn isFile(path: []const u8) bool {
-        const stat = std.fs.cwd().statFile(path) catch return false;
+        const io = @import("../io_instance.zig").io;
+        const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch return false;
         return stat.kind == .file;
     }
 };

@@ -31,7 +31,7 @@ pub const ColumnInfo = struct {
 
     /// 映射数据库类型到 Zig 类型
     pub fn toZigType(self: *const ColumnInfo) []const u8 {
-        const lower_type = std.ascii.lowerString(self.allocator, self.type_name) catch return "[]const u8";
+        const lower_type = std.ascii.allocLowerString(self.allocator, self.type_name) catch return "[]const u8";
         defer self.allocator.free(lower_type);
 
         // SQLite 类型
@@ -62,8 +62,8 @@ pub const Generator = struct {
 
     /// 获取所有表信息
     pub fn getTables(self: *Generator) ![]TableInfo {
-        var tables = std.ArrayList(TableInfo).init(self.allocator);
-        errdefer tables.deinit();
+        var tables = std.ArrayList(TableInfo).empty;
+        errdefer tables.deinit(self.allocator);
 
         // SQLite: 查询所有表
         const sql = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'";
@@ -85,16 +85,16 @@ pub const Generator = struct {
                 .allocator = self.allocator,
             };
 
-            try tables.append(table);
+            try tables.append(self.allocator, table);
         }
 
-        return tables.toOwnedSlice();
+        return tables.toOwnedSlice(self.allocator);
     }
 
     /// 获取表的列信息
     pub fn getTableColumns(self: *Generator, table_name: []const u8) ![]ColumnInfo {
-        var columns = std.ArrayList(ColumnInfo).init(self.allocator);
-        errdefer columns.deinit();
+        var columns = std.ArrayList(ColumnInfo).empty;
+        errdefer columns.deinit(self.allocator);
 
         // SQLite: PRAGMA table_info
         var sql_buf: [512]u8 = undefined;
@@ -120,18 +120,17 @@ pub const Generator = struct {
                 .allocator = self.allocator,
             };
 
-            try columns.append(column);
+            try columns.append(self.allocator, column);
         }
 
-        return columns.toOwnedSlice();
+        return columns.toOwnedSlice(self.allocator);
     }
 
     /// 生成 Model 代码
     pub fn generateModel(self: *Generator, table: *const TableInfo) ![]const u8 {
-        var code = std.ArrayList(u8).init(self.allocator);
-        defer code.deinit();
-
-        const writer = code.writer();
+        var aw: std.Io.Writer.Allocating = .init(self.allocator);
+        defer aw.deinit();
+        const writer = &aw.writer;
 
         // 生成文件头
         try writer.writeAll("const std = @import(\"std\");\n");
@@ -169,7 +168,7 @@ pub const Generator = struct {
         // 生成 Model 类型
         try writer.print("pub const {s}Model = zfinal.Model({s}, \"{s}\");\n", .{ struct_name, struct_name, table.name });
 
-        return code.toOwnedSlice();
+        return aw.toOwnedSlice();
     }
 
     /// 生成所有表的 Model
@@ -183,7 +182,8 @@ pub const Generator = struct {
         }
 
         // 创建输出目录
-        std.fs.cwd().makePath(self.output_dir) catch {};
+        const io = @import("../io_instance.zig").io;
+        std.Io.Dir.cwd().createDirPath(io, self.output_dir) catch {};
 
         for (tables) |*table| {
             const code = try self.generateModel(table);
@@ -194,9 +194,9 @@ pub const Generator = struct {
             const filename = try std.fmt.bufPrint(&filename_buf, "{s}/{s}.zig", .{ self.output_dir, table.name });
 
             // 写入文件
-            const file = try std.fs.cwd().createFile(filename, .{});
-            defer file.close();
-            try file.writeAll(code);
+            const file = try std.Io.Dir.cwd().createFile(io, filename, .{});
+            defer file.close(io);
+            try file.writeStreamingAll(io, code);
 
             std.debug.print("Generated: {s}\n", .{filename});
         }

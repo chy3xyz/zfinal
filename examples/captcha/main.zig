@@ -2,8 +2,9 @@ const std = @import("std");
 const zfinal = @import("zfinal");
 
 /// 验证码演示 - 展示如何使用验证码功能
-pub fn main() !void {
-    const allocator = std.heap.smp_allocator;
+pub fn main(init: std.process.Init) !void {
+    zfinal.io_instance.init(init);
+    const allocator = init.gpa;
 
     // 创建验证码管理器
     var captcha_manager = zfinal.CaptchaManager.init(allocator);

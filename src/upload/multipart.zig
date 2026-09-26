@@ -18,9 +18,10 @@ pub const UploadFile = struct {
 
     /// 保存文件到指定路径
     pub fn saveTo(self: *UploadFile, path: []const u8) !void {
-        const file = try std.fs.cwd().createFile(path, .{});
-        defer file.close();
-        try file.writeAll(self.data);
+        const io = @import("../io_instance.zig").io;
+        const file = try std.Io.Dir.cwd().createFile(io, path, .{});
+        defer file.close(io);
+        try file.writeStreamingAll(io, self.data);
     }
 
     /// 保存文件到目录，使用安全文件名（去除路径分量）
@@ -31,7 +32,7 @@ pub const UploadFile = struct {
             return error.InvalidFilename;
         }
 
-        var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
         const path = try std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ dir, safe_name });
         try self.saveTo(path);
     }

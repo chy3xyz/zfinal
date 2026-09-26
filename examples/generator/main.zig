@@ -5,14 +5,16 @@ const zfinal = @import("zfinal");
 ///
 /// 本示例演示如何使用 ZFinal 的代码生成器从现有数据库表
 /// 自动生成 Model 代码，加速开发。
-pub fn main() !void {
-    const allocator = std.heap.smp_allocator;
+pub fn main(init: std.process.Init) !void {
+    zfinal.io_instance.init(init);
+    const allocator = init.gpa;
+    const io = init.io;
 
     // 连接数据库 (SQLite)
     const db_path = "generator_demo.db";
     const config = zfinal.DBConfig.sqlite(db_path);
     var db = try zfinal.DB.init(allocator, config);
-    defer db.deinit();
+    defer db.destroy();
 
     std.debug.print("==============================================\n", .{});
     std.debug.print("  🔧 ZFinal 代码生成器演示\n", .{});
@@ -66,7 +68,7 @@ pub fn main() !void {
     );
 
     // 创建 models 目录
-    try createModelsDir();
+    try createModelsDir(io);
 
     // 显示数据库中的表
     std.debug.print("\nTables in database:\n", .{});
@@ -78,7 +80,7 @@ pub fn main() !void {
     // 运行生成器
     std.debug.print("Generating Model code...\n", .{});
 
-    var generator = zfinal.Generator.init(allocator, &db, "models");
+    var generator = zfinal.Generator.init(allocator, db, "models");
     try generator.generateAll();
 
     std.debug.print("\n✅ Model 生成完成！\n", .{});
@@ -91,7 +93,7 @@ pub fn main() !void {
     // 展示生成的代码示例
     std.debug.print("Generated code preview (user.zig):\n", .{});
     std.debug.print("-----------------------------------\n", .{});
-    try showGeneratedCodePreview("models/user.zig");
+    try showGeneratedCodePreview(io, "models/user.zig");
     std.debug.print("\n", .{});
 
     std.debug.print("Usage:\n", .{});
@@ -105,33 +107,31 @@ pub fn main() !void {
     std.debug.print("     const user = try UserModel.findById(&db, 1, allocator);\n", .{});
     std.debug.print("\n", .{});
     std.debug.print("     // Create new user\n", .{});
-    std.debug.print("     var newUser = UserModel.Instance{\n", .{});
-    std.debug.print("         .data = User{\n", .{});
+    std.debug.print("     var newUser = UserModel.Instance{{\n", .{});
+    std.debug.print("         .data = User{{\n", .{});
     std.debug.print("             .user_name = \"alice\",\n", .{});
     std.debug.print("             .email = \"alice@example.com\",\n", .{});
     std.debug.print("             .password_hash = \"...\",\n", .{});
     std.debug.print("             .age = 25\n", .{});
-    std.debug.print("         }\n", .{});
-    std.debug.print("     };\n", .{});
+    std.debug.print("         }}\n", .{});
+    std.debug.print("     }};\n", .{});
     std.debug.print("     try newUser.save(&db);\n", .{});
     std.debug.print("\n", .{});
 }
 
-fn createModelsDir() !void {
+fn createModelsDir(io: std.Io) !void {
     // 创建 models 目录
-    std.fs.cwd().makeDir("models") catch |err| {
-        if (err != error.PathAlreadyExists) return err;
+    _ = std.Io.Dir.cwd().createDirPath(io, "models") catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
     };
 }
 
-fn showGeneratedCodePreview(path: []const u8) !void {
-    const file = std.fs.cwd().openFile(path, .{}) catch {
+fn showGeneratedCodePreview(io: std.Io, path: []const u8) !void {
+    const content = std.Io.Dir.cwd().readFileAlloc(io, path, std.heap.page_allocator, .limited(2000)) catch {
         std.debug.print("(File not generated yet)\n", .{});
         return;
     };
-    defer file.close();
-
-    var buf: [2000]u8 = undefined;
-    const n = try file.read(&buf);
-    std.debug.print("{s}", .{buf[0..n]});
+    defer std.heap.page_allocator.free(content);
+    std.debug.print("{s}", .{content});
 }

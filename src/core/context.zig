@@ -1459,6 +1459,32 @@ fn bindJsonInto(arena: *std.heap.ArenaAllocator, body: []const u8, ptr: anytype)
     ptr.* = parsed.value;
 }
 
+/// Construct a bindJson/bindQuery DTO with compile-time validation (ADR-017).
+///
+/// DTO fields need default values — missing request params/JSON keys keep the
+/// default. A struct literal without defaults (`MyDto{}`) fails with an opaque
+/// compiler error at the literal; `dto(MyDto)` names the offending field(s)
+/// instead. Usage:
+///
+/// ```zig
+/// var input = zfinal.dto(CreateTodoDto);
+/// try ctx.bindJson(&input);
+/// ```
+pub fn dto(comptime T: type) T {
+    switch (@typeInfo(T)) {
+        .@"struct" => |info| {
+            inline for (info.field_names, info.field_types, info.field_attrs) |fname, ftype, fattrs| {
+                if (fattrs.defaultValue(ftype) == null) {
+                    @compileError("DTO field '" ++ @typeName(T) ++ "." ++ fname ++
+                        "' has no default value. bindJson/bindQuery DTOs need every field defaulted (e.g. `title: []const u8 = \"\"`) so missing request input keeps the default — or wrap zfinal.dto(" ++ @typeName(T) ++ ") to get this error naming the field.");
+                }
+            }
+        },
+        else => @compileError("zfinal.dto() expects a struct type, got " ++ @typeName(T)),
+    }
+    return T{};
+}
+
 test "bindJsonInto: parses struct, ignores unknown fields, keeps defaults" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -1468,21 +1494,33 @@ test "bindJsonInto: parses struct, ignores unknown fields, keeps defaults" {
         views: i64 = 0,
         tags: ?[]const u8 = null,
     };
-    var dto: Input = .{};
-    try bindJsonInto(&arena, "{\"title\":\"hi\",\"views\":3,\"unknown\":true}", &dto);
-    try std.testing.expectEqualStrings("hi", dto.title);
-    try std.testing.expectEqual(@as(i64, 3), dto.views);
-    try std.testing.expect(dto.tags == null); // missing optional keeps default
+    var input: Input = .{};
+    try bindJsonInto(&arena, "{\"title\":\"hi\",\"views\":3,\"unknown\":true}", &input);
+    try std.testing.expectEqualStrings("hi", input.title);
+    try std.testing.expectEqual(@as(i64, 3), input.views);
+    try std.testing.expect(input.tags == null); // missing optional keeps default
     // arena-owned string is readable after the helper returns
-    try std.testing.expectEqualStrings("hi", dto.title);
+    try std.testing.expectEqualStrings("hi", input.title);
+}
+
+test "dto: comptime-validated DTO constructor accepts all-defaulted structs" {
+    const Ok = struct {
+        title: []const u8 = "",
+        views: i64 = 0,
+        tags: ?[]const u8 = null,
+    };
+    const v = comptime dto(Ok);
+    try std.testing.expectEqualStrings("", v.title);
+    try std.testing.expectEqual(@as(i64, 0), v.views);
+    try std.testing.expect(v.tags == null);
 }
 
 test "bindJsonInto: malformed JSON → BadRequest" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const Input = struct { title: []const u8 = "" };
-    var dto: Input = .{};
-    try std.testing.expectError(error.BadRequest, bindJsonInto(&arena, "{not json", &dto));
+    var input: Input = .{};
+    try std.testing.expectError(error.BadRequest, bindJsonInto(&arena, "{not json", &input));
 }
 
 test "context: ok() and created() response shortcuts" {
@@ -1541,14 +1579,14 @@ test "parseJson: pure parse, no render on invalid input" {
 
     const Dto = struct { name: []const u8, age: i32 };
     ctx.mock_body = "{\"name\":\"alice\",\"age\":30}";
-    var dto: Dto = undefined;
-    try std.testing.expect(try ctx.parseJson(&dto));
-    try std.testing.expectEqualStrings("alice", dto.name);
-    try std.testing.expectEqual(@as(i32, 30), dto.age);
+    var input: Dto = .{ .name = "", .age = 0 };
+    try std.testing.expect(try ctx.parseJson(&input));
+    try std.testing.expectEqualStrings("alice", input.name);
+    try std.testing.expectEqual(@as(i32, 30), input.age);
     try std.testing.expect(!ctx.response_started);
 
     // Malformed body → false, and NO error envelope is rendered.
     ctx.mock_body = "{not json";
-    try std.testing.expect(!try ctx.parseJson(&dto));
+    try std.testing.expect(!try ctx.parseJson(&input));
     try std.testing.expect(!ctx.response_started);
 }

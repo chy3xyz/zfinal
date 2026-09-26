@@ -421,11 +421,53 @@ fn checkPracticeRules(
     defer dir.close(zf_shared.io);
 
     var findings: u32 = 0;
-    try walkPractice(&dir, root, allocator, ignore, strict, warn, fail, &findings);
+    var env_map = std.StringHashMap(ModuleEnvelope).init(allocator);
+    defer {
+        var kit = env_map.keyIterator();
+        while (kit.next()) |k| allocator.free(k.*);
+        env_map.deinit();
+    }
+    try walkPractice(&dir, root, allocator, ignore, strict, warn, fail, &findings, &env_map);
+    // Module-level envelope aggregation: half-set zapi / mixed success shapes
+    // across files in one module (the per-file check cannot see cross-file mixes).
+    var mit = env_map.iterator();
+    while (mit.next()) |e| {
+        const m = e.value_ptr.*;
+        const is_module = std.mem.indexOf(u8, e.key_ptr.*, "src/modules/") != null;
+        if (!is_module) continue;
+        if (m.zapi_error and m.ok_success and !m.zapi_success) {
+            emitPractice(strict, warn, fail, &findings, "module {s} uses zapi-style errors ({{code,msg}}) with {{ok}}-style successes — half-set zapi envelope; unify one style (doc/api_envelope.md)", .{e.key_ptr.*});
+        }
+        if (m.err_envelope and m.zapi_error) {
+            emitPractice(strict, warn, fail, &findings, "module {s} mixes HttpError .err and zapi code/msg across files — pick one (doc/api_envelope.md)", .{e.key_ptr.*});
+        }
+        if (m.ok_success and m.zapi_success) {
+            emitPractice(strict, warn, fail, &findings, "module {s} mixes {{ok}} and {{code,data}} success shapes across files — pick one (doc/api_envelope.md)", .{e.key_ptr.*});
+        }
+    }
     if (findings == 0) {
         std.debug.print("✅ PASS: no practice findings under {s}\n", .{root});
         pass.* += 1;
     }
+}
+
+/// Per-module envelope style flags (aggregated over handler files).
+const ModuleEnvelope = struct {
+    ok_success: bool = false, // renderJson(.{ .ok = … }) style success
+    zapi_success: bool = false, // {code, msg, data} style success
+    err_envelope: bool = false, // renderJson(.{ .err … }) / HttpError style errors
+    zapi_error: bool = false, // {code, msg} style errors
+};
+
+/// Module bucket key for envelope aggregation: `…/src/modules/<name>/…` →
+/// `src/modules/<name>`; non-module paths return null.
+fn moduleKeyOf(rel: []const u8) ?[]const u8 {
+    const marker = "src/modules/";
+    const start = std.mem.indexOf(u8, rel, marker) orelse return null;
+    const rest = rel[start + marker.len ..];
+    const slash = std.mem.indexOfScalar(u8, rest, '/') orelse return if (rest.len > 0) rel[0 .. start + marker.len + rest.len] else null;
+    if (slash == 0) return null;
+    return rel[0 .. start + marker.len + slash];
 }
 
 fn emitPractice(strict: bool, warn: *u32, fail: *u32, findings: *u32, comptime fmt: []const u8, args: anytype) void {
@@ -448,6 +490,7 @@ fn walkPractice(
     warn: *u32,
     fail: *u32,
     findings: *u32,
+    env_map: *std.StringHashMap(ModuleEnvelope),
 ) !void {
     var it = dir.iterate();
     while (it.next(zf_shared.io) catch null) |entry| {
@@ -461,7 +504,7 @@ fn walkPractice(
             defer allocator.free(sub_rel);
             var sub = dir.openDir(zf_shared.io, entry.name, .{ .iterate = true }) catch continue;
             defer sub.close(zf_shared.io);
-            try walkPractice(&sub, sub_rel, allocator, ignore, strict, warn, fail, findings);
+            try walkPractice(&sub, sub_rel, allocator, ignore, strict, warn, fail, findings, env_map);
             continue;
         }
         if (entry.kind != .file) continue;
@@ -510,6 +553,23 @@ fn walkPractice(
         const has_zapi = std.mem.indexOf(u8, content, ".code =") != null and std.mem.indexOf(u8, content, ".msg =") != null;
         if (has_err_envelope and has_zapi) {
             emitPractice(strict, warn, fail, findings, "{s} mixes HttpError .err and zapi code/msg — pick one (doc/api_envelope.md)", .{full});
+        }
+
+        // Aggregate module-level envelope styles for cross-file mixing checks.
+        if (moduleKeyOf(full)) |mkey| {
+            const gop = env_map.getOrPut(mkey) catch continue;
+            if (!gop.found_existing) {
+                gop.key_ptr.* = allocator.dupe(u8, mkey) catch continue;
+                gop.value_ptr.* = .{};
+            }
+            if (std.mem.indexOf(u8, full, "/handler") != null or std.mem.endsWith(u8, full, "handler.zig")) {
+                if (std.mem.indexOf(u8, content, "renderJson(.{ .ok") != null or
+                    std.mem.indexOf(u8, content, "ctx.ok(") != null) gop.value_ptr.ok_success = true;
+                if (std.mem.indexOf(u8, content, "\"code\"") != null and
+                    std.mem.indexOf(u8, content, "\"data\"") != null) gop.value_ptr.zapi_success = true;
+                if (has_err_envelope or std.mem.indexOf(u8, content, "failHttp") != null) gop.value_ptr.err_envelope = true;
+                if (has_zapi) gop.value_ptr.zapi_error = true;
+            }
         }
 
         // Password / secret zeroization heuristic (warn unless --strict).

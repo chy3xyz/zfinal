@@ -194,6 +194,7 @@ pub fn build(b: *std.Build) void {
     addExample(b, zfinal_mod, "edge", "examples/edge/main.zig", "Run edge computing demo", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "auth", "examples/auth/main.zig", "Run auth demo", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "captcha", "examples/captcha/main.zig", "Run captcha demo", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "generator", "examples/generator/main.zig", "Run codegen demo", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "production", "examples/production/main.zig", "Run production example", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "ports-l2", "examples/ports-l2/main.zig", "Run L2 ports DI demo (store/cache/bus)", driver_mysql, driver_pg);
     addExample(b, zfinal_mod, "ports-l3", "examples/ports-l3/main.zig", "Run L3 ports DI demo (store/cache/bus/outbox + tenant)", driver_mysql, driver_pg);

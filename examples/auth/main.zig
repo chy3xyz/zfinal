@@ -2,8 +2,9 @@ const std = @import("std");
 const zfinal = @import("zfinal");
 
 /// Token 防重复提交示例 - 展示如何使用 Token 拦截器防止表单重复提交
-pub fn main() !void {
-    const allocator = std.heap.smp_allocator;
+pub fn main(init: std.process.Init) !void {
+    zfinal.io_instance.init(init);
+    const allocator = init.gpa;
 
     // 创建 Token 管理器
     var token_manager = zfinal.TokenManager.init(allocator);

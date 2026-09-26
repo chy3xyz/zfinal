@@ -290,8 +290,9 @@ fn deleteTodoHandler(ctx: *zfinal.Context) !void {
     try ctx.renderText("Todo not found");
 }
 
-pub fn main() !void {
-    const allocator = std.heap.smp_allocator;
+pub fn main(init: std.process.Init) !void {
+    zfinal.io_instance.init(init);
+    const allocator = init.gpa;
 
     store = TodoStore.init(allocator);
     defer store.deinit();
