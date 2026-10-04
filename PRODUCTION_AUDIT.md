@@ -1,10 +1,10 @@
 # ZFinal Framework — Production Readiness Audit
 
-**Date:** 2026-08-02 (CHANGELOG / package **0.20.15**; L3/messaging + AI tools JSON fix)  
-**Zig:** `0.17.0-dev.1422+e863bf3be` (pinned in CI; `minimum_zig_version` in `build.zig.zon`)  
+**Date:** 2026-08-02 (CHANGELOG / package **0.20.15**; L3/messaging + AI tools JSON fix) · toolchain refresh **2026-10-04**  
+**Zig:** `0.17.0` (released; single-sourced in repo-root `.zig-version`, mirrored by `minimum_zig_version` in `build.zig.zon`)  
 **Status:** **Production-ready under the deployment contract below.**  
 **Headline score (contractual):** **9.8 / 10**  
-**Absolute score (Zig 0.17-dev + keep-alive default-off):** **~9.2 / 10**
+**Absolute score (Zig 0.17 + keep-alive default-off):** **~9.2 / 10**
 
 > **9.8** assumes pinned Zig, reverse-proxy TLS/timeouts, JWT + CSRF + rate-limit
 > + security headers + request ID as in `examples/production`, CI live PG/MySQL,
@@ -33,7 +33,7 @@
 
 ## Deployment contract (required for 9.8 / 10)
 
-1. Pin Zig to the **exact** CI version (`0.17.0-dev.1422+e863bf3be`).
+1. Pin Zig to the **exact** CI version (`0.17.0`, from repo-root `.zig-version`).
 2. Terminate TLS at nginx/caddy; set proxy timeouts. **Client keep-alive at the proxy; keep `force_connection_close=true` on ZFinal** — [`doc/reverse_proxy.md`](doc/reverse_proxy.md), [`examples/production/deploy/`](examples/production/deploy/).
 3. Prefer `createRateLimitInterceptor` with `trusted_proxies` only behind known peers.
 4. Prefer `createCorsAllowlistInterceptor` — never ship `CORSInterceptor` (`*`) on credentialed APIs.

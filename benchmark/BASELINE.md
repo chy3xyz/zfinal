@@ -57,6 +57,8 @@ Re-run and paste your machine's numbers when changing sockread / HttpClient.
 
 ## 2026-09-27 — v0.28.0 full evaluation (Apple M1 Pro 10-core, macOS)
 
+> **Toolchain note (2026-10-04):** re-validated green on released **Zig 0.17.0** (`.zig-version`). The figures below were measured on `0.17.0-dev.2151+2ec5523d5`.
+
 | Field | Value |
 |-------|--------|
 | Machine | Apple M1 Pro, 10 cores |

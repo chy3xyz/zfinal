@@ -59,7 +59,7 @@ pub const build_zig_zon =
     \\    .minimum_zig_version = "0.17.0",
     \\    .dependencies = .{{
     \\        .zfinal = .{{
-    \\            .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.28.0.tar.gz",
+    \\            .url = "https://github.com/chy3xyz/zfinal/archive/refs/tags/v0.28.1.tar.gz",
     \\            .hash = "...", // run `zig fetch <url>` to fill the actual hash
     \\        }},
     \\    }},
@@ -711,7 +711,7 @@ pub const dockerfile =
     \\# syntax=docker/dockerfile:1.7
     \\
     \\# Stage 1: build
-    \\FROM ghcr.io/mlugg/setup-zig:0.17.0-dev.813+2153f8143 AS build
+    \\FROM ghcr.io/mlugg/setup-zig:0.17.0 AS build
     \\WORKDIR /src
     \\COPY . .
     \\RUN zig build install -Doptimize=ReleaseSafe

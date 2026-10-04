@@ -4,6 +4,16 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+## 2026-10-04 — Zig 0.17.0 stable adaptation
+
+**Session**: Adapt framework to released Zig 0.17.0
+**Changes**:
+1. `.zig-version` `0.17.0-dev.2151` → released `0.17.0` (CI/Docker/gate follow the single source).
+2. `benchmark/sockread_io.zig` — std `Stream.read` won't compile on 0.17.0 → `readWithControl`; `zig build` 57/57.
+3. zf Dockerfile template + zfsaas min Zig → `0.17.0`; CHANGELOG/docs refreshed.
+**Errors**: std `Stream.read` destructures non-tuple `ReadResult` (latent upstream bug).
+**Next**: keep-alive (#25017) soak before flipping default; v0.28.1 tagged.
+
 ## 2026-08-02 — MCP id buffer + RedisCooldownStore
 
 **Session**: Continue after bugfix pass

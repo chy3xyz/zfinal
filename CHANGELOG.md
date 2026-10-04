@@ -2,6 +2,15 @@
 
 <!-- New changes land here; on release, move them under a new `## [x.y.z]` section. -->
 
+## [0.28.1] - 2026-10-04
+
+### Changed
+- **Zig 0.17.0 stable adaptation**: toolchain pin moves from `0.17.0-dev.2151+2ec5523d5` to the released **`0.17.0`** (`.zig-version`). Verified on the release: `zig build` **57/57 steps**, `zig build test` **443 passed / 16 skipped / 0 failed**, plus `gate-quick` (`test-zf`, `test-zfsaas`, `test-zent-shop`, `smoke-zent-shop`) and the full gate (ReleaseSafe + `zf check --prod`).
+- **Generated Dockerfile template + `examples/zfsaas`** now pin **`0.17.0`** instead of a dev snapshot (`tools/zf/templates.zig`, `examples/zfsaas/backend/build.zig.zon`, `examples/zfsaas/backend/Dockerfile`); `docs` that state the current toolchain were refreshed to the release.
+
+### Fixed
+- **`benchmark/sockread_io.zig` no longer calls `std.Io.net.Stream.read`**, which does not compile on Zig 0.17.0: std's own body destructures `Stream.ReadResult`, a struct rather than a tuple (latent std bug; the call is only analyzed when referenced). The `warm_read_io` micro-bench now drives the same low-level `net_read` operation via `Stream.readWithControl` + `data_len`. This was the **only** failing build step: `zig build` is back to **57/57** (was 54/57, `install zbench-sockread`).
+
 ## [0.28.0] - 2026-09-27
 
 ### Added

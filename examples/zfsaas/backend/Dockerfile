@@ -1,6 +1,6 @@
 # zfsaas runtime image (multi-stage build happens on the host, see doc/saas_kit.md).
 #
-#   # build the binary on the host (Zig 0.17.0-dev.1422, pinned like CI):
+#   # build the binary on the host (Zig 0.17.0, pinned like CI):
 #   zig build install-zfsaas        # or: zig build  (installs all examples)
 #   docker build -t zfsaas -f Dockerfile .
 #   docker run --rm -p 8080:8080 -v zfsaas-data:/data -e JWT_SECRET=... zfsaas

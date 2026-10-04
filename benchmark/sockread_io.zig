@@ -7,7 +7,8 @@
 //!   1. **threaded_lifecycle** — `Io.Threaded.init` + `io()` + `deinit` per
 //!      iteration (paid once per `HttpClient.init`, not per request).
 //!   2. **warm_read_sockread** — peer already wrote bytes; `sockread.readSome`.
-//!   3. **warm_read_io** — same socketpair, `stream.read(io, …)` via Threaded.
+//!   3. **warm_read_io** — same socketpair, `stream.readWithControl(io, …)`
+//!      via Threaded (`Stream.read` is broken in std 0.17.0; see `streamRead`).
 //!   4. **local_http_reused_io** — loopback GET via one `HttpClient` (long-lived
 //!      dedicated Io + reused `std.http.Client` / connection pool).
 //!
@@ -117,6 +118,18 @@ fn benchWarmReadSockread() !void {
     report("warm_read_sockread", ITER_WARM_READ, nowNs() - t0);
 }
 
+/// Single-shot read through the std `Io.net.Stream` path.
+///
+/// Zig 0.17.0's `Stream.read` does not compile: its std body destructures
+/// `ReadResult`, which is a struct rather than a tuple. `readWithControl`
+/// drives the same low-level `net_read` operation, so this micro-bench still
+/// measures std's socket read path rather than zfinal's `sockread`.
+fn streamRead(stream: std.Io.net.Stream, io: std.Io, buf: []u8) !usize {
+    var data: [1][]u8 = .{buf};
+    const res = try stream.readWithControl(io, &data, &.{});
+    return res.data_len;
+}
+
 fn benchWarmReadIo(allocator: std.mem.Allocator) !void {
     var threaded = std.Io.Threaded.init(allocator, .{});
     defer threaded.deinit();
@@ -136,20 +149,14 @@ fn benchWarmReadIo(allocator: std.mem.Allocator) !void {
     var i: usize = 0;
     while (i < 100) : (i += 1) {
         try writeAllFd(writer_fd, payload);
-        _ = try reader.read(io, data: {
-            var d: [1][]u8 = .{&buf};
-            break :data &d;
-        });
+        _ = try streamRead(reader, io, &buf);
     }
 
     i = 0;
     const t0 = nowNs();
     while (i < ITER_WARM_READ) : (i += 1) {
         try writeAllFd(writer_fd, payload);
-        const n = try reader.read(io, data: {
-            var d: [1][]u8 = .{&buf};
-            break :data &d;
-        });
+        const n = try streamRead(reader, io, &buf);
         if (n != payload.len) return error.UnexpectedReadLen;
     }
     report("warm_read_io_net_read", ITER_WARM_READ, nowNs() - t0);

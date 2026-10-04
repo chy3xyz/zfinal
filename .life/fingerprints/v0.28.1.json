@@ -1,0 +1,22 @@
+{
+  "version": "v0.28.1",
+  "fingerprint": "v0.28.1",
+  "timestamp": "2026-10-04T00:00:00Z",
+  "metrics": {
+    "source_files": 85,
+    "tests": 459,
+    "tests_pass": 443,
+    "tests_skip": 16,
+    "tests_fail": 0,
+    "examples": 25,
+    "plugins_stable": 23,
+    "production_readiness_pct": 95
+  },
+  "changes": [
+    "Zig toolchain pin 0.17.0-dev.2151 -> released 0.17.0 (.zig-version)",
+    "benchmark/sockread_io.zig: std Stream.read is uncompilable on 0.17.0 -> readWithControl",
+    "zf Dockerfile template + zfsaas minimum Zig -> 0.17.0",
+    "CHANGELOG / PRODUCTION_AUDIT / BASELINE / best_practices refreshed for the release"
+  ],
+  "decisions": []
+}
