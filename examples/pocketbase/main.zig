@@ -24,6 +24,7 @@ pub fn main(init: std.process.Init) !void {
         .allocator = allocator,
     };
     defer State.global_state = null;
+    @import("src/auth/admin_session.zig").init(allocator);
 
     // Initialize System Tables
     try initSystemTables();

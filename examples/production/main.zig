@@ -8,6 +8,7 @@
 //! See PRODUCTION_AUDIT.md deployment contract (contractual 9.8).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const zfinal = @import("zfinal");
 const api_handler = @import("src/modules/api/handler.zig");
 const api_routes = @import("src/modules/api/routes.zig");
@@ -44,6 +45,14 @@ pub fn main(init: std.process.Init) !void {
     };
     if (std.c.getenv("JWT_SECRET")) |s| {
         app_state.jwt_secret = std.mem.span(s);
+    } else if (builtin.mode != .debug) {
+        // Never ship the example's default secret in a release build.
+        zfinal.getLogger().errFmt("JWT_SECRET must be set in release builds (>= 32 bytes)", .{});
+        return error.MissingJwtSecret;
+    }
+    if (app_state.jwt_secret.len < 32) {
+        zfinal.getLogger().errFmt("JWT_SECRET too short ({d} bytes); need >= 32", .{app_state.jwt_secret.len});
+        return error.WeakJwtSecret;
     }
     if (std.c.getenv("JWT_SECRET_PREVIOUS")) |s| {
         app_state.jwt_secret_prev = std.mem.span(s);

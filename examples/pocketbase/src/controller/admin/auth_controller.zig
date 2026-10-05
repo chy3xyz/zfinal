@@ -1,6 +1,7 @@
 const std = @import("std");
 const zfinal = @import("zfinal");
 const State = @import("../../state.zig");
+const AdminSession = @import("../../auth/admin_session.zig");
 
 fn getDb() *zfinal.DB {
     return State.global_state.?.db;
@@ -13,15 +14,12 @@ fn doRedirect(ctx: *zfinal.Context, location: []const u8) !void {
 }
 
 fn checkAuth(ctx: *zfinal.Context) bool {
-    const session = ctx.getCookie("admin_session") catch null;
-    return session != null and std.mem.eql(u8, session.?, "true");
+    return AdminSession.check(ctx);
 }
 
 pub fn index(ctx: *zfinal.Context) !void {
-    if (try ctx.getCookie("admin_session")) |session| {
-        if (std.mem.eql(u8, session, "true")) {
-            return doRedirect(ctx, "/admin/dashboard");
-        }
+    if (AdminSession.check(ctx)) {
+        return doRedirect(ctx, "/admin/dashboard");
     }
     return doRedirect(ctx, "/admin/login");
 }
@@ -64,27 +62,28 @@ pub fn login(ctx: *zfinal.Context) !void {
     const password_hash = std.fmt.bufPrint(&hash_buf, "{s}", .{std.fmt.bytesToHex(&hash_str, .lower)}) catch "";
 
     const db = getDb();
-    const sql = try std.fmt.allocPrintSentinel(State.global_state.?.allocator, "SELECT id FROM _admins WHERE email = '{s}' AND password_hash = '{s}' LIMIT 1", .{ email, password_hash }, 0);
-    defer State.global_state.?.allocator.free(sql);
-
-    var rs = try db.query(sql);
+    var rs = try db.queryParams("SELECT id FROM _admins WHERE email = ? AND password_hash = ? LIMIT 1", &.{
+        .{ .text = email },
+        .{ .text = password_hash },
+    });
     defer rs.deinit();
 
     if (rs.next()) {
-        try ctx.setCookie("admin_session", "true", 86400);
+        const token = try AdminSession.create();
+        try ctx.setCookie("admin_session", token, 86400);
         return doRedirect(ctx, "/admin/dashboard");
     }
     return doRedirect(ctx, "/admin/login?error=1");
 }
 
 pub fn logout(ctx: *zfinal.Context) !void {
+    if (ctx.getCookie("admin_session") catch null) |token| AdminSession.destroy(token);
     try ctx.setCookie("admin_session", "", 0);
     return doRedirect(ctx, "/admin/login");
 }
 
 pub fn dashboard(ctx: *zfinal.Context) !void {
-    const session = try ctx.getCookie("admin_session");
-    if (session == null or !std.mem.eql(u8, session.?, "true")) {
+    if (!AdminSession.check(ctx)) {
         return doRedirect(ctx, "/admin/login");
     }
 

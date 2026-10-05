@@ -2,6 +2,27 @@
 
 <!-- New changes land here; on release, move them under a new `## [x.y.z]` section. -->
 
+## [0.28.2] - 2026-10-05
+
+### Security
+- **PocketBase reference example: full parameterization + real admin sessions.** Every user-controlled value now goes through `queryParams`/`execParams` (record `id`, admin `email`/`password_hash`, API tokens, `_collections` name) and every dynamic table/column name passes a strict identifier whitelist ([util.zig](examples/pocketbase/src/util.zig)). The forgeable `admin_session="true"` cookie is replaced by opaque server-side sessions with 24h TTL ([admin_session.zig](examples/pocketbase/src/auth/admin_session.zig)); `record_controller.create/delete` were missing the auth check entirely. End-to-end verified: `GET …/records/x'OR'1'='1` → 404 (legit id still 200), forged cookie → 302 login, SQLi login → 302 `?error=1`.
+- **`RandomKit` unified on `std.Io.random`** ([random_kit.zig](src/kit/random_kit.zig)): removes the non-cryptographic Windows timestamp+LCG fallback and the `@panic`; CSRF/session/PKCE tokens are now platform-portable CSPRNG output. `HashKit.generateRandomString` uses `RandomKit.randomBytes` + rejection sampling.
+- **Production example fails closed** on a missing/weak `JWT_SECRET` in non-Debug builds ([examples/production/main.zig](examples/production/main.zig)).
+
+### Fixed
+- **WebSocket handshake remote panic** ([handshake.zig](src/websocket/handshake.zig)): `acceptKey` hashes incrementally instead of formatting into a 256-byte buffer with `catch unreachable` — an oversized `Sec-WebSocket-Key` was a ReleaseSafe panic / ReleaseFast UB.
+- **AI business tool type confusion** ([business.zig](src/ai/business.zig)): a non-array `args` now returns `error.InvalidArguments` instead of panicking on a wrong `std.json.Value` variant.
+- **MySQL streaming iterator OOB read** ([mysql.zig](src/db/drivers/mysql.zig)): `MYSQL_DATA_TRUNCATED` is rejected (`error.DataTruncated`) instead of slicing past the 4096-byte column buffer.
+- **Resource leaks on error paths**: SQLite `queryIter` prepared statement + column names, PostgreSQL `PgIter` in-flight `PGresult`, MySQL `MYSQL*` on config failure, `ConnectionPool.init` partial failure, and `src/deps.zig` orphaning a pooled connection.
+- **`Row.intAt/floatAt/boolAt` bounds-checked** ([result.zig](src/db/result.zig)).
+- **Latent `std.crypto.random` break** ([hash_kit.zig](src/kit/hash_kit.zig)): Zig 0.17 removed `std.crypto.random`; the function was never analyzed, so it only failed once reached.
+- PocketBase example: `record_controller.redirect` never sent a response, and `record_api.sendError` reset error statuses to 200.
+- **WebSocket connection lifetime** ([websocket.zig](src/websocket/websocket.zig), [manager.zig](src/websocket/manager.zig)): connections are now reference-counted (creator + manager list + each snapshot) and all frame writes go through a per-connection mutex. A broadcast/ping/reap snapshot can no longer touch a connection freed by its handler thread (UAF), and the manager no longer frees under a stale pointer. Regression test added.
+- **MQTT-over-TLS use-after-scope** ([mqtt.zig](src/plugin/mqtt.zig)): the transport reader/writer are now installed in their final location before `tls.Client.init` (the client stores those pointers verbatim); the old code handed it addresses of stack locals. Also removes a double-free when TLS init failed.
+- **Redis client serialization** ([redis.zig](src/plugin/redis.zig)): a mutex now covers the write-then-read RESP round trip and `disconnect`, so a shared client cannot interleave requests and swap replies.
+- **KafkaProducer locking** ([robustmq.zig](src/plugin/robustmq.zig)): added the consumer's `state_mutex`/`transport_mutex` discipline around the socket, correlation id and `topic_stats`.
+- **Server shutdown** ([server.zig](src/core/server.zig)): the keep-alive loop exits promptly on shutdown, and the drain deadline now cancels parked fibers; WebSocket frame reads inherit the HTTP read deadline so a stalled peer cannot pin a connection (slowloris).
+
 ## [0.28.1] - 2026-10-04
 
 ### Changed

@@ -1,6 +1,8 @@
 const std = @import("std");
 const zfinal = @import("zfinal");
 const State = @import("../../state.zig");
+const util = @import("../../util.zig");
+const AdminSession = @import("../../auth/admin_session.zig");
 
 fn getDb() *zfinal.DB {
     return State.global_state.?.db;
@@ -9,11 +11,11 @@ fn getDb() *zfinal.DB {
 fn redirect(ctx: *zfinal.Context, url: []const u8) !void {
     ctx.res_status = .found;
     try ctx.setHeader("Location", url);
+    try ctx.renderText("");
 }
 
 pub fn list(ctx: *zfinal.Context) !void {
-    const session = try ctx.getCookie("admin_session");
-    if (session == null or !std.mem.eql(u8, session.?, "true")) {
+    if (!AdminSession.check(ctx)) {
         try redirect(ctx, "/admin/login");
         return;
     }
@@ -22,6 +24,10 @@ pub fn list(ctx: *zfinal.Context) !void {
         try redirect(ctx, "/admin/collections");
         return;
     };
+    if (!util.isValidIdentifier(table)) {
+        try redirect(ctx, "/admin/collections");
+        return;
+    }
     const db = getDb();
 
     const sql = try std.fmt.allocPrintSentinel(ctx.allocator, "SELECT * FROM {s} ORDER BY created_at DESC LIMIT 50", .{table}, 0);
@@ -165,10 +171,18 @@ pub fn list(ctx: *zfinal.Context) !void {
 }
 
 pub fn create(ctx: *zfinal.Context) !void {
+    if (!AdminSession.check(ctx)) {
+        try redirect(ctx, "/admin/login");
+        return;
+    }
     const table = ctx.getPathParam("table") orelse {
         try redirect(ctx, "/admin/collections");
         return;
     };
+    if (!util.isValidIdentifier(table)) {
+        try redirect(ctx, "/admin/collections");
+        return;
+    }
     const db = getDb();
 
     var random_bytes: [16]u8 = undefined;
@@ -187,6 +201,10 @@ pub fn create(ctx: *zfinal.Context) !void {
 }
 
 pub fn delete(ctx: *zfinal.Context) !void {
+    if (!AdminSession.check(ctx)) {
+        try redirect(ctx, "/admin/login");
+        return;
+    }
     const table = ctx.getPathParam("table") orelse {
         try redirect(ctx, "/admin/collections");
         return;
@@ -195,11 +213,15 @@ pub fn delete(ctx: *zfinal.Context) !void {
         try redirect(ctx, "/admin/collections");
         return;
     };
+    if (!util.isValidIdentifier(table)) {
+        try redirect(ctx, "/admin/collections");
+        return;
+    }
     const db = getDb();
 
-    const sql = try std.fmt.allocPrintSentinel(ctx.allocator, "DELETE FROM {s} WHERE id = '{s}'", .{ table, id }, 0);
+    const sql = try std.fmt.allocPrintSentinel(ctx.allocator, "DELETE FROM {s} WHERE id = ?", .{table}, 0);
     defer ctx.allocator.free(sql);
-    try db.exec(sql);
+    try db.execParams(sql, &.{.{ .text = id }});
 
     const redirect_url = try std.fmt.allocPrintSentinel(ctx.allocator, "/admin/collections/{s}/records", .{table}, 0);
     defer ctx.allocator.free(redirect_url);

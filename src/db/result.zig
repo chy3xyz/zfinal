@@ -129,6 +129,7 @@ pub const Row = struct {
     /// In our internal benchmark this beats the legacy `getText + parseInt`
     /// path because it skips the formatter + parser entirely.
     pub fn intAt(self: *const Row, index: usize) i64 {
+        if (index >= self.cells.len) @panic("Row.intAt index out of bounds");
         return switch (self.cells[index]) {
             .int => |v| v,
             .bool => |b| if (b) 1 else 0,
@@ -141,6 +142,7 @@ pub const Row = struct {
     /// Hot-loop helper: read a cell as f64 directly. Same caveats as
     /// `intAt` — panics on null or non-numeric cells.
     pub fn floatAt(self: *const Row, index: usize) f64 {
+        if (index >= self.cells.len) @panic("Row.floatAt index out of bounds");
         return switch (self.cells[index]) {
             .float => |v| v,
             .int => |v| @floatFromInt(v),
@@ -153,6 +155,7 @@ pub const Row = struct {
     /// Hot-loop helper: read a cell as bool directly. Same caveats as
     /// `intAt` — panics on null cells.
     pub fn boolAt(self: *const Row, index: usize) bool {
+        if (index >= self.cells.len) @panic("Row.boolAt index out of bounds");
         return switch (self.cells[index]) {
             .bool => |b| b,
             .int => |v| v != 0,

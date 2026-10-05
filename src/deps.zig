@@ -10,7 +10,11 @@ pub fn initDeps(allocator: std.mem.Allocator, db_config: zfinal.DBConfig) !void 
     rateLimiter = zfinal.RateLimitHandler.init(allocator);
     rateLimiter.max_requests = 100;
     pool = try zfinal.ConnectionPool.init(allocator, db_config, 10);
-    _ = pool.acquire() catch {};
+    // Warm-up acquire must be returned, otherwise one of the 10 slots is lost
+    // forever (the connection stays marked checked-out).
+    if (pool.acquire()) |conn| {
+        pool.release(conn) catch {};
+    } else |_| {}
 }
 
 pub const corsInterceptor = zfinal.CORSInterceptor;

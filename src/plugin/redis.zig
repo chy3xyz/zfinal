@@ -17,6 +17,9 @@ pub const RedisClient = struct {
     connect_timeout_ms: u64 = 5_000,
     /// Soft deadline for subsequent command reads (ms). 0 = unlimited.
     command_timeout_ms: u64 = 5_000,
+    /// Serializes the write-then-read RESP round trip. Without it, two threads
+    /// sharing one client interleave request bytes and swap replies.
+    mutex: std.Io.Mutex = std.Io.Mutex.init,
 
     const Self = @This();
 
@@ -46,8 +49,11 @@ pub const RedisClient = struct {
 
     /// Disconnect from Redis server.
     pub fn disconnect(self: *Self) void {
+        const io = io_instance.io;
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
         if (self.stream) |s| {
-            s.close(io_instance.io);
+            s.close(io);
             self.stream = null;
         }
     }
@@ -70,6 +76,10 @@ pub const RedisClient = struct {
     }
 
     fn commandWithDeadline(self: *Self, args: []const []const u8, deadline: ?i64) !?[]const u8 {
+        const io = io_instance.io;
+        // Uncancelable: abandoning mid-response would desync the RESP stream.
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
         const s = try self.requireStream();
         var req = std.ArrayList(u8).empty;
         defer req.deinit(self.allocator);

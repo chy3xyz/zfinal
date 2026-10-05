@@ -1,11 +1,11 @@
 const std = @import("std");
-const builtin = @import("builtin");
+const io_instance = @import("../io_instance.zig");
 
 /// Secure random utilities.
 ///
 /// General-purpose methods (randomInt, randomFloat, shuffle, etc.) use a ChaCha-based
 /// PRNG seeded from OS entropy at first use. Security-sensitive methods (randomBytes,
-/// uuid) use the OS CSPRNG directly (arc4random_buf / getrandom).
+/// uuid) use the platform CSPRNG via `std.Io.random`.
 ///
 /// Thread-safe: fast-path null check avoids allocation after init. Init race is benign
 /// (at worst, two threads compute a seed — last write wins, no crash possible).
@@ -26,42 +26,13 @@ pub const RandomKit = struct {
     }
 
     /// Fill buffer with OS-provided cryptographically secure random bytes.
+    ///
+    /// Zig 0.17 removed `std.crypto.random`; `std.Io.random` is the portable
+    /// CSPRNG entry point (macOS arc4random / Linux getrandom / Windows
+    /// ProcessPrng) and has no weak fallback — the old timestamp+LCG Windows
+    /// branch is gone.
     fn osRandomBytes(buf: []u8) void {
-        switch (builtin.os.tag) {
-            .macos, .ios, .tvos, .watchos, .visionos, .driverkit, .maccatalyst, .freebsd, .netbsd, .dragonfly, .openbsd => {
-                std.c.arc4random_buf(buf.ptr, buf.len);
-            },
-            .linux => {
-                var offset: usize = 0;
-                while (offset < buf.len) {
-                    const chunk_len = @min(buf.len - offset, 256);
-                    const rc = std.c.getrandom(buf.ptr + offset, chunk_len, 0);
-                    if (rc < 0) @panic("getrandom syscall failed");
-                    offset += @intCast(rc);
-                }
-            },
-            .windows => {
-                // NOTE: Zig 0.17 stdlib does not expose BCryptGenRandom.
-                // Use the ProcessPrng API (bcryptprimitives) via syscall when available.
-                // For now: mix high-res timestamp with a permuted congruential generator
-                // and per-byte perturbation. NOT cryptographically secure — prefer
-                // randomBytes() for security-sensitive use (uses this same path on Windows).
-                var counter: u64 = @bitCast(std.time.nanoTimestamp());
-                for (buf, 0..) |*b, i| {
-                    counter = counter *% 6364136223846793005 +% 1442695040888963407;
-                    b.* = @truncate(counter >> 32);
-                    counter +%= @as(u64, i) +% 1;
-                }
-            },
-            else => {
-                // Fallback: timestamp + counter. Not cryptographically secure.
-                var counter: u64 = 0;
-                for (buf, 0..) |*b, i| {
-                    counter +%= 1;
-                    b.* = @truncate(@as(u64, @bitCast(std.time.nanoTimestamp())) +% counter +% @as(u64, i));
-                }
-            },
-        }
+        io_instance.io.random(buf);
     }
 
     fn rand() std.Random {

@@ -29,10 +29,9 @@ pub const WebSocketManager = struct {
     pub fn deinit(self: *WebSocketManager) void {
         self.routes.deinit(self.allocator);
 
-        for (self.connections.items) |ws| {
-            ws.deinit();
-            self.allocator.destroy(ws);
-        }
+        // Release the list references. Connections still held by a handler or
+        // an in-flight snapshot free themselves on their last unref.
+        for (self.connections.items) |ws| ws.unref();
         self.connections.deinit(self.allocator);
         self.* = undefined;
     }
@@ -55,36 +54,49 @@ pub const WebSocketManager = struct {
         return null;
     }
 
-    /// 添加连接
+    /// 添加连接。Adds a reference held by the manager list.
     pub fn addConnection(self: *WebSocketManager, ws: *WebSocket) !void {
         try self.mutex.lock(io_instance.io);
         defer self.mutex.unlock(io_instance.io);
         try self.connections.append(self.allocator, ws);
+        ws.ref();
     }
 
-    /// 移除连接
+    /// 移除连接。Drops the list reference; in-flight snapshots keep it alive.
     pub fn removeConnection(self: *WebSocketManager, ws: *WebSocket) void {
-        self.mutex.lockUncancelable(io_instance.io);
-        defer self.mutex.unlock(io_instance.io);
-
+        const io = io_instance.io;
+        self.mutex.lockUncancelable(io);
+        var found = false;
         for (self.connections.items, 0..) |conn, i| {
             if (conn == ws) {
                 _ = self.connections.orderedRemove(i);
+                found = true;
                 break;
             }
         }
+        self.mutex.unlock(io);
+        if (found) ws.unref();
     }
 
-    fn snapshot(self: *WebSocketManager) ![]*WebSocket {
+    /// Copy the connection list, holding a reference on each entry. The caller
+    /// MUST pass the slice to `releaseSnapshot`.
+    fn snapshotRefs(self: *WebSocketManager) ![]*WebSocket {
         try self.mutex.lock(io_instance.io);
         defer self.mutex.unlock(io_instance.io);
-        return try self.allocator.dupe(*WebSocket, self.connections.items);
+        const out = try self.allocator.dupe(*WebSocket, self.connections.items);
+        for (out) |ws| ws.ref();
+        return out;
+    }
+
+    fn releaseSnapshot(self: *WebSocketManager, conns: []*WebSocket) void {
+        for (conns) |ws| ws.unref();
+        self.allocator.free(conns);
     }
 
     /// 广播消息到所有连接（解锁后发送，避免持锁 I/O）
     pub fn broadcast(self: *WebSocketManager, message: []const u8) !void {
-        const conns = try self.snapshot();
-        defer self.allocator.free(conns);
+        const conns = try self.snapshotRefs();
+        defer self.releaseSnapshot(conns);
         for (conns) |ws| {
             ws.sendText(message) catch {};
         }
@@ -92,8 +104,8 @@ pub const WebSocketManager = struct {
 
     /// 广播消息到所有连接（除了指定的）
     pub fn broadcastExcept(self: *WebSocketManager, message: []const u8, except: *WebSocket) !void {
-        const conns = try self.snapshot();
-        defer self.allocator.free(conns);
+        const conns = try self.snapshotRefs();
+        defer self.releaseSnapshot(conns);
         for (conns) |ws| {
             if (ws != except) {
                 ws.sendText(message) catch {};
@@ -103,8 +115,8 @@ pub const WebSocketManager = struct {
 
     /// Best-effort application ping to all live connections (idle probing).
     pub fn pingAll(self: *WebSocketManager, payload: []const u8) void {
-        const conns = self.snapshot() catch return;
-        defer self.allocator.free(conns);
+        const conns = self.snapshotRefs() catch return;
+        defer self.releaseSnapshot(conns);
         for (conns) |ws| {
             if (ws.closeIfIdle()) continue;
             ws.sendPing(payload);
@@ -113,8 +125,8 @@ pub const WebSocketManager = struct {
 
     /// Close and drop connections that exceeded their idle timeout.
     pub fn reapIdle(self: *WebSocketManager) usize {
-        const conns = self.snapshot() catch return 0;
-        defer self.allocator.free(conns);
+        const conns = self.snapshotRefs() catch return 0;
+        defer self.releaseSnapshot(conns);
         var n: usize = 0;
         for (conns) |ws| {
             if (ws.closeIfIdle()) {
@@ -143,6 +155,29 @@ pub const WebSocketManager = struct {
         _ = self.tickIdle("zfinal-ws-idle");
     }
 };
+test "WebSocketManager snapshot keeps a removed connection alive (no UAF)" {
+    const a = std.testing.allocator;
+    var fds: [2]std.posix.socket_t = undefined;
+    const rc = std.posix.system.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &fds);
+    if (std.posix.errno(rc) != .SUCCESS) return error.SkipZigTest;
+    defer _ = std.posix.system.close(fds[1]); // fds[0] is owned by the WebSocket
+
+    var mgr = WebSocketManager.init(a);
+    defer mgr.deinit();
+
+    const ws = try a.create(WebSocket);
+    ws.* = WebSocket.init(a, .{ .socket = .{ .handle = fds[0], .address = undefined } });
+    try mgr.addConnection(ws);
+
+    const snap = try mgr.snapshotRefs();
+    mgr.removeConnection(ws); // drops the list reference
+    ws.unref(); // drops the creator reference, as server.zig does on handler exit
+    // Only the snapshot reference remains: the object must stay alive. Freeing
+    // it here would be a use-after-free for the concurrent broadcaster.
+    try std.testing.expect(!ws.closed.load(.monotonic));
+    mgr.releaseSnapshot(snap); // last ref: closes fds[0] and frees ws
+}
+
 test "WebSocketManager route lookup" {
     const a = std.testing.allocator;
     var mgr = WebSocketManager.init(a);

@@ -75,9 +75,16 @@ pub const BufReader = struct {
     buf: []u8,
     start: usize = 0,
     end: usize = 0,
+    /// Per-read poll deadline (ms); 0 = block forever.
+    timeout_ms: i32 = 0,
 
     pub fn init(stream: std.Io.net.Stream, buf: []u8) BufReader {
         return .{ .stream = stream, .buf = buf };
+    }
+
+    /// Like `init`, but bounded by `timeout_ms` (slowloris / stalled peers).
+    pub fn initWithTimeout(stream: std.Io.net.Stream, buf: []u8, timeout_ms: i32) BufReader {
+        return .{ .stream = stream, .buf = buf, .timeout_ms = timeout_ms };
     }
 
     /// Read exactly `out.len` bytes from cache, refilling with one larger read.
@@ -90,7 +97,10 @@ pub const BufReader = struct {
                 self.start += n;
                 filled += n;
             } else {
-                const n = try readSome(self.stream, self.buf);
+                const n = if (self.timeout_ms != 0)
+                    try readSomeTimeout(self.stream, self.buf, self.timeout_ms)
+                else
+                    try readSome(self.stream, self.buf);
                 if (n == 0) return error.ConnectionClosed;
                 self.start = 0;
                 self.end = n;

@@ -5,10 +5,15 @@ const guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 /// Compute `Sec-WebSocket-Accept` from the client `Sec-WebSocket-Key` value.
 pub fn acceptKey(client_key: []const u8, out: *[28]u8) []const u8 {
-    var combined_buf: [256]u8 = undefined;
-    const combined = std.fmt.bufPrint(&combined_buf, "{s}{s}", .{ client_key, guid }) catch unreachable;
+    // Hash incrementally so an arbitrarily long (attacker-controlled)
+    // Sec-WebSocket-Key cannot overflow a fixed stack buffer. Previously a key
+    // longer than ~220 bytes made bufPrint fail and `catch unreachable`
+    // panicked (ReleaseSafe) or was UB (ReleaseFast).
     var hash: [20]u8 = undefined;
-    std.crypto.hash.Sha1.hash(combined, &hash, .{});
+    var sha1 = std.crypto.hash.Sha1.init(.{});
+    sha1.update(client_key);
+    sha1.update(guid);
+    sha1.final(&hash);
     return std.base64.standard.Encoder.encode(out, &hash);
 }
 
@@ -49,6 +54,16 @@ test "websocket acceptKey matches RFC 6455 example" {
     var out: [28]u8 = undefined;
     const accept = acceptKey("dGhlIHNhbXBsZSBub25jZQ==", &out);
     try std.testing.expectEqualStrings("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", accept);
+}
+
+test "websocket acceptKey tolerates an oversized client key" {
+    // Regression: a Sec-WebSocket-Key longer than the old 256-byte combined
+    // buffer used to hit `catch unreachable` (ReleaseSafe panic / ReleaseFast UB).
+    var out: [28]u8 = undefined;
+    var big: [4096]u8 = undefined;
+    @memset(&big, 'A');
+    const accept = acceptKey(&big, &out);
+    try std.testing.expectEqual(@as(usize, 28), accept.len);
 }
 
 test "websocket extractClientKey" {

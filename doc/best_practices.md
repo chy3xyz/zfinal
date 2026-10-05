@@ -1,6 +1,6 @@
 # ZFinal 最佳实践总索
 
-> **版本**：v0.28.1 · Zig 工具链 `0.17.0`（仓库根 `.zig-version`）· 修订 **2026-10-04**  
+> **版本**：v0.28.2 · Zig 工具链 `0.17.0`（仓库根 `.zig-version`）· 修订 **2026-10-05**  
 > **受众**：应用开发者、框架贡献者、AI agent  
 > **验证基线**：`zig build gate`（或 `zig build test` → **all green**（16 skipped））· `zig build test-zf`
 
@@ -38,6 +38,7 @@
 
 | 时段 | 版本 | 写应用时默认采用 |
 |------|------|------------------|
+| 2026-10-05 | **0.28.2** | 安全+并发修复：PocketBase 示例全量参数化 + 服务端管理员会话；WS 握手远程 panic、弱随机（std.Io.random）、AI 类型混淆、MySQL 截断、多处资源泄漏、生产 JWT fail-closed；WS 连接引用计数+写锁、MQTT-TLS 悬垂、Redis/Kafka 加锁、停机取消点、slowloris deadline |
 | 2026-10-04 | **0.28.1** | Zig **0.17.0 stable** 适配：工具链钉版 `0.17.0-dev.2151` → 发布版 `0.17.0`（`.zig-version`）；修复 `benchmark/sockread_io.zig`（std 0.17.0 的 `Stream.read` 无法编译，改用 `readWithControl`）；生成 Dockerfile 模板与 zfsaas 最低 Zig 同步为 `0.17.0` |
 | 2026-09-14 | **0.27.0** | **破坏性**：`DB.affectedRows` → `!i64`（加 `try`）；`SessionStore.getSession` → 调用方持有的 `Snapshot`（不再返回 `*Session`，修 UAF）；`createSession` 返回调用方所有的 id；新增 `Template`/`TemplateManager`/`RenderEngine` 导出与 `\|escape` 过滤器；`HttpClient.timeout_ms` 生效；`Logger`/`KafkaConsumer` 并发修复；路由 param cache O(1)；CI 增 ReleaseSafe job、Actions 钉 SHA、`release.yml` 发布 GitHub Release |
 | 2026-09-13 | **0.26.1** | Zig `0.17.0-dev.1970` 兼容：`io.operate(.net_write)` 取代被移除的 `VTable.netWrite`；RS256 `verify` 改为指针签名；`@hasDecl` 变为可见性感知（`renderPage` 的 item `deinit` 必须 `pub`，否则静默泄漏）；`.zig-version` 前移到 1970 |

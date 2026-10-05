@@ -43,8 +43,10 @@ pub const ConnectionPool = struct {
         // if the freed buffer overlaps or is on the same page.
         var connections = std.ArrayList(*DB).empty;
         try connections.ensureTotalCapacity(allocator, max_connections);
+        errdefer connections.deinit(allocator);
         var available = std.ArrayList(*DB).empty;
         try available.ensureTotalCapacity(allocator, max_connections);
+        errdefer available.deinit(allocator);
 
         pool.* = ConnectionPool{
             .connections = connections,
@@ -56,13 +58,22 @@ pub const ConnectionPool = struct {
             .acquire_timeout_ms = 30000,
         };
 
+        // On any later failure, close and free every connection created so far
+        // (the list errdefers above free the backing buffers).
+        errdefer {
+            for (pool.connections.items) |conn| {
+                conn.deinit();
+                allocator.destroy(conn);
+            }
+        }
+
         // Pre-create all connections on the calling thread (typically main).
+        // Capacity is reserved, so these appends cannot fail and cannot leak.
         for (0..max_connections) |_| {
             const conn = try DB.init(allocator, config);
-            errdefer conn.deinit();
             conn.checkIn(); // pooled conns start as "not checked out"
-            try pool.connections.append(allocator, conn);
-            try pool.available.append(allocator, conn);
+            pool.connections.appendAssumeCapacity(conn);
+            pool.available.appendAssumeCapacity(conn);
             pool.current_connections += 1;
         }
 

@@ -197,16 +197,24 @@ pub const SQLiteDB = struct {
             std.debug.print("SQLite prepare failed: {s}\n", .{c.sqlite3_errmsg(db)});
             return error.PrepareFailed;
         }
+        // The statement transfers to the iterator only on a successful return;
+        // finalize it on any error below (bind or column allocation).
+        errdefer _ = c.sqlite3_finalize(stmt);
         try bindParams(stmt, params);
 
         const n_cols: usize = @intCast(c.sqlite3_column_count(stmt));
         var columns = try self.allocator.alloc([]const u8, n_cols);
         errdefer self.allocator.free(columns);
 
+        var filled: usize = 0;
+        errdefer {
+            for (columns[0..filled]) |name| self.allocator.free(name);
+        }
         for (0..n_cols) |i| {
             const col_name = c.sqlite3_column_name(stmt, @intCast(i));
             const col_name_len = std.mem.len(col_name);
             columns[i] = try self.allocator.dupe(u8, col_name[0..col_name_len]);
+            filled += 1;
         }
 
         return .{

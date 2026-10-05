@@ -382,6 +382,9 @@ pub const PostgresDB = struct {
                         else => {},
                     };
                     self.allocator.free(cells);
+                    // A failed cell read must not leak the in-flight PGresult.
+                    c.PQclear(res);
+                    self.current_res = null;
                 }
                 for (0..self.n_cols) |ci| {
                     cells[ci] = try readPgCell(self.allocator, res, 0, @intCast(ci), self.col_oids[ci]);
@@ -400,6 +403,9 @@ pub const PostgresDB = struct {
                         else => {},
                     };
                     self.allocator.free(cells);
+                    // A failed cell read must not leak the in-flight PGresult.
+                    c.PQclear(res);
+                    self.current_res = null;
                 }
                 for (0..self.n_cols) |ci| {
                     cells[ci] = try readPgCell(self.allocator, res, 0, @intCast(ci), self.col_oids[ci]);
@@ -427,7 +433,11 @@ pub const PostgresDB = struct {
         /// (required by libpq to release connection state), frees column
         /// names + OID cache. Idempotent.
         pub fn deinit(self: *PgIter) void {
-            // Drain any pending PQgetResult calls until null is returned,
+            // Defensive: an error between PQgetResult and the normal clear path
+            // would otherwise leak this result (with all its rows).
+            if (self.current_res) |r| c.PQclear(r);
+            self.current_res = null;
+            // Drain any remaining PQgetResult calls until null is returned,
             // plus one more to consume trailing status (libpq requires this).
             if (!self.done) {
                 // Caller exited early without exhausting — drain.

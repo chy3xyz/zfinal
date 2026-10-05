@@ -1,6 +1,8 @@
 const std = @import("std");
 const zfinal = @import("zfinal");
 const State = @import("../../state.zig");
+const util = @import("../../util.zig");
+const AdminSession = @import("../../auth/admin_session.zig");
 
 fn getDb() *zfinal.DB {
     return State.global_state.?.db;
@@ -13,8 +15,7 @@ fn doRedirect(ctx: *zfinal.Context, location: []const u8) !void {
 }
 
 fn checkAuth(ctx: *zfinal.Context) bool {
-    const session = ctx.getCookie("admin_session") catch null;
-    return session != null and std.mem.eql(u8, session.?, "true");
+    return AdminSession.check(ctx);
 }
 
 pub fn list(ctx: *zfinal.Context) !void {
@@ -141,12 +142,17 @@ pub fn create(ctx: *zfinal.Context) !void {
         try doRedirect(ctx, "/admin/collections");
         return;
     };
-    if (name.len == 0 or name.len > 64) {
+    if (!util.isValidIdentifier(name)) {
         try doRedirect(ctx, "/admin/collections");
         return;
     }
 
     const schema = (try ctx.getPara("schema")) orelse "";
+    // Admin-supplied raw DDL by design; reject stacked statements.
+    if (std.mem.indexOfScalar(u8, schema, ';') != null) {
+        try doRedirect(ctx, "/admin/collections");
+        return;
+    }
     var schema_sql = std.ArrayList(u8).empty;
     defer schema_sql.deinit(ctx.allocator);
 
@@ -159,9 +165,7 @@ pub fn create(ctx: *zfinal.Context) !void {
     defer ctx.allocator.free(sql);
     try db.exec(sql);
 
-    const ins_sql = try std.fmt.allocPrintSentinel(ctx.allocator, "INSERT INTO _collections (name, type) VALUES ('{s}', 'base')", .{name}, 0);
-    defer ctx.allocator.free(ins_sql);
-    try db.exec(ins_sql);
+    try db.execParams("INSERT INTO _collections (name, type) VALUES (?, 'base')", &.{.{ .text = name }});
 
     try doRedirect(ctx, "/admin/collections");
 }
@@ -173,15 +177,17 @@ pub fn delete(ctx: *zfinal.Context) !void {
         try doRedirect(ctx, "/admin/collections");
         return;
     };
+    if (!util.isValidIdentifier(name)) {
+        try doRedirect(ctx, "/admin/collections");
+        return;
+    }
 
     const db = getDb();
     const sql = try std.fmt.allocPrintSentinel(ctx.allocator, "DROP TABLE IF EXISTS {s}", .{name}, 0);
     defer ctx.allocator.free(sql);
     try db.exec(sql);
 
-    const del_sql = try std.fmt.allocPrintSentinel(ctx.allocator, "DELETE FROM _collections WHERE name = '{s}'", .{name}, 0);
-    defer ctx.allocator.free(del_sql);
-    try db.exec(del_sql);
+    try db.execParams("DELETE FROM _collections WHERE name = ?", &.{.{ .text = name }});
 
     try doRedirect(ctx, "/admin/collections");
 }

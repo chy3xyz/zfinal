@@ -135,8 +135,16 @@ pub const Frame = struct {
 pub const WebSocket = struct {
     allocator: std.mem.Allocator,
     stream: std.Io.net.Stream,
-    closed: bool = false,
+    /// Set on close/EOF. Atomic because the reader (handler), a reaper and a
+    /// broadcaster can observe/cross it concurrently.
+    closed: std.atomic.Value(bool) = .init(false),
     close_sent: bool = false,
+    /// Reference count. Starts at 1 for the creator; `addConnection` adds one
+    /// for the manager list and each snapshot adds one. The last `unref`
+    /// closes the socket and frees the object.
+    refs: std.atomic.Value(u32) = .init(1),
+    /// Serializes all frame writes (handler vs fanout/reaper).
+    write_mutex: std.Io.Mutex = std.Io.Mutex.init,
     /// Buffer for reassembling fragmented messages.
     frag_buf: std.ArrayList(u8) = undefined,
     frag_opcode: OpCode = .text,
@@ -147,6 +155,8 @@ pub const WebSocket = struct {
     last_activity_ms: i64 = 0,
     /// Close with 1001 when idle longer than this (0 = disabled).
     idle_timeout_ms: i64 = 0,
+    /// Per-read poll deadline (ms) for frame reads; 0 = block forever.
+    read_timeout_ms: i32 = 0,
     /// Handshake request target (path + query, e.g. `/ws?room_id=42`), owned.
     /// Set by the server during the upgrade; powers `queryParam`.
     handshake_target: ?[]const u8 = null,
@@ -158,6 +168,19 @@ pub const WebSocket = struct {
             .frag_buf = std.ArrayList(u8).empty,
             .last_activity_ms = monoMs(),
         };
+    }
+
+    /// Take an additional reference (manager list / snapshot).
+    pub fn ref(self: *WebSocket) void {
+        _ = self.refs.fetchAdd(1, .monotonic);
+    }
+
+    /// Drop a reference; the last one closes the socket and frees the object.
+    pub fn unref(self: *WebSocket) void {
+        if (self.refs.fetchSub(1, .acq_rel) == 1) {
+            self.deinit();
+            self.allocator.destroy(self);
+        }
     }
 
     fn monoMs() i64 {
@@ -209,7 +232,7 @@ pub const WebSocket = struct {
 
     fn frameReader(self: *WebSocket) *sockread.BufReader {
         if (self.buf_reader == null) {
-            self.buf_reader = sockread.BufReader.init(self.stream, &self.read_buf);
+            self.buf_reader = sockread.BufReader.initWithTimeout(self.stream, &self.read_buf, self.read_timeout_ms);
         }
         return &self.buf_reader.?;
     }
@@ -217,7 +240,7 @@ pub const WebSocket = struct {
     fn readExact(self: *WebSocket, out: []u8) !void {
         self.frameReader().readFull(out) catch |err| switch (err) {
             error.ConnectionClosed => {
-                self.closed = true;
+                self.closed.store(true, .monotonic);
                 return error.ConnectionClosed;
             },
             else => return error.ConnectionError,
@@ -225,7 +248,10 @@ pub const WebSocket = struct {
     }
 
     fn writeFrame(self: *WebSocket, opcode: OpCode, data: []const u8) !void {
-        if (self.closed) return error.ConnectionClosed;
+        const io = io_instance.io;
+        self.write_mutex.lockUncancelable(io);
+        defer self.write_mutex.unlock(io);
+        if (self.closed.load(.monotonic)) return error.ConnectionClosed;
         const frame = Frame{ .fin = true, .opcode = opcode, .masked = false, .payload = data, .allocator = self.allocator };
         const encoded = try frame.encode(self.allocator);
         defer self.allocator.free(encoded);
@@ -263,6 +289,10 @@ pub const WebSocket = struct {
     /// Send a large message as fragmented frames (chunked at ~4KB boundaries).
     /// Use this for messages > 8KB to avoid buffer overflow at the receiver.
     pub fn sendFragmented(self: *WebSocket, opcode: OpCode, data: []const u8) !void {
+        const io = io_instance.io;
+        self.write_mutex.lockUncancelable(io);
+        defer self.write_mutex.unlock(io);
+        if (self.closed.load(.monotonic)) return error.ConnectionClosed;
         const chunk_size = 4096;
         var offset: usize = 0;
         while (offset < data.len) {
@@ -400,9 +430,12 @@ pub const WebSocket = struct {
 
     /// 关闭连接
     pub fn close(self: *WebSocket) void {
-        if (!self.closed) {
-            self.stream.close(io_instance.io);
-            self.closed = true;
+        const io = io_instance.io;
+        self.write_mutex.lockUncancelable(io);
+        defer self.write_mutex.unlock(io);
+        if (!self.closed.load(.monotonic)) {
+            self.stream.close(io);
+            self.closed.store(true, .monotonic);
         }
     }
 };

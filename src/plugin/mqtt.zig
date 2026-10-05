@@ -92,16 +92,24 @@ pub const MqttPlugin = struct {
         off += min;
         const tls_write_buf = bufs[off..][0..min];
 
-        var stream_reader = sockread.TimedIoReader.init(stream, stream_read_buf, 0);
-        var stream_writer = stream.writer(io_instance.io, stream_write_buf);
+        // Install the transport into its final home BEFORE tls.Client.init.
+        // The client stores the *Reader/*Writer pointers verbatim, so taking
+        // the address of stack locals here would leave them dangling after this
+        // function returns (use-after-scope on every later TLS read/write).
+        self.tls = .{
+            .client = undefined,
+            .stream_reader = sockread.TimedIoReader.init(stream, stream_read_buf, 0),
+            .stream_writer = stream.writer(io_instance.io, stream_write_buf),
+            .buffers = bufs,
+        };
 
         var entropy: [std.crypto.tls.Client.Options.entropy_len]u8 = undefined;
         io_instance.io.random(&entropy);
 
         const server_name = self.config.tls_server_name orelse self.config.broker_host;
-        const tls_client = std.crypto.tls.Client.init(
-            &stream_reader.interface,
-            &stream_writer.interface,
+        self.tls.?.client = std.crypto.tls.Client.init(
+            &self.tls.?.stream_reader.interface,
+            &self.tls.?.stream_writer.interface,
             .{
                 .host = .{ .explicit = server_name },
                 .ca = if (self.config.tls_insecure) .no_verification else .self_signed,
@@ -111,15 +119,9 @@ pub const MqttPlugin = struct {
                 .realtime_now = std.Io.Timestamp.now(io_instance.io, .real),
             },
         ) catch |err| {
-            self.allocator.free(bufs);
+            // The errdefer above frees bufs; drop our dangling reference first.
+            self.tls = null;
             return err;
-        };
-
-        self.tls = .{
-            .client = tls_client,
-            .stream_reader = stream_reader,
-            .stream_writer = stream_writer,
-            .buffers = bufs,
         };
     }
 

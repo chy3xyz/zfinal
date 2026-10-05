@@ -1,0 +1,22 @@
+{
+  "version": "v0.28.2",
+  "fingerprint": "v0.28.2",
+  "timestamp": "2026-10-05T00:00:00Z",
+  "metrics": {
+    "source_files": 85,
+    "tests": 462,
+    "tests_pass": 446,
+    "tests_skip": 16,
+    "tests_fail": 0,
+    "examples": 25,
+    "plugins_stable": 23,
+    "production_readiness_pct": 95
+  },
+  "changes": [
+    "Security: PocketBase example parameterized + server-side admin sessions",
+    "Security: WS handshake remote panic, RandomKit CSPRNG, AI args type check, MySQL truncation, production JWT fail-closed",
+    "Concurrency: WebSocket refcount + write lock, MQTT-TLS use-after-scope, Redis/Kafka locking, shutdown cancel, WS read deadline",
+    "Docs: doc/zig017_quality_review.md (5-domain audit) + CHANGELOG/.life"
+  ],
+  "decisions": []
+}

@@ -77,7 +77,11 @@ fn jsonToParam(v: std.json.Value) error{InvalidArguments}!SqlParam {
 }
 
 fn readArgs(ctx: *SkillContext, v: ?std.json.Value) ![]SqlParam {
-    const arr = (v orelse return &.{}).array;
+    const val = v orelse return &.{};
+    // Untrusted tool input: a wrong-typed "args" must be a clean error, not a
+    // runtime union-field panic (ReleaseSafe) / UB (ReleaseFast).
+    if (val != .array) return error.InvalidArguments;
+    const arr = val.array;
     const out = try ctx.allocator.alloc(SqlParam, arr.items.len);
     errdefer ctx.allocator.free(out);
     for (arr.items, 0..) |item, i| out[i] = try jsonToParam(item);
@@ -301,6 +305,33 @@ test "validateSqlFragment rejects literals and comments" {
     try std.testing.expectError(error.UnsafeSqlFragment, validateSqlFragment("name = 'Alice'"));
     try std.testing.expectError(error.UnsafeSqlFragment, validateSqlFragment("1=1; DROP TABLE t"));
     try std.testing.expectError(error.UnsafeSqlFragment, validateSqlFragment("1=1 -- x"));
+}
+
+test "business db.query rejects non-array args instead of panicking" {
+    const allocator = std.testing.allocator;
+    const DBConfig = @import("../db/config.zig").DBConfig;
+
+    var db = try DB.init(allocator, DBConfig.sqliteMemory());
+    defer db.destroy();
+    try db.exec("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, tenant_id INTEGER)");
+
+    const entities = [_]EntitySpec{
+        .{ .name = "product", .table = "products", .pk = "id", .tenant_column = "tenant_id" },
+    };
+    var biz = BusinessCtx{ .db = db, .entities = &entities };
+
+    var registry = SkillRegistry.init(allocator, std.testing.io);
+    defer registry.deinit();
+    try registerBusinessSkills(&registry);
+
+    var ctx = SkillContext{ .allocator = allocator, .userdata = @ptrCast(&biz), .tenant_id = 7 };
+
+    var qargs = std.json.ObjectMap{};
+    defer qargs.deinit(allocator);
+    try qargs.put(allocator, "sql", .{ .string = "SELECT id FROM products WHERE tenant_id = ?" });
+    try qargs.put(allocator, "args", .{ .string = "not-an-array" });
+
+    try std.testing.expectError(error.InvalidArguments, registry.dispatch("db.query", &ctx, .{ .object = qargs }));
 }
 
 test "business skills db.query and entity.lookup" {

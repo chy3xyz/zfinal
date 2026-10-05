@@ -1,6 +1,7 @@
 const std = @import("std");
 const zfinal = @import("zfinal");
 const State = @import("../../state.zig");
+const util = @import("../../util.zig");
 
 fn getDb() *zfinal.DB {
     return State.global_state.?.db;
@@ -13,20 +14,17 @@ fn sendJson(ctx: *zfinal.Context, json_str: []const u8) !void {
 }
 
 fn sendError(ctx: *zfinal.Context, status: std.http.Status, error_msg: []const u8, code: u32) !void {
+    // Render directly: sendJson() forces 200, which would clobber this status.
     ctx.res_status = status;
     var output = std.ArrayList(u8).empty;
     defer output.deinit(ctx.allocator);
     try output.print(ctx.allocator, "{{\"error\":\"{s}\",\"code\":{d}}}", .{ error_msg, code });
-    try sendJson(ctx, output.items);
+    try ctx.setHeader("Content-Type", "application/json");
+    try ctx.renderText(output.items);
 }
 
 fn isValidCollectionName(name: []const u8) bool {
-    if (name.len == 0 or name.len > 64) return false;
-    for (name) |c| {
-        const is_valid = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_';
-        if (!is_valid) return false;
-    }
-    return true;
+    return util.isValidIdentifier(name);
 }
 
 pub fn list(ctx: *zfinal.Context) !void {
@@ -80,10 +78,10 @@ pub fn get(ctx: *zfinal.Context) !void {
 
     const db = getDb();
 
-    const sql = try std.fmt.allocPrintSentinel(ctx.allocator, "SELECT * FROM {s} WHERE id = '{s}' LIMIT 1", .{ collection_name, id }, 0);
+    const sql = try std.fmt.allocPrintSentinel(ctx.allocator, "SELECT * FROM {s} WHERE id = ? LIMIT 1", .{collection_name}, 0);
     defer ctx.allocator.free(sql);
 
-    var rs = try db.query(sql);
+    var rs = try db.queryParams(sql, &.{.{ .text = id }});
     defer rs.deinit();
 
     if (!rs.next()) {
@@ -265,10 +263,10 @@ pub fn update(ctx: *zfinal.Context) !void {
         }
     }
 
-    const sql = try std.fmt.allocPrintSentinel(ctx.allocator, "UPDATE {s} SET {s} WHERE id = '{s}'", .{ collection_name, set_query.items, id }, 0);
+    const sql = try std.fmt.allocPrintSentinel(ctx.allocator, "UPDATE {s} SET {s} WHERE id = ?", .{ collection_name, set_query.items }, 0);
     defer ctx.allocator.free(sql);
 
-    db.exec(sql) catch |err| {
+    db.execParams(sql, &.{.{ .text = id }}) catch |err| {
         std.debug.print("Update error: {}\nSQL: {s}\n", .{ err, sql });
         return sendError(ctx, .internal_server_error, "Failed to update record", 500);
     };
@@ -287,9 +285,9 @@ pub fn delete(ctx: *zfinal.Context) !void {
 
     const db = getDb();
 
-    const sql = try std.fmt.allocPrintSentinel(ctx.allocator, "DELETE FROM {s} WHERE id = '{s}'", .{ collection_name, id }, 0);
+    const sql = try std.fmt.allocPrintSentinel(ctx.allocator, "DELETE FROM {s} WHERE id = ?", .{collection_name}, 0);
     defer ctx.allocator.free(sql);
-    try db.exec(sql);
+    try db.execParams(sql, &.{.{ .text = id }});
 
     ctx.res_status = .ok;
     var output = std.ArrayList(u8).empty;

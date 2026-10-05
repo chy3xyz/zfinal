@@ -1,5 +1,6 @@
 const std = @import("std");
 const zfinal = @import("zfinal");
+const util = @import("../util.zig");
 
 /// Collection represents a database table/collection
 pub const Collection = struct {
@@ -26,11 +27,8 @@ pub const Collection = struct {
 
     /// Check if collection exists
     pub fn exists(name: []const u8, db: *zfinal.DB, allocator: std.mem.Allocator) !bool {
-        const sql = try std.fmt.allocPrintSentinel(allocator, "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name = '{s}'", .{name}, 0);
-
-        defer allocator.free(sql);
-
-        var rs = try db.query(sql);
+        _ = allocator; // parameterized query needs no scratch allocation
+        var rs = try db.queryParams("SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name = ?", &.{.{ .text = name }});
         defer rs.deinit();
 
         if (rs.next()) {
@@ -46,6 +44,7 @@ pub const Collection = struct {
 
     /// Create a new collection (table)
     pub fn create(name: []const u8, schema: []const u8, db: *zfinal.DB, allocator: std.mem.Allocator) !void {
+        if (!util.isValidIdentifier(name)) return error.InvalidTableName;
         var sql_buf: [256]u8 = undefined;
         var writer = std.Io.Writer.fixed(&sql_buf);
 
@@ -63,6 +62,7 @@ pub const Collection = struct {
 
     /// Drop collection (table)
     pub fn drop(name: []const u8, db: *zfinal.DB, allocator: std.mem.Allocator) !void {
+        if (!util.isValidIdentifier(name)) return error.InvalidTableName;
         const sql = try std.fmt.allocPrintSentinel(allocator, "DROP TABLE IF EXISTS {s}", .{name}, 0);
         defer allocator.free(sql);
 

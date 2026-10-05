@@ -39,6 +39,9 @@ pub const MySQLDB = struct {
 
     pub fn connect(allocator: std.mem.Allocator, config: DBConfig) !MySQLDB {
         const conn = c.mysql_init(null) orelse return error.InitFailed;
+        // Single owner of the handle on every error path — the config-string
+        // formatting below can fail before any explicit close runs.
+        errdefer c.mysql_close(conn);
 
         var h_buf: [256]u8 = undefined;
         var u_buf: [256]u8 = undefined;
@@ -64,7 +67,6 @@ pub const MySQLDB = struct {
         if (c.mysql_options(conn, c.MYSQL_OPT_CONNECT_TIMEOUT, &timeout_sec) != 0) {
             const msg = c.mysql_error(conn);
             std.debug.print("MySQL set connect_timeout failed: {s}\n", .{msg});
-            c.mysql_close(conn);
             return error.InitFailed;
         }
 
@@ -80,7 +82,6 @@ pub const MySQLDB = struct {
         if (c.mysql_options(conn, c.MYSQL_OPT_SSL_MODE, &ssl_int) != 0) {
             const msg = c.mysql_error(conn);
             std.debug.print("MySQL set SSL mode failed: {s}\n", .{msg});
-            c.mysql_close(conn);
             return error.InitFailed;
         }
 
@@ -95,7 +96,6 @@ pub const MySQLDB = struct {
             @memset(&p_buf, 0);
             const msg = c.mysql_error(conn);
             std.debug.print("MySQL connect failed: {s}\n", .{msg});
-            c.mysql_close(conn);
             return error.ConnectionFailed;
         }
 
@@ -104,7 +104,6 @@ pub const MySQLDB = struct {
         if (c.mysql_set_character_set(conn, "utf8mb4") != 0) {
             const msg = c.mysql_error(conn);
             std.debug.print("MySQL set utf8mb4 failed: {s}\n", .{msg});
-            c.mysql_close(conn);
             return error.InitFailed;
         }
 
@@ -572,7 +571,13 @@ pub const MySQLDB = struct {
                 self.done = true;
                 return null;
             }
-            if (rc != 0 and rc != c.MYSQL_DATA_TRUNCATED) {
+            if (rc == c.MYSQL_DATA_TRUNCATED) {
+                // libmysql reports the TRUE column length on truncation; slicing
+                // text_buf with it would read past the 4096-byte buffer.
+                self.done = true;
+                return error.DataTruncated;
+            }
+            if (rc != 0) {
                 const d = extractMysqlStmtDiag(stmt);
                 std.debug.print("MySQL iter fetch failed [errno {s}]: {s}\n", .{ d.raw, d.message });
                 return diag.toError(d.code);
@@ -899,6 +904,7 @@ pub const MySQLDB = struct {
             c.MYSQL_TYPE_DOUBLE => .{ .float = col.float_buf },
             c.MYSQL_TYPE_NULL => .null,
             else => blk: {
+                if (col.length > col.text_buf.len) return error.DataTruncated;
                 const len: usize = @intCast(col.length);
                 break :blk .{ .text = try allocator.dupe(u8, col.text_buf[0..len]) };
             },

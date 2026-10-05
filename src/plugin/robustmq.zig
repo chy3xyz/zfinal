@@ -473,6 +473,13 @@ pub const KafkaProducer = struct {
     topic_stats: std.StringHashMap(TopicStats),
     transport: ?RobustMQTransport = null,
     io: ?std.Io = null,
+    /// Guards in-memory stats. Short critical sections only.
+    state_mutex: std.Io.Mutex = .init,
+    /// Serializes the producer's single Kafka socket. The wire protocol is
+    /// strict request/response with a monotonic correlation id, so concurrent
+    /// writers corrupt the stream. `send` acquires this before `state_mutex`
+    /// (on the failure path); nothing acquires them in the other order.
+    transport_mutex: std.Io.Mutex = .init,
 
     pub const TopicStats = struct {
         produced: u64 = 0,
@@ -503,26 +510,52 @@ pub const KafkaProducer = struct {
         };
     }
 
+    fn lockState(self: *Self) void {
+        self.state_mutex.lockUncancelable(io_instance.io);
+    }
+
+    fn unlockState(self: *Self) void {
+        self.state_mutex.unlock(io_instance.io);
+    }
+
+    fn lockTransport(self: *Self) void {
+        self.transport_mutex.lockUncancelable(io_instance.io);
+    }
+
+    fn unlockTransport(self: *Self) void {
+        self.transport_mutex.unlock(io_instance.io);
+    }
+
     pub fn deinit(self: *Self) void {
+        self.lockTransport();
         if (self.transport) |*t| t.deinit();
+        self.transport = null;
+        self.unlockTransport();
         self.topic_stats.deinit();
         self.* = undefined;
     }
 
     pub fn send(self: *Self, msg: KafkaMessage) !void {
         if (!self.config.offline) {
-            try self.ensureTransport();
-            const acks: i16 = switch (self.config.acks) {
-                .none => 0,
-                .leader => 1,
-                .all => -1,
-            };
-            self.transport.?.produce(msg.topic, msg.partition, msg.key, msg.value, acks) catch |err| {
-                try self.bumpFailed(msg.topic);
-                return err;
-            };
+            const io = io_instance.io;
+            self.transport_mutex.lockUncancelable(io);
+            {
+                defer self.transport_mutex.unlock(io);
+                try self.ensureTransport();
+                const acks: i16 = switch (self.config.acks) {
+                    .none => 0,
+                    .leader => 1,
+                    .all => -1,
+                };
+                self.transport.?.produce(msg.topic, msg.partition, msg.key, msg.value, acks) catch |err| {
+                    try self.bumpFailed(msg.topic);
+                    return err;
+                };
+            }
         }
 
+        self.lockState();
+        defer self.unlockState();
         const entry = try self.topic_stats.getOrPut(msg.topic);
         if (!entry.found_existing) entry.value_ptr.* = .{};
         entry.value_ptr.produced += 1;
@@ -534,6 +567,8 @@ pub const KafkaProducer = struct {
     }
 
     pub fn getTopicStats(self: *Self, topic: []const u8) ?TopicStats {
+        self.lockState();
+        defer self.unlockState();
         return self.topic_stats.get(topic);
     }
 
@@ -542,9 +577,12 @@ pub const KafkaProducer = struct {
     }
 
     pub fn close(self: *Self) void {
+        self.lockTransport();
+        defer self.unlockTransport();
         if (self.transport) |*t| t.close();
     }
 
+    /// Caller MUST hold `transport_mutex`.
     fn ensureTransport(self: *Self) !void {
         if (self.transport != null) return;
         const io = self.io orelse return error.IoRequired;
@@ -555,6 +593,8 @@ pub const KafkaProducer = struct {
     }
 
     fn bumpFailed(self: *Self, topic: []const u8) !void {
+        self.lockState();
+        defer self.unlockState();
         const entry = try self.topic_stats.getOrPut(topic);
         if (!entry.found_existing) entry.value_ptr.* = .{};
         entry.value_ptr.failed += 1;

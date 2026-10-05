@@ -177,6 +177,9 @@ fn acceptLoopImpl(io: std.Io, server: *Server, addr: std.Io.net.IpAddress, group
                 "Drain timeout ({d}ms) reached with {d} active connection(s); exiting",
                 .{ drain_deadline_ms, server.active_conns.load(.monotonic) },
             );
+            // Wake any fiber parked at a cancellation point so start() can
+            // return instead of waiting on a forever-idle connection.
+            group.cancel(io);
             break;
         }
         io.sleep(std.Io.Duration.fromMilliseconds(100), .awake) catch break;
@@ -216,6 +219,9 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
     var req_count: usize = 0;
 
     while (req_count < server.config.max_requests_per_conn) : (req_count += 1) {
+        // Between keep-alive requests: exit promptly on shutdown instead of
+        // waiting for the next read timeout (matters when read_timeout_ms = 0).
+        if (shutdown.isShuttingDown()) break;
         var request = http_srv.receiveHead() catch break;
         writer.resetWriteDeadline();
         if (tryWebSocketUpgrade(&request, server, conn) catch |err| {
@@ -268,15 +274,19 @@ fn tryWebSocketUpgrade(request: *http.Server.Request, server: *Server, conn: std
     const ws = try server.allocator.create(WebSocket);
     errdefer server.allocator.destroy(ws);
     ws.* = WebSocket.init(server.allocator, conn);
+    // A stalled WS peer must not pin the fiber forever; reuse the HTTP read
+    // deadline for frame reads (0 keeps the old unbounded behavior).
+    ws.read_timeout_ms = @intCast(@min(server.config.read_timeout_ms, std.math.maxInt(i32)));
     // Snapshot the handshake target so handlers can read query params
     // (e.g. `ws.queryParam("room_id")`) — the request Context is gone by now.
     ws.handshake_target = try server.allocator.dupe(u8, safe_target);
     try mgr.addConnection(ws);
     defer {
+        // Drop the list reference, then the handler's creation reference. The
+        // last unref closes the socket and frees the object, so a concurrent
+        // broadcast/ping snapshot can never touch freed memory.
         mgr.removeConnection(ws);
-        // Close TCP here; handleConn skips its defer close when we return true.
-        ws.deinit();
-        server.allocator.destroy(ws);
+        ws.unref();
     }
 
     handler(ws) catch |err| {

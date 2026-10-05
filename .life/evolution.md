@@ -4,6 +4,29 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+---
+
+## 2026-10-04 — S1 concurrency correctness batch
+
+**Session**: After the S0 audit, implement the P0 concurrency fixes
+**Changes**:
+1. WebSocket: refcounted lifetime (creator/list/snapshot) + per-connection write mutex; manager frees only on last unref; regression test.
+2. MQTT-over-TLS: in-place transport init (no stack use-after-scope) + remove double-free on init failure.
+3. Redis client and KafkaProducer serialized (RESP round trip / transport+state mutexes).
+4. Server shutdown check per keep-alive iteration + drain-time cancel; WebSocket reads inherit the read deadline (slowloris).
+**Tests**: `zig build test` 446 passed / 16 skipped / 0 failed; gate-quick pending.
+**Next**: commit S0+S1 together (v0.28.2?), then S2 (fix benchmark optimize, ORM typed decode, head.target UB).
+
+## 2026-10-04 — S0 security/correctness batch + Zig 0.17.0 quality review
+
+**Session**: 5-domain read-only audit (Io/mem/perf/security/build) then implement the S0 batch
+**Changes**:
+1. Audit written to `doc/zig017_quality_review.md` (P0/P1 findings, verified vs hypothesis).
+2. Fixed: WS handshake `catch unreachable`, RandomKit CSPRNG (`std.Io.random`; 0.17 removed `std.crypto.random`), AI args type check, Row.*At bounds, MySQL truncation OOB, SQLite/PG/MySQL/pool/deps leaks, production JWT fail-closed.
+3. PocketBase example: parameterized all user-controlled SQL + server-side admin sessions; fixed redirect/error-status.
+**Tests**: `zig build` 57/57; `zig build test` 445 passed / 16 skipped / 0 failed; `gate-quick` PASSED; PocketBase e2e injection/auth probe green.
+**Next**: commit (v0.28.2?) then S1 (MQTT-TLS dangling, WS Manager UAF, Redis/Kafka locks, shutdown cancel points).
+
 ## 2026-10-04 — Zig 0.17.0 stable adaptation
 
 **Session**: Adapt framework to released Zig 0.17.0

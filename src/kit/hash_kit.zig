@@ -1,4 +1,5 @@
 const std = @import("std");
+const RandomKit = @import("random_kit.zig").RandomKit;
 
 /// 哈希工具类（参考 JFinal HashKit）
 pub const HashKit = struct {
@@ -59,13 +60,21 @@ pub const HashKit = struct {
     /// 生成随机字符串
     pub fn generateRandomString(allocator: std.mem.Allocator, length: usize) ![]const u8 {
         const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-
         var result = try allocator.alloc(u8, length);
-        for (0..length) |i| {
-            const idx = std.crypto.random.intRangeAtMost(usize, 0, chars.len - 1);
-            result[i] = chars[idx];
+        errdefer allocator.free(result);
+        // Secure CSPRNG via RandomKit; rejection sampling avoids modulo bias.
+        const limit: u8 = 248; // 62 * 4
+        var i: usize = 0;
+        while (i < length) {
+            var chunk: [32]u8 = undefined;
+            RandomKit.randomBytes(&chunk);
+            for (chunk) |b| {
+                if (b >= limit) continue;
+                result[i] = chars[b % chars.len];
+                i += 1;
+                if (i == length) break;
+            }
         }
-
         return result;
     }
 

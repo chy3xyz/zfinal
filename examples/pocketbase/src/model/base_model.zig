@@ -1,5 +1,6 @@
 const std = @import("std");
 const zfinal = @import("zfinal");
+const util = @import("../util.zig");
 
 /// Schema information for a collection
 pub const Schema = struct {
@@ -35,8 +36,13 @@ pub const BaseModel = struct {
         };
     }
 
+    fn requireValidTable(self: *const BaseModel) !void {
+        if (!util.isValidIdentifier(self.table_name)) return error.InvalidTableName;
+    }
+
     /// Get schema for this table
     pub fn getSchema(self: *const BaseModel) !Schema {
+        try self.requireValidTable();
         const sql = try std.fmt.allocPrintSentinel(self.allocator, "PRAGMA table_info({s})", .{self.table_name}, 0);
         defer self.allocator.free(sql);
 
@@ -67,15 +73,15 @@ pub const BaseModel = struct {
 
     /// Find record by ID
     pub fn findById(self: *const BaseModel, id: []const u8) !?zfinal.ResultSet {
-        const query = try std.fmt.allocPrintSentinel(self.allocator, "SELECT * FROM {s} WHERE id = '{s}' LIMIT 1", .{ self.table_name, id }, 0);
-
+        try self.requireValidTable();
+        const query = try std.fmt.allocPrintSentinel(self.allocator, "SELECT * FROM {s} WHERE id = ? LIMIT 1", .{self.table_name}, 0);
         defer self.allocator.free(query);
-
-        return try self.db.query(query);
+        return try self.db.queryParams(query, &.{.{ .text = id }});
     }
 
     /// Find all records with limit
     pub fn findAll(self: *const BaseModel, limit: usize) !zfinal.ResultSet {
+        try self.requireValidTable();
         const sql = try std.fmt.allocPrintSentinel(self.allocator, "SELECT * FROM {s} ORDER BY created_at DESC LIMIT {d}", .{ self.table_name, limit }, 0);
 
         defer self.allocator.free(sql);
@@ -85,15 +91,15 @@ pub const BaseModel = struct {
 
     /// Delete record by ID
     pub fn deleteById(self: *const BaseModel, id: []const u8) !void {
-        const sql = try std.fmt.allocPrintSentinel(self.allocator, "DELETE FROM {s} WHERE id = '{s}'", .{ self.table_name, id }, 0);
-
+        try self.requireValidTable();
+        const sql = try std.fmt.allocPrintSentinel(self.allocator, "DELETE FROM {s} WHERE id = ?", .{self.table_name}, 0);
         defer self.allocator.free(sql);
-
-        try self.db.exec(sql);
+        try self.db.execParams(sql, &.{.{ .text = id }});
     }
 
     /// Count total records
     pub fn count(self: *const BaseModel) !i64 {
+        try self.requireValidTable();
         const sql = try std.fmt.allocPrintSentinel(self.allocator, "SELECT COUNT(*) as count FROM {s}", .{self.table_name}, 0);
 
         defer self.allocator.free(sql);
