@@ -2,6 +2,12 @@
 
 <!-- New changes land here; on release, move them under a new `## [x.y.z]` section. -->
 
+## [0.28.3] - 2026-11-12
+
+### Fixed
+
+- **Response compression truncated every body over ~16 KB** ([context.zig](src/core/context.zig)): `compressBody` compressed into a fixed 16 KB stack buffer with `std.compress.flate.Compress.Raw`, and `Raw` does not compress at all — it emits deflate *stored* blocks, so the output was the body plus a gzip header and footer. When the body did not fit, `finish` failed with `WriteFailed`, the failure was swallowed, and the server sent the truncated stream with `Content-Encoding: gzip`. A client cannot decode that, so every response over roughly 16 KB was unusable. Measured on a 23627-byte JSON body: 16384 bytes out, 95 bytes recoverable; the same body is 7439 bytes under a real deflate. Compression now uses `std.compress.flate.Compress` into a writer whose buffer grows with the body, and any failure serves the original body instead of a stream the client cannot read. A body that does not get smaller is served uncompressed. Regression tests added.
+
 ## [0.28.2] - 2026-10-05
 
 ### Security

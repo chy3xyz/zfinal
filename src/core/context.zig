@@ -602,18 +602,29 @@ pub const Context = struct {
     /// Apply gzip compression to a response body using std.compress.flate.
     /// Returns the compressed data, or the original body if compression fails/declines.
     /// When `is_compressed`, caller owns `data` and must free it.
+    ///
+    /// The output buffer grows with the body. A response can be any size,
+    /// so a buffer with a fixed ceiling does not fit: what does not fit
+    /// must not become a truncated response. Anything that goes wrong on
+    /// the way serves the original body instead — a body the client can
+    /// always read beats one it cannot decode.
     fn compressBody(self: *Context, body: []const u8) !struct { data: []const u8, is_compressed: bool } {
         if (body.len < 256 or !self.clientAcceptsGzip()) return .{ .data = body, .is_compressed = false };
 
-        var buf = std.ArrayList(u8).empty;
-        errdefer buf.deinit(self.allocator);
+        // Start at a quarter of the body and let the writer grow: deflate
+        // output is smaller than the input for anything compressible, and
+        // the writer reallocates when it needs more room.
+        var out = std.Io.Writer.Allocating.initCapacity(self.allocator, @max(body.len / 4, 1024)) catch |err| {
+            std.debug.print("context.compressGzip: output buffer alloc failed ({s}); serving uncompressed\n", .{@errorName(err)});
+            return .{ .data = body, .is_compressed = false };
+        };
+        // A no-op once `toOwnedSlice` handed the buffer to the caller.
+        defer out.deinit();
 
-        // Stack window — Compress.Raw borrows it; never heap-alloc (was leaked).
+        // The LZ77 history window — Compress borrows it for the whole call.
         var window: [std.compress.flate.max_window_len]u8 = undefined;
-        var scratch: [16384]u8 = undefined;
-        var scratch_w: std.Io.Writer = .fixed(&scratch);
         const Compress = std.compress.flate.Compress;
-        var compressor = Compress.Raw.init(&scratch_w, &window, .gzip) catch |err| {
+        var compressor = Compress.init(&out.writer, &window, .gzip, .default) catch |err| {
             std.debug.print("context.compressGzip: compressor init failed ({s}); serving uncompressed\n", .{@errorName(err)});
             return .{ .data = body, .is_compressed = false };
         };
@@ -623,14 +634,24 @@ pub const Context = struct {
             return .{ .data = body, .is_compressed = false };
         };
         compressor.finish() catch |err| {
-            std.debug.print("context.compressGzip: finish failed ({s}); serving partial compressed output\n", .{@errorName(err)});
+            // A failed finish leaves a truncated gzip stream behind. Sending
+            // it would hand the client a body it cannot decode, so the
+            // original body goes out instead.
+            std.debug.print("context.compressGzip: finish failed ({s}); serving uncompressed\n", .{@errorName(err)});
+            return .{ .data = body, .is_compressed = false };
         };
 
-        // Copy scratch buffer (full gzip stream including header + footer).
-        const compressed_len = scratch_w.end;
-        try buf.appendSlice(self.allocator, scratch[0..compressed_len]);
+        const data = out.toOwnedSlice() catch |err| {
+            std.debug.print("context.compressGzip: taking the compressed buffer failed ({s}); serving uncompressed\n", .{@errorName(err)});
+            return .{ .data = body, .is_compressed = false };
+        };
 
-        const data = try buf.toOwnedSlice(self.allocator);
+        // Compression that did not pay off is not worth the header and the
+        // client's decode work.
+        if (data.len >= body.len) {
+            self.allocator.free(data);
+            return .{ .data = body, .is_compressed = false };
+        }
         return .{ .data = data, .is_compressed = true };
     }
 
@@ -1589,4 +1610,115 @@ test "parseJson: pure parse, no render on invalid input" {
     ctx.mock_body = "{not json";
     try std.testing.expect(!try ctx.parseJson(&input));
     try std.testing.expect(!ctx.response_started);
+}
+
+test "context: compressBody yields a complete gzip stream for a large body" {
+    // Regression: the compressed output went into a fixed 16 KB buffer,
+    // and a body that did not fit was served as a truncated gzip stream —
+    // a body the client cannot decode at all. The output now grows with
+    // the body, and what comes out decodes back to exactly the input.
+    const a = std.testing.allocator;
+    // `capture` keeps getHeader off the (undefined) request.
+    var cap: Context.CapturedResponse = .{ .allocator = a };
+    defer cap.deinit();
+    var ctx: Context = .{
+        .req = undefined,
+        .allocator = a,
+        .attributes = .init(a),
+        .response_cookies = .empty,
+        .response_headers = .init(a),
+        .capture = &cap,
+        .compress_enabled = true,
+    };
+    defer {
+        ctx.attributes.deinit();
+        ctx.response_headers.deinit();
+        ctx.response_cookies.deinit(a);
+        if (ctx.mock_headers) |*mh| mh.deinit();
+    }
+    try ctx.setMockHeader("Accept-Encoding", "gzip");
+
+    // 64 KB — well past the old 16 KB ceiling.
+    const body = try a.alloc(u8, 64 * 1024);
+    defer a.free(body);
+    @memset(body, 'a');
+
+    const compressed = try ctx.compressBody(body);
+    try std.testing.expect(compressed.is_compressed);
+    defer a.free(compressed.data);
+    try std.testing.expect(compressed.data.len < body.len);
+
+    // The stream must decode back to the whole body.
+    var in_stream = std.Io.Reader.fixed(compressed.data);
+    var window: [std.compress.flate.max_window_len]u8 = undefined;
+    var decompressor = std.compress.flate.Decompress.init(&in_stream, .gzip, &window);
+    const decoded = try decompressor.reader.allocRemaining(a, .unlimited);
+    defer a.free(decoded);
+
+    try std.testing.expectEqual(body.len, decoded.len);
+    try std.testing.expectEqualSlices(u8, body, decoded);
+}
+
+test "context: compressBody leaves the body alone when the client does not accept gzip" {
+    const a = std.testing.allocator;
+    // `capture` keeps getHeader off the (undefined) request.
+    var cap: Context.CapturedResponse = .{ .allocator = a };
+    defer cap.deinit();
+    var ctx: Context = .{
+        .req = undefined,
+        .allocator = a,
+        .attributes = .init(a),
+        .response_cookies = .empty,
+        .response_headers = .init(a),
+        .capture = &cap,
+        .compress_enabled = true,
+    };
+    defer {
+        ctx.attributes.deinit();
+        ctx.response_headers.deinit();
+        ctx.response_cookies.deinit(a);
+    }
+
+    const body = try a.alloc(u8, 4096);
+    defer a.free(body);
+    @memset(body, 'a');
+
+    const compressed = try ctx.compressBody(body);
+    try std.testing.expect(!compressed.is_compressed);
+    try std.testing.expectEqualSlices(u8, body, compressed.data);
+}
+
+test "context: compressBody serves the original body when compression does not pay off" {
+    // Random bytes do not compress: the gzip wrapper would only make the
+    // response bigger, and the client would pay the decode cost for
+    // nothing.
+    const a = std.testing.allocator;
+    // `capture` keeps getHeader off the (undefined) request.
+    var cap: Context.CapturedResponse = .{ .allocator = a };
+    defer cap.deinit();
+    var ctx: Context = .{
+        .req = undefined,
+        .allocator = a,
+        .attributes = .init(a),
+        .response_cookies = .empty,
+        .response_headers = .init(a),
+        .capture = &cap,
+        .compress_enabled = true,
+    };
+    defer {
+        ctx.attributes.deinit();
+        ctx.response_headers.deinit();
+        ctx.response_cookies.deinit(a);
+        if (ctx.mock_headers) |*mh| mh.deinit();
+    }
+    try ctx.setMockHeader("Accept-Encoding", "gzip");
+
+    const body = try a.alloc(u8, 4096);
+    defer a.free(body);
+    var prng = std.Random.DefaultPrng.init(42);
+    prng.random().bytes(body);
+
+    const compressed = try ctx.compressBody(body);
+    try std.testing.expect(!compressed.is_compressed);
+    try std.testing.expectEqualSlices(u8, body, compressed.data);
 }
