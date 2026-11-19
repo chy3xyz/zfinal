@@ -2,6 +2,19 @@
 
 <!-- New changes land here; on release, move them under a new `## [x.y.z]` section. -->
 
+## [0.28.8] - 2026-11-20
+
+### Performance — Lighting-inspired hot path (no HTTP stack rewrite)
+
+Reference: [jiacai2050/lighting](https://github.com/jiacai2050/lighting). Details: [`doc/perf_from_lighting.md`](doc/perf_from_lighting.md).
+
+- **Lazy request-header cache**: dispatch no longer `dupe`s every header; `getHeader` zero-copies via `iterateHeaders` until body read, then `cacheHeaders()` snapshots.
+- **`compress_min_bytes` default 4 KiB** (`ServerConfig` / `Context`): small JSON APIs skip flate window overhead.
+- **Stack response headers**: `Context.respondBody` uses `[16]std.http.Header` for typical JSON/text/html (no Set-Cookie).
+- **Zero-alloc interceptor dispatch**: `Router.execute` runs global + route hooks in place.
+- **8 KiB connection read/write buffers** (Lighting-aligned).
+- Keep **`force_connection_close=true`** as production default until zig#25017; that remains the largest QPS gap vs Lighting keep-alive.
+
 ## [0.28.7] - 2026-11-19
 
 ### Fixed

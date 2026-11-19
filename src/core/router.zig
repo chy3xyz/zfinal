@@ -575,27 +575,34 @@ pub const Router = struct {
             ctx.path_params = try self.routes.items[idx].extractParams(path, self.allocator);
         }
 
-        const has_interceptors = self.global_interceptors.interceptors.items.len > 0 or
-            self.routes.items[idx].interceptors.interceptors.items.len > 0;
+        // Zero-alloc interceptor path (Lighting-inspired): run global then
+        // route-local hooks in place — no combined ArrayList copy per request.
+        const globals = self.global_interceptors.interceptors.items;
+        const locals = self.routes.items[idx].interceptors.interceptors.items;
 
-        if (has_interceptors) {
-            var combined = InterceptorChain.init(self.allocator);
-            defer combined.deinit();
-
-            const total_count = self.global_interceptors.interceptors.items.len +
-                self.routes.items[idx].interceptors.interceptors.items.len;
-            try combined.interceptors.ensureTotalCapacity(self.allocator, total_count);
-
-            for (self.global_interceptors.interceptors.items) |interceptor| {
-                combined.interceptors.appendAssumeCapacity(interceptor);
-            }
-            for (self.routes.items[idx].interceptors.interceptors.items) |interceptor| {
-                combined.interceptors.appendAssumeCapacity(interceptor);
-            }
-
-            try combined.execute(ctx, handler);
-        } else {
+        if (globals.len == 0 and locals.len == 0) {
             try handler(ctx);
+            return;
+        }
+
+        for (globals) |*interceptor| {
+            if (!(try runBefore(interceptor, ctx))) return;
+        }
+        for (locals) |*interceptor| {
+            if (!(try runBefore(interceptor, ctx))) return;
+        }
+
+        try handler(ctx);
+
+        var i: usize = locals.len;
+        while (i > 0) {
+            i -= 1;
+            try runAfter(&locals[i], ctx);
+        }
+        i = globals.len;
+        while (i > 0) {
+            i -= 1;
+            try runAfter(&globals[i], ctx);
         }
     }
 };

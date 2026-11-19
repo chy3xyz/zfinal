@@ -29,14 +29,14 @@ fn monoNowNs() i128 {
 ///
 /// ```text
 /// ┌─ P0 accept      Server accepts the TCP connection (peer addr snapshot).
-/// ├─ P1 head        receiveHead() → cacheHeaders() snapshots all request
-/// │                 headers into `header_map`. From here on, `getHeader()`
-/// │                 is ALWAYS SAFE (reads the dup'd cache), including after
-/// │                 the body has been consumed.
+/// ├─ P1 head        receiveHead() — `getHeader()` zero-copies via
+/// │                 `iterateHeaders` while still in `.received_head` (no
+/// │                 per-header `dupe` until body). After P2, `getHeader`
+/// │                 uses the dup'd `header_map` snapshot.
 /// ├─ P2 body        `getBodyText` / `bindJson` / `parseJson` / `getFiles`
-/// │                 consume the body exactly ONCE. In Debug builds a second
-/// │                 body read trips `@panic("Context body already consumed…")`
-/// │                 instead of silently returning an empty body.
+/// │                 call `cacheHeaders()` then consume the body exactly ONCE.
+/// │                 In Debug builds a second body read trips
+/// │                 `@panic("Context body already consumed…")`.
 /// ├─ P3 render      `renderJson` / `renderText` / `respond`… — response
 /// │                 starts at most once (`response_started` guards doubles).
 /// └─ P4 teardown    `deinit()` frees everything the Context owns. Handler
@@ -59,6 +59,8 @@ pub const Context = struct {
     /// Enable response compression (gzip/deflate) when client supports it.
     /// Automatically set based on Accept-Encoding header in render* methods.
     compress_enabled: bool = true,
+    /// Skip gzip when body is smaller than this (see `ServerConfig.compress_min_bytes`).
+    compress_min_bytes: usize = 4096,
     /// Remote address of the client (set by Server/AsyncServer at accept time).
     remote_addr: ?std.Io.net.IpAddress = null,
     /// Maximum request body size in bytes (default 10MB).
@@ -66,9 +68,9 @@ pub const Context = struct {
     deadline_ns: ?i128 = null,
     query_params: ?std.StringHashMap([]const u8) = null,
     path_params: ?std.StringHashMap([]const u8) = null,
-    /// Cached request headers (dup'd). Populated by `cacheHeaders` at dispatch
-    /// time — reading the body invalidates the server's header buffer, so
-    /// handlers must not call `getHeader` after body consumption otherwise.
+    /// Cached request headers (dup'd). Populated lazily by `cacheHeaders`
+    /// immediately before body consumption — reading the body invalidates the
+    /// server's header buffer, so after P2 `getHeader` must use this cache.
     header_map: ?std.StringHashMap([]const u8) = null,
     attributes: std.StringHashMap([]const u8),
     session_id: ?[]const u8 = null,
@@ -204,7 +206,8 @@ pub const Context = struct {
     /// `.received_head` state. After the body is read, `iterateHeaders` asserts
     /// on that state, so `getHeader` must use the cache instead.
     pub fn cacheHeaders(self: *Context) void {
-        if (self.capture != null or self.mock_headers != null) return;
+        // Capture / mock paths use undefined or synthetic requests — never iterate.
+        if (self.capture != null or self.mock_headers != null or self.mock_body != null) return;
         if (self.header_map != null) return;
         var map = std.StringHashMap([]const u8).init(self.allocator);
         var it = self.req.iterateHeaders();
@@ -609,7 +612,8 @@ pub const Context = struct {
     /// the way serves the original body instead — a body the client can
     /// always read beats one it cannot decode.
     fn compressBody(self: *Context, body: []const u8) !struct { data: []const u8, is_compressed: bool } {
-        if (body.len < 256 or !self.clientAcceptsGzip()) return .{ .data = body, .is_compressed = false };
+        if (body.len < self.compress_min_bytes or !self.clientAcceptsGzip())
+            return .{ .data = body, .is_compressed = false };
 
         // Start at a quarter of the body and let the writer grow: deflate
         // output is smaller than the input for anything compressible, and
@@ -690,6 +694,70 @@ pub const Context = struct {
         }
     }
 
+    /// Respond with body + optional Content-Type / Content-Encoding.
+    /// Fast path: stack `[16]Header` when no Set-Cookie and few custom headers
+    /// (Lighting-style: avoid ArrayList for typical JSON/text replies).
+    fn respondBody(self: *Context, body: []const u8, content_type: ?[]const u8, content_encoding: ?[]const u8) !void {
+        const cookie_n = self.response_cookies.items.len;
+        const custom_n = self.response_headers.count();
+        const base_n: usize = @as(usize, @intFromBool(content_type != null)) + @as(usize, @intFromBool(content_encoding != null));
+        const total_n = base_n + custom_n + cookie_n;
+
+        if (cookie_n == 0 and total_n <= 16) {
+            var stack: [16]std.http.Header = undefined;
+            var n: usize = 0;
+            if (content_type) |ct| {
+                stack[n] = .{ .name = "Content-Type", .value = ct };
+                n += 1;
+            }
+            if (content_encoding) |ce| {
+                stack[n] = .{ .name = "Content-Encoding", .value = ce };
+                n += 1;
+            }
+            var header_it = self.response_headers.iterator();
+            while (header_it.next()) |entry| {
+                stack[n] = .{ .name = entry.key_ptr.*, .value = entry.value_ptr.* };
+                n += 1;
+            }
+            self.drainUnconsumedBody();
+            self.response_bytes += body.len;
+            try self.req.respond(body, .{
+                .status = self.res_status,
+                .extra_headers = stack[0..n],
+                .keep_alive = self.req.head.keep_alive,
+            });
+            self.markResponded();
+            return;
+        }
+
+        var headers = std.ArrayList(std.http.Header).empty;
+        defer {
+            self.freeSetCookieDupes(headers);
+            headers.deinit(self.allocator);
+        }
+        try headers.ensureTotalCapacity(self.allocator, total_n);
+        if (content_type) |ct| {
+            headers.appendAssumeCapacity(.{ .name = "Content-Type", .value = ct });
+        }
+        if (content_encoding) |ce| {
+            headers.appendAssumeCapacity(.{ .name = "Content-Encoding", .value = ce });
+        }
+        var header_it = self.response_headers.iterator();
+        while (header_it.next()) |entry| {
+            headers.appendAssumeCapacity(.{ .name = entry.key_ptr.*, .value = entry.value_ptr.* });
+        }
+        try self.appendSetCookieHeaders(&headers);
+
+        self.drainUnconsumedBody();
+        self.response_bytes += body.len;
+        try self.req.respond(body, .{
+            .status = self.res_status,
+            .extra_headers = headers.items,
+            .keep_alive = self.req.head.keep_alive,
+        });
+        self.markResponded();
+    }
+
     pub fn renderText(self: *Context, text: []const u8) !void {
         if (self.response_started) return;
         if (self.capture) |cap| {
@@ -698,39 +766,10 @@ pub const Context = struct {
             self.markResponded();
             return;
         }
-        // Try gzip if client accepts and body is large enough to be worth compressing.
         const compressed = try self.compressBody(text);
-        // If compressed, the slice is a fresh heap allocation we must free.
         defer if (compressed.is_compressed) self.allocator.free(compressed.data);
-
-        var headers = std.ArrayList(std.http.Header).empty;
-        defer {
-            self.freeSetCookieDupes(headers);
-            headers.deinit(self.allocator);
-        }
-
-        if (compressed.is_compressed) {
-            try headers.append(self.allocator, .{ .name = "Content-Encoding", .value = "gzip" });
-        }
-
-        // Add custom headers
-        var header_it = self.response_headers.iterator();
-        while (header_it.next()) |entry| {
-            try headers.append(self.allocator, .{ .name = entry.key_ptr.*, .value = entry.value_ptr.* });
-        }
-
-        // Add Set-Cookie headers (heap-allocated, freed in defer above)
-        try self.appendSetCookieHeaders(&headers);
-
-        self.drainUnconsumedBody();
-
-        self.response_bytes += compressed.data.len;
-        try self.req.respond(compressed.data, .{
-            .status = self.res_status,
-            .extra_headers = headers.items,
-            .keep_alive = self.req.head.keep_alive,
-        });
-        self.markResponded();
+        const enc: ?[]const u8 = if (compressed.is_compressed) "gzip" else null;
+        try self.respondBody(compressed.data, null, enc);
     }
 
     pub fn renderJson(self: *Context, data: anytype) !void {
@@ -748,36 +787,8 @@ pub const Context = struct {
         }
         const compressed = try self.compressBody(json);
         defer if (compressed.is_compressed) self.allocator.free(compressed.data);
-
-        var headers = std.ArrayList(std.http.Header).empty;
-        defer {
-            self.freeSetCookieDupes(headers);
-            headers.deinit(self.allocator);
-        }
-
-        try headers.append(self.allocator, .{ .name = "Content-Type", .value = "application/json" });
-        if (compressed.is_compressed) {
-            try headers.append(self.allocator, .{ .name = "Content-Encoding", .value = "gzip" });
-        }
-
-        // Add custom headers
-        var header_it = self.response_headers.iterator();
-        while (header_it.next()) |entry| {
-            try headers.append(self.allocator, .{ .name = entry.key_ptr.*, .value = entry.value_ptr.* });
-        }
-
-        // Add Set-Cookie headers (heap-allocated, freed in defer above)
-        try self.appendSetCookieHeaders(&headers);
-
-        self.drainUnconsumedBody();
-
-        self.response_bytes += compressed.data.len;
-        try self.req.respond(compressed.data, .{
-            .status = self.res_status,
-            .extra_headers = headers.items,
-            .keep_alive = self.req.head.keep_alive,
-        });
-        self.markResponded();
+        const enc: ?[]const u8 = if (compressed.is_compressed) "gzip" else null;
+        try self.respondBody(compressed.data, "application/json", enc);
     }
 
     /// 200 response shortcut: `{"data": ...}`.
@@ -822,36 +833,8 @@ pub const Context = struct {
         }
         const compressed = try self.compressBody(html);
         defer if (compressed.is_compressed) self.allocator.free(compressed.data);
-
-        var headers = std.ArrayList(std.http.Header).empty;
-        defer {
-            self.freeSetCookieDupes(headers);
-            headers.deinit(self.allocator);
-        }
-
-        try headers.append(self.allocator, .{ .name = "Content-Type", .value = "text/html; charset=utf-8" });
-        if (compressed.is_compressed) {
-            try headers.append(self.allocator, .{ .name = "Content-Encoding", .value = "gzip" });
-        }
-
-        // Add custom headers
-        var header_it = self.response_headers.iterator();
-        while (header_it.next()) |entry| {
-            try headers.append(self.allocator, .{ .name = entry.key_ptr.*, .value = entry.value_ptr.* });
-        }
-
-        // Add Set-Cookie headers (heap-allocated, freed in defer above)
-        try self.appendSetCookieHeaders(&headers);
-
-        self.drainUnconsumedBody();
-
-        self.response_bytes += compressed.data.len;
-        try self.req.respond(compressed.data, .{
-            .status = self.res_status,
-            .extra_headers = headers.items,
-            .keep_alive = self.req.head.keep_alive,
-        });
-        self.markResponded();
+        const enc: ?[]const u8 = if (compressed.is_compressed) "gzip" else null;
+        try self.respondBody(compressed.data, "text/html; charset=utf-8", enc);
     }
 
     // === SSE Streaming ===
@@ -934,8 +917,11 @@ pub const Context = struct {
             getLog().warnFmt("getBodyText called after response started — returning empty", .{});
             return try self.allocator.dupe(u8, "");
         }
+        // Capture / unit-test bodies never touch `req.iterateHeaders`.
         if (self.mock_body) |b| return try self.allocator.dupe(u8, b);
-        var read_buf: [4096]u8 = undefined;
+        // Snapshot headers before body invalidates iterateHeaders (lazy path).
+        self.cacheHeaders();
+        var read_buf: [8192]u8 = undefined;
         var reader = self.req.readerExpectNone(&read_buf);
         return try reader.allocRemaining(self.allocator, std.Io.Limit.limited(self.max_body_size));
     }
@@ -1041,10 +1027,11 @@ pub const Context = struct {
         if (@import("builtin").mode == .debug and self.body_consumed and self.mock_body == null) {
             @panic("Context body already consumed: getBodyText/bindJson/parseJson/getFiles may only read the request body once per request (see Context phase contract)");
         }
+        self.cacheHeaders();
         self.body_consumed = true;
 
         // Read request body
-        var read_buf: [4096]u8 = undefined;
+        var read_buf: [8192]u8 = undefined;
         var reader = self.req.readerExpectNone(&read_buf);
         const body = try reader.allocRemaining(self.allocator, std.Io.Limit.limited(self.max_body_size));
         defer self.allocator.free(body);
@@ -1749,6 +1736,37 @@ test "context: compressBody serves the original body when compression does not p
     defer a.free(body);
     var prng = std.Random.DefaultPrng.init(42);
     prng.random().bytes(body);
+
+    const compressed = try ctx.compressBody(body);
+    try std.testing.expect(!compressed.is_compressed);
+    try std.testing.expectEqualSlices(u8, body, compressed.data);
+}
+
+test "context: compressBody skips bodies below compress_min_bytes" {
+    const a = std.testing.allocator;
+    var cap: Context.CapturedResponse = .{ .allocator = a };
+    defer cap.deinit();
+    var ctx: Context = .{
+        .req = undefined,
+        .allocator = a,
+        .attributes = .init(a),
+        .response_cookies = .empty,
+        .response_headers = .init(a),
+        .capture = &cap,
+        .compress_enabled = true,
+        .compress_min_bytes = 4096,
+    };
+    defer {
+        ctx.attributes.deinit();
+        ctx.response_headers.deinit();
+        ctx.response_cookies.deinit(a);
+        if (ctx.mock_headers) |*mh| mh.deinit();
+    }
+    try ctx.setMockHeader("Accept-Encoding", "gzip");
+
+    const body = try a.alloc(u8, 1024);
+    defer a.free(body);
+    @memset(body, 'x');
 
     const compressed = try ctx.compressBody(body);
     try std.testing.expect(!compressed.is_compressed);

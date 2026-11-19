@@ -49,9 +49,16 @@ pub const ServerConfig = struct {
     /// still asserts on 0.17.0-dev.1422). Production: keep true and put client
     /// keep-alive on nginx/Caddy — `doc/reverse_proxy.md`.
     /// Set false only after full body-drain coverage + upstream fix + soak tests.
+    /// Biggest throughput lever vs Lighting-style servers (true keep-alive).
     force_connection_close: bool = true,
     /// Default `Context.compress_enabled` for responses (gzip when client accepts).
     compress_responses: bool = true,
+    /// Skip gzip below this body size (bytes). Lighting-style: small JSON
+    /// APIs pay more for flate window than they save. Default 4 KiB.
+    compress_min_bytes: usize = 4096,
+    /// Per-connection `receiveHead` / body read buffer size. Lighting uses
+    /// 8–16 KiB; larger buffers cut syscall chatter on pipelined/keep-alive.
+    conn_read_buffer_bytes: usize = 8192,
 };
 
 /// Error set for server operations. Wrapped to fit Group.async std.Io.Cancelable!void constraint.
@@ -305,9 +312,12 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
         if (!ws_took_over) conn.close(io);
     }
 
-    var read_buf: [4096]u8 = undefined;
-    var write_buf: [4096]u8 = undefined;
-    var reader = sockread.TimedIoReader.init(conn, &read_buf, server.config.read_timeout_ms);
+    // Cap stack buffers: Zig forbids runtime-sized stack arrays. Config can
+    // raise the logical size later via a heap path; 8 KiB matches Lighting.
+    var read_buf: [8192]u8 = undefined;
+    var write_buf: [8192]u8 = undefined;
+    const read_slice = read_buf[0..@min(read_buf.len, server.config.conn_read_buffer_bytes)];
+    var reader = sockread.TimedIoReader.init(conn, read_slice, server.config.read_timeout_ms);
     var writer = TimedWriter.init(conn, io, &write_buf, server.config.write_timeout_ms);
     var http_srv = http.Server.init(&reader.interface, &writer.interface);
     var req_count: usize = 0;
@@ -486,9 +496,12 @@ fn dispatch(request: *http.Server.Request, server: *Server, peer_addr: ?std.Io.n
 
     var ctx = Context.init(request, server.allocator);
     ctx.remote_addr = peer_addr;
-    ctx.cacheHeaders(); // snapshot headers before the body can invalidate them
+    // Lazy header cache (Lighting-style zero-copy until body): `getHeader`
+    // walks `iterateHeaders` while still in `.received_head`; body readers
+    // call `cacheHeaders` immediately before consuming the body.
     ctx.max_body_size = server.config.max_body_size;
     ctx.compress_enabled = server.config.compress_responses;
+    ctx.compress_min_bytes = server.config.compress_min_bytes;
     ctx.app_state = server.app_state;
     // Set the per-request deadline up front. Handlers / dispatch loops
     // can check `ctx.isExpired()` to bail out of long work.

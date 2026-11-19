@@ -54,6 +54,7 @@ desktop.ini
 tmp/
 temp/
 *.tmp
+.tmp/
 
 # Coverage
 *.gcov
