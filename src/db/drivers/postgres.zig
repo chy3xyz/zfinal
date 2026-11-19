@@ -8,6 +8,78 @@ const diag = @import("../diag.zig");
 
 const c = @import("c_pg");
 
+/// Translate the library's `?` placeholders into PostgreSQL's `$n` form.
+///
+/// SQLite and MySQL take `?` natively; PostgreSQL's extended query
+/// protocol wants `$1, $2, ...`. The library writes `?` everywhere, so
+/// the driver has to do the translation — without it every parameterised
+/// query against PostgreSQL fails with "syntax error at or near ','".
+///
+/// A `?` inside a string literal or a quoted identifier is left alone.
+/// `??` is an escaped literal `?`, which is how a query keeps
+/// PostgreSQL's JSONB existence operator (`??|` / `??&`).
+pub fn translatePlaceholders(allocator: std.mem.Allocator, sql: [:0]const u8) ![:0]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    var index: usize = 0;
+    var i: usize = 0;
+    while (i < sql.len) {
+        switch (sql[i]) {
+            '?' => {
+                if (i + 1 < sql.len and sql[i + 1] == '?') {
+                    try out.append(allocator, '?');
+                    i += 2;
+                    continue;
+                }
+                index += 1;
+                const number = try std.fmt.allocPrint(allocator, "${d}", .{index});
+                defer allocator.free(number);
+                try out.appendSlice(allocator, number);
+                i += 1;
+            },
+            '\'' => i = try copyQuoted(allocator, &out, sql, i, '\''),
+            '"' => i = try copyQuoted(allocator, &out, sql, i, '"'),
+            else => {
+                try out.append(allocator, sql[i]);
+                i += 1;
+            },
+        }
+    }
+
+    // `toOwnedSliceSentinel` appends the terminator itself.
+    return out.toOwnedSliceSentinel(allocator, 0);
+}
+
+/// Copy a quoted run — a string literal or a quoted identifier — verbatim.
+///
+/// The closing quote may be doubled (`''` inside a literal, `""` inside an
+/// identifier), so the scan has to look one character ahead.
+/// Returns the index just past the closing quote.
+fn copyQuoted(
+    allocator: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    sql: [:0]const u8,
+    start: usize,
+    quote: u8,
+) !usize {
+    try out.append(allocator, sql[start]);
+    var i = start + 1;
+    while (i < sql.len) : (i += 1) {
+        try out.append(allocator, sql[i]);
+        if (sql[i] != quote) continue;
+        if (i + 1 < sql.len and sql[i + 1] == quote) {
+            i += 1;
+            try out.append(allocator, sql[i]);
+            continue;
+        }
+        return i + 1;
+    }
+    // Unterminated quote: the SQL is malformed anyway, but copying what
+    // is there keeps the error message pointing at the real problem.
+    return i;
+}
+
 // PG_DIAG_* field codes — character constants from <libpq-fe.h>:
 //   'C' SQLSTATE, 'M' primary message, 't' table, 'c' column, 'n' constraint.
 const PG_DIAG_SQLSTATE: c_int = 'C';
@@ -157,9 +229,12 @@ pub const PostgresDB = struct {
         const bind = try buildParams(self.allocator, params);
         defer freeParams(self.allocator, bind);
 
+        const translated = try translatePlaceholders(self.allocator, sql);
+        defer self.allocator.free(translated);
+
         const res = c.PQexecParams(
             cxn,
-            sql.ptr,
+            translated.ptr,
             @intCast(params.len),
             null,
             bind.values.ptr,
@@ -193,9 +268,12 @@ pub const PostgresDB = struct {
         // and we decode directly into the matching Cell variant. Saves the
         // server-side to_text() and the client-side parseInt() round-trip.
         const result_format: c_int = 1;
+        const translated = try translatePlaceholders(self.allocator, sql);
+        defer self.allocator.free(translated);
+
         const res = c.PQexecParams(
             cxn,
-            sql.ptr,
+            translated.ptr,
             @intCast(params.len),
             null,
             bind.values.ptr,
@@ -278,9 +356,12 @@ pub const PostgresDB = struct {
 
         // resultFormats[0] = 1 → binary output for typed reads.
         const result_format: c_int = 1;
+        const translated = try translatePlaceholders(self.allocator, sql);
+        defer self.allocator.free(translated);
+
         const res = c.PQexecParams(
             cxn,
-            sql.ptr,
+            translated.ptr,
             @intCast(params.len),
             null,
             bind.values.ptr,
@@ -468,9 +549,13 @@ pub const PostgresDB = struct {
     /// On error, any partial server-side state is rolled back.
     pub fn prepareCached(self: *PostgresDB, name: [:0]const u8, sql: [:0]const u8, n_params: c_int) !void {
         const cxn = self.conn orelse return error.ConnectionFailed;
+        // A server-prepared statement is parsed with the same rules as an
+        // extended-protocol query, so it needs the `$n` placeholders too.
+        const translated = try translatePlaceholders(self.allocator, sql);
+        defer self.allocator.free(translated);
         // PQprepare server-parses + plans the statement and binds it to
         // `name`. The returned PGresult is just an ack — PQclear it.
-        const res = c.PQprepare(cxn, name, sql, n_params, null);
+        const res = c.PQprepare(cxn, name, translated.ptr, n_params, null);
         defer c.PQclear(res);
         if (c.PQresultStatus(res) != c.PGRES_COMMAND_OK) {
             const d = extractPgDiag(res);
@@ -1084,4 +1169,36 @@ fn writeIpv6(buf: []u8, addr: []const u8) !usize {
         g += 1;
     }
     return len;
+}
+
+test "translatePlaceholders rewrites ? into PostgreSQL's $n" {
+    const a = std.testing.allocator;
+
+    const cases = [_]struct { sql: [:0]const u8, want: [:0]const u8 }{
+        .{ .sql = "INSERT INTO t (a) VALUES (?)", .want = "INSERT INTO t (a) VALUES ($1)" },
+        .{ .sql = "INSERT INTO t (a, b, c) VALUES (?, ?, ?)", .want = "INSERT INTO t (a, b, c) VALUES ($1, $2, $3)" },
+        .{ .sql = "UPDATE t SET a = ? WHERE b = ?", .want = "UPDATE t SET a = $1 WHERE b = $2" },
+        // A `?` inside a string literal is data, not a placeholder.
+        .{ .sql = "SELECT * FROM t WHERE a = ? AND b = 'why?'", .want = "SELECT * FROM t WHERE a = $1 AND b = 'why?'" },
+        // Same for a quoted identifier.
+        .{ .sql = "SELECT \"odd?name\" FROM t WHERE a = ?", .want = "SELECT \"odd?name\" FROM t WHERE a = $1" },
+        // A doubled quote inside a literal does not end it.
+        .{ .sql = "SELECT 'it''s ? here' FROM t WHERE a = ?", .want = "SELECT 'it''s ? here' FROM t WHERE a = $1" },
+        // `??` is an escaped literal `?` — that is how a query keeps the
+        // JSONB existence operator.
+        .{ .sql = "SELECT * FROM t WHERE data ?? 'key' AND a = ?", .want = "SELECT * FROM t WHERE data ? 'key' AND a = $1" },
+    };
+
+    for (cases) |case| {
+        const got = try translatePlaceholders(a, case.sql);
+        defer a.free(got);
+        try std.testing.expectEqualStrings(case.want, got);
+    }
+}
+
+test "translatePlaceholders leaves parameterless SQL alone" {
+    const a = std.testing.allocator;
+    const got = try translatePlaceholders(a, "SELECT 1");
+    defer a.free(got);
+    try std.testing.expectEqualStrings("SELECT 1", got);
 }
