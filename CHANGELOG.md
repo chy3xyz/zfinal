@@ -2,6 +2,12 @@
 
 <!-- New changes land here; on release, move them under a new `## [x.y.z]` section. -->
 
+## [0.28.5] - 2026-11-19
+
+### Fixed
+
+- **The release pipeline was blocked by one test** ([context.zig](src/core/context.zig), [handler.zig](src/ext/handler.zig), [ext_util.zig](src/ext/ext_util.zig)): five tests built their `Context` with `var ctx: Context = undefined;` and then assigned a few fields, leaving the rest as whatever the stack happened to hold. `parseJson` reads `self.arena` to decide whether to create one — on the Linux runners that value was a non-null garbage pointer, so the test handed an uninitialised `ArenaAllocator` to `std.json.parseFromSlice` and died with a General protection exception. macOS happened to have null there, so the suite was green locally and red on CI. Every release since v0.27.x failed its quality gate at this one test, which is why the tag workflow never published a release. The tests now build the `Context` with a full struct literal, the convention the rest of the file already uses.
+
 ## [0.28.4] - 2026-11-19
 
 ### Fixed
