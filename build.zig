@@ -18,6 +18,7 @@ fn addExample(
     desc: []const u8,
     driver_mysql: bool,
     driver_pg: bool,
+    pg_lib: []const u8,
 ) void {
     const example_mod = b.createModule(.{
         .root_source_file = b.path(root_file),
@@ -27,7 +28,7 @@ fn addExample(
     });
     example_mod.link_libc = true;
     example_mod.linkSystemLibrary("sqlite3", .{});
-    linkOptionalDbDrivers(example_mod, driver_mysql, driver_pg);
+    linkOptionalDbDrivers(example_mod, driver_mysql, driver_pg, pg_lib);
 
     const exe = b.addExecutable(.{
         .name = name,
@@ -42,9 +43,21 @@ fn addExample(
     run_step.dependOn(&run_cmd.step);
 }
 
-fn linkOptionalDbDrivers(mod: *std.Build.Module, driver_mysql: bool, driver_pg: bool) void {
+fn linkOptionalDbDrivers(
+    mod: *std.Build.Module,
+    driver_mysql: bool,
+    driver_pg: bool,
+    pg_lib: ?[]const u8,
+) void {
     if (driver_mysql) mod.linkSystemLibrary("mysqlclient", .{});
-    if (driver_pg) mod.linkSystemLibrary("pq", .{});
+    if (driver_pg) {
+        // libpq is a keg-only formula on Homebrew: the library lives in
+        // its own directory and is not on the linker's default search
+        // path, so the path has to be handed over explicitly. Without
+        // this, `-Ddriver_pg=true` cannot even link on macOS.
+        if (pg_lib) |dir| mod.addLibraryPath(.{ .cwd_relative = dir });
+        mod.linkSystemLibrary("pq", .{});
+    }
 }
 
 pub fn build(b: *std.Build) void {
@@ -60,11 +73,13 @@ pub fn build(b: *std.Build) void {
     // Platform-aware include paths (user overridable)
     const mysql_include = b.option([]const u8, "mysql-include", "Path to MySQL include directory (e.g. /usr/include/mysql)");
     const pg_include = b.option([]const u8, "pg-include", "Path to PostgreSQL include directory (e.g. /usr/include/postgresql)");
+    const pg_lib = b.option([]const u8, "pg-lib", "Path to the directory that holds libpq (e.g. /opt/homebrew/opt/libpq/lib)");
 
     // Detect platform-appropriate defaults
     const native_os = target.result.os.tag;
     const default_mysql_include: []const u8 = if (native_os == .macos) "/opt/homebrew/include" else "/usr/include/mysql";
     const default_pg_include: []const u8 = if (native_os == .macos) "/opt/homebrew/opt/libpq/include" else "/usr/include/postgresql";
+    const default_pg_lib: []const u8 = if (native_os == .macos) "/opt/homebrew/opt/libpq/lib" else "/usr/lib";
 
     // --- C header translation (Zig 0.17: @cImport removed, use build-system translate-c) ---
 
@@ -137,7 +152,7 @@ pub fn build(b: *std.Build) void {
     });
     zfinal_mod.link_libc = true;
     zfinal_mod.linkSystemLibrary("sqlite3", .{});
-    linkOptionalDbDrivers(zfinal_mod, driver_mysql, driver_pg);
+    linkOptionalDbDrivers(zfinal_mod, driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
     zfinal_mod.addImport("c_sqlite3", sqlite3_c_mod);
     if (mysql_c_mod) |m| zfinal_mod.addImport("c_mysql", m);
     if (pg_c_mod) |p| zfinal_mod.addImport("c_pg", p);
@@ -180,25 +195,25 @@ pub fn build(b: *std.Build) void {
     db_int_test_step.dependOn(&run_lib_unit_tests.step);
 
     // Example runners
-    addExample(b, zfinal_mod, "hello", "examples/hello-world/main.zig", "Run hello-world demo", driver_mysql, driver_pg);
-    addExample(b, zfinal_mod, "blog", "examples/blog-single/main.zig", "Run blog-single demo", driver_mysql, driver_pg);
-    addExample(b, zfinal_mod, "ai-blog-5min", "examples/ai-blog-5min/main.zig", "Run 5-minute AI speedrun demo (blog CRUD scaffold)", driver_mysql, driver_pg);
-    addExample(b, zfinal_mod, "ai-runtime", "examples/ai-runtime/main.zig", "Run offline zfinal.ai runtime demo (Agent/Workflow/skills)", driver_mysql, driver_pg);
-    addExample(b, zfinal_mod, "ai-mcp", "examples/ai-mcp/main.zig", "Run offline MCP client bridge demo (FakeTransport)", driver_mysql, driver_pg);
-    addExample(b, zfinal_mod, "htmx", "examples/htmx/main.zig", "Run HTMX demo", driver_mysql, driver_pg);
-    addExample(b, zfinal_mod, "htmx-admin", "examples/htmx-admin/main.zig", "Run vben-style admin UI demo (run `zf admin` first)", driver_mysql, driver_pg);
-    addExample(b, zfinal_mod, "htmx-admin-demo", "examples/htmx-admin-demo/main.zig", "Run full-stack multi-table admin demo (3 tables, search, multi-table sidebar)", driver_mysql, driver_pg);
-    addExample(b, zfinal_mod, "standalone-admin", "examples/standalone-admin/main.zig", "Run standalone single-binary admin (all HTML @embedFile, zero deps)", driver_mysql, driver_pg);
-    addExample(b, zfinal_mod, "ws", "examples/websocket/main.zig", "Run WebSocket demo (ZFinal.addWebSocket)", driver_mysql, driver_pg);
-    addExample(b, zfinal_mod, "oauth2", "examples/oauth2/main.zig", "Run OAuth2 PKCE helpers demo (offline)", driver_mysql, driver_pg);
-    addExample(b, zfinal_mod, "edge", "examples/edge/main.zig", "Run edge computing demo", driver_mysql, driver_pg);
-    addExample(b, zfinal_mod, "auth", "examples/auth/main.zig", "Run auth demo", driver_mysql, driver_pg);
-    addExample(b, zfinal_mod, "captcha", "examples/captcha/main.zig", "Run captcha demo", driver_mysql, driver_pg);
-    addExample(b, zfinal_mod, "generator", "examples/generator/main.zig", "Run codegen demo", driver_mysql, driver_pg);
-    addExample(b, zfinal_mod, "production", "examples/production/main.zig", "Run production example", driver_mysql, driver_pg);
-    addExample(b, zfinal_mod, "ports-l2", "examples/ports-l2/main.zig", "Run L2 ports DI demo (store/cache/bus)", driver_mysql, driver_pg);
-    addExample(b, zfinal_mod, "ports-l3", "examples/ports-l3/main.zig", "Run L3 ports DI demo (store/cache/bus/outbox + tenant)", driver_mysql, driver_pg);
-    addExample(b, zfinal_mod, "zfsaas", "examples/zfsaas/backend/main.zig", "Run zfsaas backend (auth/org/billing/todo API)", driver_mysql, driver_pg);
+    addExample(b, zfinal_mod, "hello", "examples/hello-world/main.zig", "Run hello-world demo", driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
+    addExample(b, zfinal_mod, "blog", "examples/blog-single/main.zig", "Run blog-single demo", driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
+    addExample(b, zfinal_mod, "ai-blog-5min", "examples/ai-blog-5min/main.zig", "Run 5-minute AI speedrun demo (blog CRUD scaffold)", driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
+    addExample(b, zfinal_mod, "ai-runtime", "examples/ai-runtime/main.zig", "Run offline zfinal.ai runtime demo (Agent/Workflow/skills)", driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
+    addExample(b, zfinal_mod, "ai-mcp", "examples/ai-mcp/main.zig", "Run offline MCP client bridge demo (FakeTransport)", driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
+    addExample(b, zfinal_mod, "htmx", "examples/htmx/main.zig", "Run HTMX demo", driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
+    addExample(b, zfinal_mod, "htmx-admin", "examples/htmx-admin/main.zig", "Run vben-style admin UI demo (run `zf admin` first)", driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
+    addExample(b, zfinal_mod, "htmx-admin-demo", "examples/htmx-admin-demo/main.zig", "Run full-stack multi-table admin demo (3 tables, search, multi-table sidebar)", driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
+    addExample(b, zfinal_mod, "standalone-admin", "examples/standalone-admin/main.zig", "Run standalone single-binary admin (all HTML @embedFile, zero deps)", driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
+    addExample(b, zfinal_mod, "ws", "examples/websocket/main.zig", "Run WebSocket demo (ZFinal.addWebSocket)", driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
+    addExample(b, zfinal_mod, "oauth2", "examples/oauth2/main.zig", "Run OAuth2 PKCE helpers demo (offline)", driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
+    addExample(b, zfinal_mod, "edge", "examples/edge/main.zig", "Run edge computing demo", driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
+    addExample(b, zfinal_mod, "auth", "examples/auth/main.zig", "Run auth demo", driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
+    addExample(b, zfinal_mod, "captcha", "examples/captcha/main.zig", "Run captcha demo", driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
+    addExample(b, zfinal_mod, "generator", "examples/generator/main.zig", "Run codegen demo", driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
+    addExample(b, zfinal_mod, "production", "examples/production/main.zig", "Run production example", driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
+    addExample(b, zfinal_mod, "ports-l2", "examples/ports-l2/main.zig", "Run L2 ports DI demo (store/cache/bus)", driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
+    addExample(b, zfinal_mod, "ports-l3", "examples/ports-l3/main.zig", "Run L3 ports DI demo (store/cache/bus/outbox + tenant)", driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
+    addExample(b, zfinal_mod, "zfsaas", "examples/zfsaas/backend/main.zig", "Run zfsaas backend (auth/org/billing/todo API)", driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
 
     // SaaS Kit unit tests (SQLite in-memory domain tests)
     {
@@ -210,7 +225,7 @@ pub fn build(b: *std.Build) void {
         });
         saas_test_mod.link_libc = true;
         saas_test_mod.linkSystemLibrary("sqlite3", .{});
-        linkOptionalDbDrivers(saas_test_mod, driver_mysql, driver_pg);
+        linkOptionalDbDrivers(saas_test_mod, driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
         const saas_tests = b.addTest(.{ .root_module = saas_test_mod, .name = "zfsaas-tests" });
         const run_saas_tests = b.addRunArtifact(saas_tests);
         const saas_test_step = b.step("test-zfsaas", "Run zfsaas backend domain tests (auth/org/billing/todo)");
@@ -248,7 +263,7 @@ pub fn build(b: *std.Build) void {
         });
         ruoyi_mod.link_libc = true;
         ruoyi_mod.linkSystemLibrary("sqlite3", .{});
-        linkOptionalDbDrivers(ruoyi_mod, driver_mysql, driver_pg);
+        linkOptionalDbDrivers(ruoyi_mod, driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
         const ruoyi_exe = b.addExecutable(.{ .name = "ruoyi-gen", .root_module = ruoyi_mod });
         b.installArtifact(ruoyi_exe);
         const ruoyi_run = b.addRunArtifact(ruoyi_exe);
@@ -276,7 +291,7 @@ pub fn build(b: *std.Build) void {
     });
     pb_mod.link_libc = true;
     pb_mod.linkSystemLibrary("sqlite3", .{});
-    linkOptionalDbDrivers(pb_mod, driver_mysql, driver_pg);
+    linkOptionalDbDrivers(pb_mod, driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
     const pb_exe = b.addExecutable(.{
         .name = "pb",
         .root_module = pb_mod,
@@ -388,7 +403,7 @@ pub fn build(b: *std.Build) void {
     });
     bench_mod.link_libc = true;
     bench_mod.linkSystemLibrary("sqlite3", .{});
-    linkOptionalDbDrivers(bench_mod, driver_mysql, driver_pg);
+    linkOptionalDbDrivers(bench_mod, driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
     const bench_exe = b.addExecutable(.{
         .name = "zbench",
         .root_module = bench_mod,
@@ -409,7 +424,7 @@ pub fn build(b: *std.Build) void {
         });
         db_bench_mod.link_libc = true;
         db_bench_mod.linkSystemLibrary("sqlite3", .{});
-        linkOptionalDbDrivers(db_bench_mod, driver_mysql, driver_pg);
+        linkOptionalDbDrivers(db_bench_mod, driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
         const db_bench_exe = b.addExecutable(.{
             .name = "zbench-db",
             .root_module = db_bench_mod,
@@ -431,7 +446,7 @@ pub fn build(b: *std.Build) void {
         });
         adr_bench_mod.link_libc = true;
         adr_bench_mod.linkSystemLibrary("sqlite3", .{});
-        linkOptionalDbDrivers(adr_bench_mod, driver_mysql, driver_pg);
+        linkOptionalDbDrivers(adr_bench_mod, driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
         const adr_bench_exe = b.addExecutable(.{
             .name = "zbench-adr017",
             .root_module = adr_bench_mod,
@@ -453,7 +468,7 @@ pub fn build(b: *std.Build) void {
         });
         sr_bench_mod.link_libc = true;
         sr_bench_mod.linkSystemLibrary("sqlite3", .{});
-        linkOptionalDbDrivers(sr_bench_mod, driver_mysql, driver_pg);
+        linkOptionalDbDrivers(sr_bench_mod, driver_mysql, driver_pg, pg_lib orelse default_pg_lib);
         const sr_bench_exe = b.addExecutable(.{
             .name = "zbench-sockread",
             .root_module = sr_bench_mod,
