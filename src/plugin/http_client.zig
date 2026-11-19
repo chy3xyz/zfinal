@@ -428,9 +428,9 @@ test "http client: idle timeout is refreshed by ongoing activity" {
     const Busy = struct {
         fn run(task_io: std.Io, c: *ActivityClock) u32 {
             var i: usize = 0;
-            // 总耗时约 200ms —— 必须超过 100ms 的空闲阈值，否则「刷新」
+            // 总耗时约 2400ms —— 必须超过 2000ms 的空闲阈值，否则「刷新」
             // 失效时测试也会通过，就没有牙齿了。
-            while (i < 10) : (i += 1) {
+            while (i < 120) : (i += 1) {
                 std.Io.sleep(task_io, std.Io.Duration.fromMilliseconds(20), .awake) catch return 0;
                 c.touch();
             }
@@ -438,11 +438,18 @@ test "http client: idle timeout is refreshed by ongoing activity" {
         }
     };
 
-    // 每 20ms 刷新一次、总耗时约 200ms；100ms 的空闲阈值不应触发。
+    // 每 20ms 刷新一次、总耗时约 2400ms；2000ms 的空闲阈值不应触发。
     //
-    // 阈值与刷新间隔之间留 5 倍余量：CI runner 拥堵时，一个 20ms 的
-    // sleep 很容易被拖到 50ms 以上，2.5 倍余量会让这条用例随机变红
-    // （2026-10 起在 macOS runner 上间歇失败，表现为
-    // "expected 42, found null"）。
-    try std.testing.expectEqual(@as(?u32, 42), try raceWithTimeout(io, 100, &clock, Busy.run, .{ io, &clock }));
+    // 两个数字是绑在一起的：
+    //
+    // - 阈值必须**远大于**单次刷新间隔。空闲看门狗判的是「距上次刷新过了
+    //   多久」，所以一次 sleep 只要被拖长到超过阈值，整条用例就误判成超时
+    //   （表现为 "expected 42, found null"）。20ms 的间隔配 2000ms 的阈值，
+    //   一次 sleep 得跑出 1980ms 才会误判——CI runner 拥堵时不可能。
+    // - 总耗时必须**大于**阈值，否则「刷新失效」时任务反而先完成，用例照样
+    //   通过，就没有牙齿了。
+    //
+    // 之前是 20ms 间隔配 100ms 阈值：一次 sleep 被拖到 80ms 以上就误判，
+    // 这条用例从 2026-10 起在 macOS runner 上间歇变红。
+    try std.testing.expectEqual(@as(?u32, 42), try raceWithTimeout(io, 2_000, &clock, Busy.run, .{ io, &clock }));
 }
