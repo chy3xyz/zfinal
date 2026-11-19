@@ -278,8 +278,18 @@ test "IpExt.formatIpAddress renders dotted-quad / hex string" {
 
 test "IpExt.resolveClientIp trusts proxy only when peer matches allow-list" {
     const a = std.testing.allocator;
-    var ctx: zfinal.Context = undefined;
-    ctx.allocator = a;
+    var ctx: zfinal.Context = .{
+        .req = undefined,
+        .allocator = a,
+        .attributes = .init(a),
+        .response_cookies = .empty,
+        .response_headers = .init(a),
+        .compress_enabled = false,
+    };
+    defer {
+        ctx.attributes.deinit();
+        ctx.response_headers.deinit();
+    }
     ctx.remote_addr = std.Io.net.IpAddress{ .ip4 = .{ .bytes = .{ 127, 0, 0, 1 }, .port = 54321 } };
     ctx.mock_headers = std.StringHashMap([]const u8).init(a);
     defer ctx.mock_headers.?.deinit();

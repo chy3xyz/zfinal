@@ -1190,8 +1190,18 @@ test "context: isSafeDownloadPath rejects traversal" {
 
 test "context: getHeader is case-insensitive over cached header_map" {
     const a = std.testing.allocator;
-    var ctx: Context = undefined;
-    ctx.allocator = a;
+    var ctx: Context = .{
+        .req = undefined,
+        .allocator = a,
+        .attributes = .init(a),
+        .response_cookies = .empty,
+        .response_headers = .init(a),
+        .compress_enabled = false,
+    };
+    defer {
+        ctx.attributes.deinit();
+        ctx.response_headers.deinit();
+    }
     ctx.header_map = std.StringHashMap([]const u8).init(a);
     defer {
         var it = ctx.header_map.?.iterator();
@@ -1215,10 +1225,17 @@ test "context: getHeader is case-insensitive over cached header_map" {
 test "context: setCookie defaults HttpOnly+SameSite" {
     const a = std.testing.allocator;
     // Minimal Context without a live HTTP request — only exercise cookie list.
-    var ctx: Context = undefined;
-    ctx.allocator = a;
-    ctx.response_cookies = .empty;
+    var ctx: Context = .{
+        .req = undefined,
+        .allocator = a,
+        .attributes = .init(a),
+        .response_cookies = .empty,
+        .response_headers = .init(a),
+        .compress_enabled = false,
+    };
     defer {
+        ctx.attributes.deinit();
+        ctx.response_headers.deinit();
         for (ctx.response_cookies.items) |c| {
             a.free(c.name);
             a.free(c.value);
@@ -1594,9 +1611,24 @@ test "context: ok() and created() response shortcuts" {
 
 test "parseJson: pure parse, no render on invalid input" {
     const a = std.testing.allocator;
-    var ctx: Context = undefined;
-    ctx.allocator = a;
-    defer if (ctx.arena) |*ar| ar.deinit();
+    // A full struct literal, not `= undefined`: `parseJson` reads
+    // `self.arena` to decide whether to create one, and an undefined
+    // optional is whatever the stack happened to hold — on the Linux CI
+    // it was a non-null garbage value, so the test used an uninitialised
+    // ArenaAllocator and died with a General protection exception.
+    var ctx: Context = .{
+        .req = undefined,
+        .allocator = a,
+        .attributes = .init(a),
+        .response_cookies = .empty,
+        .response_headers = .init(a),
+        .compress_enabled = false,
+    };
+    defer {
+        ctx.attributes.deinit();
+        ctx.response_headers.deinit();
+        if (ctx.arena) |*ar| ar.deinit();
+    }
 
     const Dto = struct { name: []const u8, age: i32 };
     ctx.mock_body = "{\"name\":\"alice\",\"age\":30}";

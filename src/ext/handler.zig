@@ -225,8 +225,18 @@ test "RateLimitHandler enforces window (peer key from remote_addr)" {
     rl.window_seconds = 60;
     defer rl.deinit();
 
-    var ctx: zfinal.Context = undefined;
-    ctx.allocator = a;
+    var ctx: zfinal.Context = .{
+        .req = undefined,
+        .allocator = a,
+        .attributes = .init(a),
+        .response_cookies = .empty,
+        .response_headers = .init(a),
+        .compress_enabled = false,
+    };
+    defer {
+        ctx.attributes.deinit();
+        ctx.response_headers.deinit();
+    }
     ctx.remote_addr = std.Io.net.IpAddress{ .ip4 = .{ .bytes = .{ 127, 0, 0, 1 }, .port = 1 } };
 
     try rl.handle(&ctx);
