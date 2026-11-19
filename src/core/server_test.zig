@@ -94,7 +94,14 @@ test "the server shuts down cleanly while a WebSocket is still open" {
     const thread = try std.Thread.spawn(.{}, ServerRun.run, .{&run});
     // The join has to happen before `server.deinit` frees what the server
     // thread still touches.
-    defer thread.join();
+    //
+    // It is deliberately conditional: joining only returns once the
+    // server is done, and a server that does not stop is exactly the
+    // situation this regression is about. An unconditional join would
+    // block the whole test suite — and the CI job — forever instead of
+    // reporting the failure.
+    var server_done = false;
+    defer if (server_done) thread.join();
 
     // Wait until the server accepts connections.
     const addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", port);
@@ -166,8 +173,22 @@ test "the server shuts down cleanly while a WebSocket is still open" {
         }
         sleepMs(io, 20);
     }
-    try std.testing.expect(stopped);
-    try std.testing.expect(!run.failed.load(.monotonic));
+    if (!stopped) {
+        // A server that does not stop cannot be joined — the join would
+        // block forever. Report it and end the process: a test that hangs
+        // takes the whole suite down with it and says nothing about what
+        // went wrong.
+        std.debug.print(
+            "the server did not stop within 5000ms while a WebSocket was open\n",
+            .{},
+        );
+        std.process.exit(70);
+    }
+    if (run.failed.load(.monotonic)) {
+        std.debug.print("the server reported a fatal error during shutdown\n", .{});
+        std.process.exit(71);
+    }
+    server_done = true;
 
     // Now that the server is done, the client socket can go.
     stream.close(io);
