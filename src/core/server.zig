@@ -222,6 +222,14 @@ fn acceptLoopImpl(io: std.Io, server: *Server, addr: std.Io.net.IpAddress, group
         };
         backoff = 1;
 
+        // The shutdown may have arrived while accept() was blocked. The
+        // connection that just came in is then the wake-up the shutdown
+        // watcher sent, not real traffic: drop it and stop accepting.
+        if (shutdown.isShuttingDown()) {
+            conn.close(io);
+            break;
+        }
+
         const current = server.active_conns.load(.monotonic);
         if (current >= server.config.max_connections) {
             const body = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 19\r\nConnection: close\r\n\r\nService Unavailable";
@@ -561,6 +569,37 @@ fn shutdownWatcher(io: std.Io, server: *Server) std.Io.Cancelable!void {
     }
     if (shutdown.isShuttingDown() and !server.listener_closed.swap(true, .monotonic)) {
         getLog().info("Shutdown signal received, closing listener socket to unblock accept...", .{});
+        // Closing the descriptor alone does not wake a thread that is
+        // already blocked in accept(): Linux keeps the accept waiting on
+        // the now invalid descriptor, so the accept loop never returns
+        // and the server never stops. Darwin does wake it, which is why
+        // this only shows up on Linux.
+        //
+        // The portable way out is to let the listener accept one more
+        // connection: a self-connect completes the TCP handshake, the
+        // pending accept() returns with it, and the accept loop sees
+        // the shutdown flag and stops. The connection is closed right
+        // away — it is a wake-up, not traffic.
+        wakeupAccept(io, server);
         server.listener.socket.close(io);
     }
+}
+
+/// Wake a blocked accept() by connecting to the listener itself.
+///
+/// The listener has to be listening on a real port for this to work; a
+/// failure here is not fatal — the shutdown still closes the socket, and
+/// the accept loop may be woken by that instead.
+fn wakeupAccept(io: std.Io, server: *Server) void {
+    const port = server.listener.socket.address.getPort();
+    if (port == 0) return;
+    // A wildcard bind is reachable through the loopback address; a
+    // specific bind is only reachable through its own address.
+    const host = if (std.mem.eql(u8, server.config.host, "0.0.0.0"))
+        "127.0.0.1"
+    else
+        server.config.host;
+    const addr = std.Io.net.IpAddress.parseIp4(host, port) catch return;
+    const conn = addr.connect(io, .{ .mode = .stream }) catch return;
+    conn.close(io);
 }
