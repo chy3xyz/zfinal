@@ -428,7 +428,9 @@ test "http client: idle timeout is refreshed by ongoing activity" {
     const Busy = struct {
         fn run(task_io: std.Io, c: *ActivityClock) u32 {
             var i: usize = 0;
-            while (i < 5) : (i += 1) {
+            // 总耗时约 200ms —— 必须超过 100ms 的空闲阈值，否则「刷新」
+            // 失效时测试也会通过，就没有牙齿了。
+            while (i < 10) : (i += 1) {
                 std.Io.sleep(task_io, std.Io.Duration.fromMilliseconds(20), .awake) catch return 0;
                 c.touch();
             }
@@ -436,6 +438,11 @@ test "http client: idle timeout is refreshed by ongoing activity" {
         }
     };
 
-    // 每 20ms 刷新一次、总耗时约 100ms；50ms 的空闲阈值不应触发。
-    try std.testing.expectEqual(@as(?u32, 42), try raceWithTimeout(io, 50, &clock, Busy.run, .{ io, &clock }));
+    // 每 20ms 刷新一次、总耗时约 200ms；100ms 的空闲阈值不应触发。
+    //
+    // 阈值与刷新间隔之间留 5 倍余量：CI runner 拥堵时，一个 20ms 的
+    // sleep 很容易被拖到 50ms 以上，2.5 倍余量会让这条用例随机变红
+    // （2026-10 起在 macOS runner 上间歇失败，表现为
+    // "expected 42, found null"）。
+    try std.testing.expectEqual(@as(?u32, 42), try raceWithTimeout(io, 100, &clock, Busy.run, .{ io, &clock }));
 }
