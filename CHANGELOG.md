@@ -2,6 +2,13 @@
 
 <!-- New changes land here; on release, move them under a new `## [x.y.z]` section. -->
 
+## [0.28.7] - 2026-11-19
+
+### Fixed
+
+- **Every parameterised query against PostgreSQL failed with a syntax error** ([postgres.zig](src/db/drivers/postgres.zig)): the library writes `?` placeholders — SQLite and MySQL take them natively — but PostgreSQL's extended query protocol wants `$1, $2, ...`, and the driver handed the SQL to `PQexecParams` unchanged. The server answered `syntax error at or near ","` for the outbox, for the AI modules (approval, trigger, audit, quota, run audit, workflow journal) and for the database layer's own integration tests. The driver now rewrites `?` into `$n` before the call. A `?` inside a string literal or a quoted identifier is left alone, and `??` is an escaped literal `?` so a query can still use PostgreSQL's JSONB existence operator. The rewrite covers every entry point that hands SQL to libpq: `execParams`, `queryParams`, `queryIter` and `prepareCached` (a server-prepared statement is parsed with the same rules).
+- **`-Ddriver_pg=true` could not link on macOS** ([build.zig](build.zig)): the build resolved the libpq *header* path for Homebrew but not the *library* path, and libpq is a keg-only formula — it lives in its own directory, off the linker's default search path. The build now takes a `-Dpg-lib` option and defaults to the Homebrew location on macOS.
+
 ## [0.28.6] - 2026-11-19
 
 ### Fixed
