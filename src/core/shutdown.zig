@@ -22,3 +22,14 @@ fn handleSignal(_: std.posix.SIG) callconv(.c) void {
 pub fn isShuttingDown() bool {
     return shutting_down.load(.monotonic);
 }
+
+/// Ask the server to shut down, as if SIGTERM had arrived.
+///
+/// The server needs this for the paths it has to stop on its own: a fatal
+/// accept error, or the drain deadline running out. Cancelling the task
+/// group is not an option there — the group is already being awaited by
+/// `Server.start`, and Zig's group can only be awaited *or* cancelled,
+/// never both.
+pub fn requestShutdown() void {
+    shutting_down.store(true, .monotonic);
+}

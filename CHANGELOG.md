@@ -2,6 +2,14 @@
 
 <!-- New changes land here; on release, move them under a new `## [x.y.z]` section. -->
 
+## [0.28.4] - 2026-11-19
+
+### Fixed
+
+- **SIGTERM panicked with "reached unreachable code" instead of shutting down** ([server.zig](src/core/server.zig)): when the drain deadline ran out with a connection still open — a WebSocket that never ends on its own — the drain path called `Group.cancel` on the very group `Server.start` was already awaiting. Zig's task group can only be awaited *or* cancelled, never both, so the second completion tripped `assert(!pre_cancel_status.have_awaiter)` and killed the process. The same call sat in the fatal-accept-error path, where it turned "port already in use" into a panic instead of an exit. The server now interrupts the connections it is serving (`shutdown(SHUT_RDWR)`, so a blocked read wakes up with an EOF) and lets the handlers unwind on their own; the group await does the waiting. Regression test added.
+- **The listener socket was closed twice** ([server.zig](src/core/server.zig)): the accept loop's cleanup and the shutdown watcher both closed it, because the cleanup path only *read* the "already closed" flag. The second close hit `EBADF`, which Zig turns into a panic. The cleanup path now claims the close with a `swap`, so exactly one of the two paths closes the socket.
+- **`Server` leaked its connection registry** ([server.zig](src/core/server.zig), [zfinal.zig](src/core/zfinal.zig)): the registry the server keeps of the connections it serves was never released. `Server.deinit` frees it and `ZFinal.start` calls it.
+
 ## [0.28.3] - 2026-11-12
 
 ### Fixed

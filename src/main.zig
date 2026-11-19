@@ -21,6 +21,7 @@ test {
     _ = @import("core/stock_interceptors.zig");
     _ = @import("core/oneshot.zig");
     _ = @import("core/sockread.zig");
+    _ = @import("core/server_test.zig");
     _ = @import("bus/bus.zig");
     _ = @import("websocket/handshake.zig");
     _ = @import("ports/ports.zig");

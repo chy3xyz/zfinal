@@ -180,6 +180,8 @@ pub const ZFinal = struct {
         try self.router.seal();
         try self.plugin_manager.startAll();
         var server = try Server.init(self.allocator, &self.router, self.config);
+        // The server owns the connection registry it fills while serving.
+        defer server.deinit();
         server.metrics = self.metrics;
         server.app_state = self.app_state;
         if (self.ws_manager) |*m| server.ws_manager = m;

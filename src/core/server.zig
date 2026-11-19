@@ -61,6 +61,12 @@ pub const ServerError = error{
     AddressInvalid,
 };
 
+/// How long the drain keeps waiting after it interrupted the connections.
+/// The group await is what actually waits for the handlers to unwind; this
+/// only bounds how long the shutdown reports connections that are still
+/// counted as active.
+const interrupt_grace_ms: u64 = 2_000;
+
 /// Cross-fiber error container. Stores the first fatal error as a message.
 const ErrorHandle = struct {
     err: bool = false,
@@ -86,9 +92,67 @@ pub const Server = struct {
     /// Listener socket, stored so a shutdown watchdog can close it to unblock accept().
     listener: std.Io.net.Server = undefined,
     listener_closed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    /// The connections currently being served.
+    ///
+    /// The drain path needs them: a WebSocket never ends on its own, so
+    /// the shutdown has to interrupt the connections instead of waiting
+    /// for them to finish.
+    conns: std.ArrayList(std.Io.net.Stream) = .empty,
+    conns_mutex: std.Io.Mutex = .init,
+    /// Set once the connections were interrupted, so a connection that
+    /// arrives during the shutdown is interrupted as well.
+    conns_interrupted: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     pub fn init(allocator: std.mem.Allocator, router: *Router, config: ServerConfig) !Server {
         return .{ .allocator = allocator, .router = router, .config = config };
+    }
+
+    /// Remember a connection so the shutdown path can interrupt it.
+    fn registerConn(self: *Server, io: std.Io, conn: std.Io.net.Stream) void {
+        self.conns_mutex.lockUncancelable(io);
+        defer self.conns_mutex.unlock(io);
+        if (self.conns_interrupted.load(.monotonic)) {
+            // The shutdown already went through: this connection must not
+            // be allowed to start a long-lived session.
+            conn.shutdown(io, .both) catch {};
+            return;
+        }
+        self.conns.append(self.allocator, conn) catch {};
+    }
+
+    /// Forget a connection that is no longer served.
+    fn unregisterConn(self: *Server, io: std.Io, conn: std.Io.net.Stream) void {
+        self.conns_mutex.lockUncancelable(io);
+        defer self.conns_mutex.unlock(io);
+        for (self.conns.items, 0..) |known, i| {
+            if (known.socket.handle == conn.socket.handle) {
+                _ = self.conns.swapRemove(i);
+                return;
+            }
+        }
+    }
+
+    /// Interrupt every connection that is still being served.
+    ///
+    /// `shutdown` (not `close`): a blocked read has to wake up with an EOF,
+    /// and closing the descriptor from another task would leave that read
+    /// hanging on a descriptor that may already be reused.
+    fn interruptConnections(self: *Server, io: std.Io) void {
+        self.conns_interrupted.store(true, .monotonic);
+        self.conns_mutex.lockUncancelable(io);
+        defer self.conns_mutex.unlock(io);
+        for (self.conns.items) |conn| {
+            conn.shutdown(io, .both) catch {};
+        }
+    }
+
+    /// Release what the server owns.
+    ///
+    /// The router, the websocket manager and the application state belong to
+    /// the caller — they are not touched here.
+    pub fn deinit(self: *Server) void {
+        self.conns.deinit(self.allocator);
+        self.conns = .empty;
     }
 
     /// Start the server. Blocks until shutdown or fatal error.
@@ -131,7 +195,12 @@ fn acceptLoopImpl(io: std.Io, server: *Server, addr: std.Io.net.IpAddress, group
     var listener = try addr.listen(io, .{ .reuse_address = true });
     server.listener = listener;
     defer {
-        if (!server.listener_closed.load(.monotonic)) {
+        // Exactly one of the two paths may close the listener: this one
+        // (the accept loop is over) and the shutdown watcher (it closes
+        // the socket to unblock a pending accept()). `swap` makes the
+        // winner the only closer — a plain `load` let both run and the
+        // second close hit EBADF, which Zig turns into a panic.
+        if (!server.listener_closed.swap(true, .monotonic)) {
             listener.deinit(io);
         }
     }
@@ -174,12 +243,25 @@ fn acceptLoopImpl(io: std.Io, server: *Server, addr: std.Io.net.IpAddress, group
     while (server.active_conns.load(.monotonic) > 0) {
         if (waited_ms >= drain_deadline_ms) {
             getLog().warnFmt(
-                "Drain timeout ({d}ms) reached with {d} active connection(s); exiting",
+                "Drain timeout ({d}ms) reached with {d} active connection(s); interrupting them",
                 .{ drain_deadline_ms, server.active_conns.load(.monotonic) },
             );
-            // Wake any fiber parked at a cancellation point so start() can
-            // return instead of waiting on a forever-idle connection.
-            group.cancel(io);
+            // The connections are not going to end on their own — a
+            // WebSocket never does. Interrupt them instead of cancelling
+            // the task group: this loop runs *inside* that group, and
+            // `Server.start` is already awaiting it. Zig's group can only
+            // be awaited or cancelled, never both — cancelling here
+            // trips `assert(!pre_cancel_status.have_awaiter)` and kills
+            // the process with "panic: reached unreachable code".
+            server.interruptConnections(io);
+            // Give the handlers a moment to unwind on the EOF. The group
+            // await is what actually waits for them; this only keeps the
+            // shutdown from reporting connections that are already gone.
+            const grace_deadline_ms = waited_ms + interrupt_grace_ms;
+            while (server.active_conns.load(.monotonic) > 0 and waited_ms < grace_deadline_ms) {
+                io.sleep(std.Io.Duration.fromMilliseconds(100), .awake) catch break;
+                waited_ms += 100;
+            }
             break;
         }
         io.sleep(std.Io.Duration.fromMilliseconds(100), .awake) catch break;
@@ -200,6 +282,10 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
     defer _ = server.active_conns.fetchSub(1, .monotonic);
     _ = server.active_conns.fetchAdd(1, .monotonic);
     if (server.metrics) |m| m.recordConnection();
+
+    // Remember the connection so the shutdown path can interrupt it.
+    server.registerConn(io, conn);
+    defer server.unregisterConn(io, conn);
 
     // Populate the peer address once per connection. `Context.remote_addr`
     // was declared but never filled by the server — without it, client-IP
@@ -460,7 +546,12 @@ fn acceptLoop(io: std.Io, server: *Server, addr: std.Io.net.IpAddress, group: *s
     acceptLoopImpl(io, server, addr, group) catch |e| {
         getLog().errFmt("Server fatal error: {}", .{e});
         server.err_handle.set();
-        group.cancel(io);
+        // Stop the server the way a signal does: ask for the shutdown and
+        // interrupt the connections. Cancelling the group is not an option
+        // here — `Server.start` is already awaiting it, and a group can
+        // only be awaited or cancelled, never both.
+        shutdown.requestShutdown();
+        server.interruptConnections(io);
     };
 }
 
