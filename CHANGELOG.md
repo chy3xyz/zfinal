@@ -2,6 +2,13 @@
 
 <!-- New changes land here; on release, move them under a new `## [x.y.z]` section. -->
 
+## [0.28.6] - 2026-11-19
+
+### Fixed
+
+- **The server did not shut down on Linux** ([server.zig](src/core/server.zig)): the shutdown relied on closing the listener descriptor to wake a thread that was already blocked in `accept()`. Darwin does wake it — the blocked `accept` returns `EINVAL`, which Zig maps to `SocketNotListening`, and the accept loop exits cleanly. Linux does not: the `accept` keeps waiting on the now invalid descriptor, so the accept loop never returns, the task group never completes, and `Server.start` never comes back. A SIGTERM with one connection open — a WebSocket never ends on its own — left the process hanging until the orchestrator killed it. The shutdown now lets the listener accept one more connection before closing it: a self-connect completes the TCP handshake, the pending `accept` returns, and the accept loop sees the shutdown flag and stops. The connection that comes in that way is dropped, not served. This also unblocked the Linux CI jobs, which had been stuck in `zig build test` for hours.
+- **A failed shutdown regression test hung the whole suite** ([server_test.zig](src/core/server_test.zig)): the test joined the server thread unconditionally, and joining a server that does not stop blocks forever — so one failing case turned into a hung test binary and a CI job that ran until the runner's six-hour limit with no information. The join now only happens when the server actually finished; otherwise the test reports what happened and ends the process.
+
 ## [0.28.5] - 2026-11-19
 
 ### Fixed
