@@ -8,7 +8,7 @@
 
 [![Zig](https://img.shields.io/badge/Zig-0.17.0-orange.svg)](https://ziglang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v0.28.8-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.28.9-blue.svg)](CHANGELOG.md)
 [![Tests](https://github.com/chy3xyz/zfinal/actions/workflows/ci.yml/badge.svg)](https://github.com/chy3xyz/zfinal/actions/workflows/ci.yml)
 [![Drivers](https://img.shields.io/badge/drivers-SQLite%20%C2%B7%20PostgreSQL%20%C2%B7%20MySQL-blue.svg)]()
 [![Production](https://img.shields.io/badge/production--score-9.8%2F10%20(contractual)%20%C2%B7%20~9.2%20honest-brightgreen.svg)](PRODUCTION_AUDIT.md)
