@@ -127,6 +127,11 @@ pub const Server = struct {
     }
 
     /// Remember a connection so the shutdown path can interrupt it.
+    ///
+    /// Only long-lived sockets need this list (keep-alive HTTP, WebSocket).
+    /// Under `force_connection_close` short HTTP requests must **not** take
+    /// the global `conns_mutex` twice per request — that lock dominated
+    /// close-mode RPS (~15–18k vs ~22–25k baseline) under c=64.
     fn registerConn(self: *Server, io: std.Io, conn: std.Io.net.Stream) void {
         self.conns_mutex.lockUncancelable(io);
         defer self.conns_mutex.unlock(io);
@@ -310,9 +315,15 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
     _ = server.active_conns.fetchAdd(1, .monotonic);
     if (server.metrics) |m| m.recordConnection();
 
-    // Remember the connection so the shutdown path can interrupt it.
-    server.registerConn(io, conn);
-    defer server.unregisterConn(io, conn);
+    // Track for `interruptConnections` only when the socket can outlive a
+    // single short request. Close-mode HTTP relies on absolute read/write
+    // deadlines + `active_conns` drain; WebSocket is registered lazily below.
+    var shutdown_tracked = false;
+    defer if (shutdown_tracked) server.unregisterConn(io, conn);
+    if (!server.config.force_connection_close) {
+        server.registerConn(io, conn);
+        shutdown_tracked = true;
+    }
 
     // Populate the peer address once per connection. `Context.remote_addr`
     // was declared but never filled by the server — without it, client-IP
@@ -366,7 +377,7 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
             reader.setDeadlineFromNow(server.config.read_timeout_ms);
 
         writer.resetWriteDeadline();
-        if (tryWebSocketUpgrade(&request, server, conn) catch |err| {
+        if (tryWebSocketUpgrade(&request, server, io, conn, &shutdown_tracked) catch |err| {
             getLog().warnFmt("WebSocket upgrade failed: {t}", .{err});
             break;
         }) {
@@ -382,7 +393,17 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
 
 /// If the request is a WebSocket upgrade for a registered path, send 101 and
 /// run the handler on `conn`. Returns true when the TCP socket is now owned by WS.
-fn tryWebSocketUpgrade(request: *http.Server.Request, server: *Server, conn: std.Io.net.Stream) !bool {
+///
+/// Registers the socket for `interruptConnections` **before** the handler runs
+/// (WS never ends alone). Under `force_connection_close`, HTTP skipped that
+/// register — without this, SIGTERM drain cannot wake a held-open WebSocket.
+fn tryWebSocketUpgrade(
+    request: *http.Server.Request,
+    server: *Server,
+    io: std.Io,
+    conn: std.Io.net.Stream,
+    shutdown_tracked: *bool,
+) !bool {
     const mgr = server.ws_manager orelse return false;
 
     var upgrade_val: ?[]const u8 = null;
@@ -429,6 +450,12 @@ fn tryWebSocketUpgrade(request: *http.Server.Request, server: *Server, conn: std
         // broadcast/ping snapshot can never touch freed memory.
         mgr.removeConnection(ws);
         ws.unref();
+    }
+
+    // Must run before `handler(ws)` — that call blocks until the peer ends.
+    if (!shutdown_tracked.*) {
+        server.registerConn(io, conn);
+        shutdown_tracked.* = true;
     }
 
     handler(ws) catch |err| {

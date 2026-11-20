@@ -2,6 +2,14 @@
 
 <!-- New changes land here; on release, move them under a new `## [x.y.z]` section. -->
 
+## [0.28.11] - 2026-11-20
+
+### Performance — close-mode connection registry + example logging
+
+- **`force_connection_close` skips `registerConn`/`unregisterConn`** for ordinary HTTP: the global `conns_mutex` was taken twice per accept and dominated c=64 RPS under the production close posture. WebSocket upgrades still register lazily so drain can interrupt them; keep-alive mode still tracks every connection from accept.
+- **Blog / blog-single `LoggingInterceptor`**: Release\* silent unless `ZF_REQUEST_LOG=1` (Debug still logs). Avoids `std.debug.print` serializing all workers during benches.
+- **Examples**: Zig 0.17 `builtin.mode` compare uses `.debug` (was `.Debug`).
+
 ## [0.28.10] - 2026-11-20
 
 ### Performance / KA-prep — Lighting absolute deadlines + bounded drain + alloc path

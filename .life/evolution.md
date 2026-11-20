@@ -4,6 +4,16 @@ Chronological record of every significant change. Append-only. Newest first.
 
 ---
 
+## 2026-11-20 — v0.28.11 close-mode registry + example log gate
+
+**Session**: Perf regression eval (v0.28.0→0.28.10) then fix hot suspects
+**Changes**:
+1. `force_connection_close` HTTP skips `registerConn`/`unregisterConn`; WS registers before handler so SIGTERM interrupt still works (`server_test` WS drain).
+2. Blog LoggingInterceptor: Release\* needs `ZF_REQUEST_LOG=1`; Debug still logs.
+3. Examples `.Debug` → `.debug` for Zig 0.17 OptimizeMode.
+**Tests**: `zig build test` (WS shutdown + suite).
+**Next**: idle-machine re-bench vs BASELINE; tag v0.28.11 when shipping.
+
 ---
 
 ## 2026-10-04 — S1 concurrency correctness batch

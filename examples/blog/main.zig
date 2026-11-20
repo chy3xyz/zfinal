@@ -8,7 +8,7 @@ const Interceptors = @import("interceptor/interceptors.zig");
 
 pub fn main(init: std.process.Init) !void {
     zfinal.io_instance.init(init);
-    const allocator = if (builtin.mode == .Debug) init.gpa else std.heap.smp_allocator;
+    const allocator = if (builtin.mode == .debug) init.gpa else std.heap.smp_allocator;
 
     // 初始化数据库
     const db_config = Config.DBConfig.get();

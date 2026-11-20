@@ -257,8 +257,19 @@ pub const CommentController = struct {
 
 // ============ Interceptors ============
 
+/// Per-request stderr log. Debug: on by default. Release*: off unless
+/// `ZF_REQUEST_LOG=1` — avoids global `std.debug.print` lock under load.
+fn requestLogEnabled() bool {
+    if (std.c.getenv("ZF_REQUEST_LOG")) |p| {
+        const v = std.mem.span(p);
+        return !(std.mem.eql(u8, v, "0") or std.mem.eql(u8, v, "false") or v.len == 0);
+    }
+    return builtin.mode == .debug;
+}
+
 /// 日志拦截器
 fn loggingBefore(ctx: *zfinal.Context) !bool {
+    if (!requestLogEnabled()) return true;
     const method = @tagName(ctx.req.head.method);
     const path = ctx.req.head.target;
     std.debug.print("[{s}] {s}\n", .{ method, path });
@@ -288,7 +299,7 @@ pub const AuthInterceptor = zfinal.Interceptor{
 
 pub fn main(init: std.process.Init) !void {
     zfinal.io_instance.init(init);
-    const allocator = if (builtin.mode == .Debug) init.gpa else std.heap.smp_allocator;
+    const allocator = if (builtin.mode == .debug) init.gpa else std.heap.smp_allocator;
 
     // 初始化数据库
     const config = zfinal.DBConfig.sqlite("blog.db");

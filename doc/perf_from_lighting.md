@@ -55,7 +55,17 @@ zig build run-blog -Doptimize=ReleaseFast
 
 Prefer reverse-proxy keep-alive in production until #25017 is fixed.
 
-## Remaining portable wins (after v0.28.10)
+## What ZFinal adopted (v0.28.11 close-mode hot path)
+
+10. **Skip `registerConn` under `force_connection_close`** — short HTTP no longer
+    takes the global `conns_mutex` twice per request; WebSocket still registers
+    lazily so SIGTERM can `interruptConnections`. Keep-alive mode still tracks
+    every connection from accept.
+11. **Example request logging opt-in in Release\*** — blog / blog-single
+    `LoggingInterceptor` prints only when `ZF_REQUEST_LOG=1` (Debug stays on).
+    Avoids `std.debug.print` global lock tanking bench RPS.
+
+## Remaining portable wins (after v0.28.11)
 
 | Rank | Technique | Notes |
 |------|-----------|-------|
@@ -73,6 +83,7 @@ Prefer reverse-proxy keep-alive in production until #25017 is fixed.
 
 1. Write-path iovec probe / KA soak harness (no default flip).
 2. Optional fully-lazy Context maps if profiling still shows HashMap init cost.
+3. Re-bench blog ReleaseSafe with loadavg in single digits; append `BASELINE.md`.
 
 ## What we did **not** copy
 

@@ -27,7 +27,7 @@ pub fn main(init: std.process.Init) !void {
     zfinal.io_instance.init(init);
     // Lighting-style: ReleaseFast/Safe use smp_allocator to cut GPA lock
     // contention under multi-core load; Debug keeps process GPA for leak tools.
-    const allocator = if (builtin.mode == .Debug) init.gpa else std.heap.smp_allocator;
+    const allocator = if (builtin.mode == .debug) init.gpa else std.heap.smp_allocator;
 
     // Match container/orchestration: SIGTERM/SIGINT → drain with deadline.
     zfinal.shutdown.registerHandlers();
