@@ -150,6 +150,8 @@ pub const NatsClient = struct {
     rx: std.ArrayList(u8),
     /// 收到过 PONG —— `ping()` 在等它。
     pong_pending: bool = false,
+    /// 帧解析进行中 —— 用来挡住回调里的重入调用。
+    parsing: bool = false,
     /// 服务端 INFO 的原文 —— `ServerInfo` 的字段都指向它，由客户端持有。
     info_raw: []const u8 = "",
 
@@ -157,6 +159,8 @@ pub const NatsClient = struct {
         sid: u64,
         subject: []const u8,
         queue_group: ?[]const u8 = null,
+        /// 消息回调。回调里不要重入客户端的 poll/ping/request ——
+        /// 帧派发期间接收缓冲区正在被消费，重入会读到错位的帧。
         callback: *const fn (Message) void,
     };
 
@@ -436,6 +440,8 @@ pub const NatsClient = struct {
     /// reply inbox and waits up to timeout_ms for a single response.
     /// Returns the response payload on success (caller owns). Returns error.Timeout.
     pub fn request(self: *Self, subject: []const u8, payload: []const u8, timeout_ms: u64) ![]const u8 {
+        if (self.parsing) return error.Reentrant;
+
         const s = self.stream orelse return error.NotConnected;
 
         // Generate unique inbox subject
@@ -502,6 +508,9 @@ pub const NatsClient = struct {
     /// Poll for messages. Dispatches matching callbacks.
     /// Returns number of messages processed.
     pub fn poll(self: *Self) !usize {
+        // 回调里重入：外层 pump 会把帧派发出去，这里不能再读也等不起。
+        if (self.parsing) return 0;
+
         var p = try self.pump(null);
         if (p.frames > 0) return p.messages;
 
@@ -518,6 +527,10 @@ pub const NatsClient = struct {
     /// 前 6 个字节是不是 "PONG\r\n"，既会误报 ProtocolError，
     /// 又会把先到的消息直接丢掉。
     pub fn ping(self: *Self) !void {
+        // 回调里重入会死等 PONG（外层 pump 卡在回调里，没人去读）——
+        // 直接报错，让调用方知道这条路不能走。
+        if (self.parsing) return error.Reentrant;
+
         const s = self.stream orelse return error.NotConnected;
         var wbuf: [64]u8 = undefined;
         var w = s.writer(self.io, &wbuf);
@@ -589,6 +602,11 @@ pub const NatsClient = struct {
     /// `capture` 非空时，sid 匹配的 MSG 的 payload 会被拷进 `capture.payload`
     /// （用于 request-reply），不再派发给回调。收不全的帧留在缓冲区里。
     fn pump(self: *Self, capture: ?Capture) !PumpResult {
+        // 回调里重入：外层 pump 会把这些帧派发出去，这里不能再动缓冲区。
+        if (self.parsing) return PumpResult{};
+        self.parsing = true;
+        defer self.parsing = false;
+
         var result = PumpResult{};
         var pos: usize = 0;
         var consumed: usize = 0;
@@ -888,6 +906,83 @@ test "NATS ping does not swallow a queued message" {
         std.Io.sleep(std.testing.io, std.Io.Duration.fromMilliseconds(25), .real) catch {};
     }
     try std.testing.expect(g_nats_ping_hits.load(.monotonic) >= 1);
+}
+
+/// 回调里重入客户端时用的通道（回调签名没有 userdata，只能走全局）。
+var g_reentrant_client: ?*NatsClient = null;
+var g_reentrant_poll_result: std.atomic.Value(i64) = .init(-1);
+/// 回调递归深度封顶 —— 没有重入保护时这里会无限递归，
+/// 掐断它好让断言报出失败，而不是把整个测试二进制挂死。
+var g_reentrant_depth: std.atomic.Value(usize) = .init(0);
+
+test "NATS client rejects re-entrant calls while dispatching frames" {
+    const allocator = std.testing.allocator;
+    var client = NatsClient.init(allocator, std.testing.io, .{});
+    defer client.deinit();
+
+    // 模拟"正在派发帧"的状态：回调里重入客户端就是这个状态。
+    client.parsing = true;
+    defer client.parsing = false;
+
+    // poll 必须立刻返回 0 —— 不能读接收缓冲区，也不能等。
+    try std.testing.expectEqual(@as(usize, 0), try client.poll());
+
+    // ping 必须报错 —— 死等 PONG 会把外层派发卡死。
+    try std.testing.expectError(error.Reentrant, client.ping());
+
+    // request 同理。
+    try std.testing.expectError(error.Reentrant, client.request("s", "p", 10));
+}
+
+test "NATS callback re-entry does not corrupt the stream" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const endpoint = (try envEndpoint(allocator)) orelse return error.SkipZigTest;
+    defer if (endpoint.owned) allocator.free(endpoint.host);
+
+    var client = NatsClient.init(allocator, std.testing.io, .{
+        .url = endpoint.host,
+        .port = endpoint.port,
+    });
+    defer client.deinit();
+
+    _ = try client.connect();
+
+    g_reentrant_client = &client;
+    defer g_reentrant_client = null;
+    g_reentrant_poll_result.store(-1, .monotonic);
+    g_reentrant_depth.store(0, .monotonic);
+
+    const sid = try client.subscribe("zfinal.test.reentrant", struct {
+        fn handler(msg: NatsClient.Message) void {
+            _ = msg;
+            const c = g_reentrant_client orelse return;
+            const depth = g_reentrant_depth.fetchAdd(1, .monotonic);
+            defer _ = g_reentrant_depth.fetchSub(1, .monotonic);
+            if (depth > 0) return;
+
+            // 重入 poll：必须立刻返回 0，不能再读接收缓冲区。
+            const n = c.poll() catch 0;
+            g_reentrant_poll_result.store(@intCast(n), .monotonic);
+        }
+    }.handler);
+    defer client.unsubscribe(sid) catch {};
+
+    try client.publish("zfinal.test.reentrant", "reenter");
+    try client.ping();
+
+    var waited: usize = 0;
+    while (g_reentrant_poll_result.load(.monotonic) == -1 and waited < 40) : (waited += 1) {
+        _ = try client.poll();
+        std.Io.sleep(std.testing.io, std.Io.Duration.fromMilliseconds(25), .real) catch {};
+    }
+
+    // 内层 poll 立刻返回 0 —— 那条消息由外层 pump 派发。
+    // 没有重入保护时内层会再读到同一条消息（返回值 1）并把缓冲区读错位。
+    try std.testing.expectEqual(@as(i64, 0), g_reentrant_poll_result.load(.monotonic));
+
+    // 重入之后连接还是好的 —— 缓冲区没被读错位。
+    try client.ping();
 }
 
 test "NATS request-reply" {
