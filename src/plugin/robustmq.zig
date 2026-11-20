@@ -1627,6 +1627,11 @@ pub const KafkaWireFormat = struct {
     ) ![]u8 {
         var buf = std.ArrayList(u8).empty;
         errdefer buf.deinit(allocator);
+        // 字段顺序照 Kafka FetchRequest v7 的 schema（Apache Kafka
+        // clients/src/main/resources/common/message/FetchRequest.json）。
+        // 版本边界要当心：CurrentLeaderEpoch 是 v9+、RackId 是 v11+，
+        // v7 里都不能出现；LogStartOffset 是 v5+，v7 必须有 ——
+        // 少一个字段，后面全部错位，broker 解析不了就直接断开连接。
         try appendRequestHeader(&buf, allocator, api_fetch, 7, correlation_id, client_id);
 
         try appendI32(&buf, allocator, -1); // replica_id
@@ -1640,11 +1645,10 @@ pub const KafkaWireFormat = struct {
         try appendString(&buf, allocator, topic);
         try appendI32(&buf, allocator, 1); // partitions
         try appendI32(&buf, allocator, partition);
-        try appendI32(&buf, allocator, -1); // current_leader_epoch
-        try appendI64(&buf, allocator, offset);
-        try appendI32(&buf, allocator, max_bytes);
+        try appendI64(&buf, allocator, offset); // fetch_offset
+        try appendI64(&buf, allocator, -1); // log_start_offset (v5+)
+        try appendI32(&buf, allocator, max_bytes); // partition_max_bytes
         try appendI32(&buf, allocator, 0); // forgotten topics
-        try appendString(&buf, allocator, ""); // rack_id
 
         return buf.toOwnedSlice(allocator);
     }
@@ -2656,6 +2660,45 @@ test "KafkaWireFormat parseJoinGroupResponse v1" {
     try std.testing.expectEqual(@as(i32, 7), result.generation_id);
     try std.testing.expect(result.isLeader());
     try std.testing.expectEqual(@as(usize, 1), result.members.len);
+}
+
+test "KafkaWireFormat fetch request matches the Kafka v7 schema" {
+    const allocator = std.testing.allocator;
+    const req = try KafkaWireFormat.buildFetchRequest(allocator, "t", 0, 42, 1024, 7, "cid");
+    defer allocator.free(req);
+
+    // 期望值直接照 Kafka FetchRequest v7 的 schema 手写（Apache Kafka
+    // clients/src/main/resources/common/message/FetchRequest.json）：
+    //   RequestHeader v1: api_key(i16) api_version(i16) correlation_id(i32) client_id(string)
+    //   ReplicaId(i32) MaxWaitMs(i32) MinBytes(i32) MaxBytes(i32) IsolationLevel(i8)
+    //   SessionId(i32) SessionEpoch(i32)
+    //   Topics[1] → Topic(string) Partitions[1] →
+    //     Partition(i32) FetchOffset(i64) LogStartOffset(i64) PartitionMaxBytes(i32)
+    //   ForgottenTopicsData[0]
+    // 版本边界：CurrentLeaderEpoch 是 v9+、RackId 是 v11+（v7 里不能有）；
+    //           LogStartOffset 是 v5+（v7 必须有）。
+    const expected = [_]u8{
+        0x00, 0x01, // api_key = 1 (Fetch)
+        0x00, 0x07, // api_version = 7
+        0x00, 0x00, 0x00, 0x07, // correlation_id = 7
+        0x00, 0x03, 'c', 'i', 'd', // client_id = "cid"
+        0xff, 0xff, 0xff, 0xff, // ReplicaId = -1
+        0x00, 0x00, 0x01, 0xf4, // MaxWaitMs = 500
+        0x00, 0x00, 0x00, 0x01, // MinBytes = 1
+        0x00, 0x00, 0x04, 0x00, // MaxBytes = 1024
+        0x00, // IsolationLevel = 0
+        0x00, 0x00, 0x00, 0x00, // SessionId = 0
+        0xff, 0xff, 0xff, 0xff, // SessionEpoch = -1
+        0x00, 0x00, 0x00, 0x01, // Topics[1]
+        0x00, 0x01, 't', // Topic = "t"
+        0x00, 0x00, 0x00, 0x01, // Partitions[1]
+        0x00, 0x00, 0x00, 0x00, // Partition = 0
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2a, // FetchOffset = 42
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // LogStartOffset = -1
+        0x00, 0x00, 0x04, 0x00, // PartitionMaxBytes = 1024
+        0x00, 0x00, 0x00, 0x00, // ForgottenTopicsData[0]
+    };
+    try std.testing.expectEqualSlices(u8, &expected, req);
 }
 
 test "KafkaWireFormat metadata request and parseTopicPartitionCount" {
