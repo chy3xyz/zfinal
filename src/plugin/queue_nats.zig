@@ -9,7 +9,8 @@
 //! try q.publish("orders.new", "{\"id\":1}");
 //! ```
 //!
-//! Live tests: set `NATS_URL=127.0.0.1` (host only) or use defaults against a local nats-server.
+//! Live tests: set `NATS_URL` to the broker (`nats://127.0.0.1:4222`,
+//! `127.0.0.1:4222` or just `127.0.0.1`).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -103,25 +104,10 @@ pub const QueueNatsClient = struct {
 };
 
 /// Returns `{ host, port, owned }` — if `owned`, caller must free `host`.
+/// URL 解析跟 `nats_client` 共用一份实现，别在这儿再抄一遍。
 fn parseNatsUrl(allocator: std.mem.Allocator, url: []const u8) !struct { []const u8, u16, bool } {
-    var rest = url;
-    if (std.mem.startsWith(u8, rest, "nats://")) rest = rest["nats://".len..];
-    if (std.mem.startsWith(u8, rest, "tcp://")) rest = rest["tcp://".len..];
-
-    // strip path / query
-    if (std.mem.indexOfScalar(u8, rest, '/')) |i| rest = rest[0..i];
-
-    if (std.mem.lastIndexOfScalar(u8, rest, ':')) |colon| {
-        const host_part = rest[0..colon];
-        const port = try std.fmt.parseInt(u16, rest[colon + 1 ..], 10);
-        if (host_part.len == 0) return error.InvalidNatsUrl;
-        const host = try allocator.dupe(u8, host_part);
-        return .{ host, port, true };
-    }
-    if (rest.len == 0) return error.InvalidNatsUrl;
-    // host only — NatsConfig keeps default port; still dupe for ownership clarity
-    const host = try allocator.dupe(u8, rest);
-    return .{ host, 4222, true };
+    const parsed = try nats_client.parseUrl(allocator, url);
+    return .{ parsed.host, parsed.port, parsed.owned };
 }
 
 test "QueueNatsClient parseNatsUrl" {

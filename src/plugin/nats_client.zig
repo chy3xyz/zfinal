@@ -3,17 +3,24 @@
 //! Ported from zigmodu `messaging/Nats.zig`. Implements CONNECT, PUB, SUB,
 //! UNSUB, MSG, PING/PONG, +OK/-ERR over TCP via `std.Io`.
 //! Prefer the façade `QueueNatsClient` (`plugin/queue_nats.zig`) for app code.
+//!
+//! NATS 线上是字节流协议，有两个后果必须记住：
+//!
+//! 1. 一帧可能被拆到多次读里 —— 客户端自带接收缓冲区 `rx`，帧没收全就留着
+//!    等下一次读，半帧处丢数据的事不能发生。
+//! 2. 服务端会先把 MSG 发回来、**再**回 PONG —— 所以 `ping()` 必须扫到真正的
+//!    PONG，途中遇到的 MSG 照常派发，否则订阅到的消息会被 ping 吃掉。
 
 const std = @import("std");
 const builtin = @import("builtin");
-const io_instance = @import("../io_instance.zig");
 const sockread = @import("../core/sockread.zig");
 
-fn nowMillis() i64 {
-    return std.Io.Timestamp.now(io_instance.io, .real).toMilliseconds();
+fn nowMillis(io: std.Io) i64 {
+    return std.Io.Timestamp.now(io, .real).toMilliseconds();
 }
 
 pub const NatsConfig = struct {
+    /// 主机名或 IP 字面量。主机名走 DNS 解析（默认 "localhost"）。
     url: []const u8 = "localhost",
     port: u16 = 4222,
     token: ?[]const u8 = null,
@@ -23,6 +30,111 @@ pub const NatsConfig = struct {
     ping_interval_ms: u64 = 30_000,
     max_reconnect_attempts: usize = 10,
 };
+
+/// 解析出来的连接端点。`owned` 为 true 时 `host` 由调用方释放。
+pub const ParsedUrl = struct {
+    host: []const u8,
+    port: u16,
+    owned: bool,
+};
+
+/// 解析 `nats://host:port` / `tcp://host:port` / `host:port` / `host`。
+/// 也接受 `nats://user:pass@host:port`（userinfo 只用来定位 host）。
+pub fn parseUrl(allocator: std.mem.Allocator, url: []const u8) !ParsedUrl {
+    var rest = url;
+    if (std.mem.startsWith(u8, rest, "nats://")) rest = rest["nats://".len..];
+    if (std.mem.startsWith(u8, rest, "tcp://")) rest = rest["tcp://".len..];
+    // 去掉路径
+    if (std.mem.indexOfScalar(u8, rest, '/')) |i| rest = rest[0..i];
+    // 去掉 userinfo
+    if (std.mem.lastIndexOfScalar(u8, rest, '@')) |i| rest = rest[i + 1 ..];
+
+    // IPv6 字面量：[::1]:4222 —— 方括号形式要先拆出来，
+    // 不然 "[::1]:4222" 会被当成裸 IPv6 处理掉。
+    if (rest.len > 0 and rest[0] == '[') {
+        const close = std.mem.indexOfScalar(u8, rest, ']') orelse return error.InvalidNatsUrl;
+        const host_part = rest[1..close];
+        if (host_part.len == 0) return error.InvalidNatsUrl;
+        const tail = rest[close + 1 ..];
+        var port: u16 = 4222;
+        if (tail.len > 0) {
+            if (tail[0] != ':') return error.InvalidNatsUrl;
+            port = std.fmt.parseInt(u16, tail[1..], 10) catch return error.InvalidNatsUrl;
+        }
+        return .{ .host = try allocator.dupe(u8, host_part), .port = port, .owned = true };
+    }
+
+    // 裸 IPv6 字面量（多个冒号）没有端口，用默认端口
+    if (std.mem.count(u8, rest, ":") > 1) {
+        if (rest.len == 0) return error.InvalidNatsUrl;
+        return .{ .host = try allocator.dupe(u8, rest), .port = 4222, .owned = true };
+    }
+
+    if (std.mem.lastIndexOfScalar(u8, rest, ':')) |colon| {
+        const host_part = rest[0..colon];
+        const port = std.fmt.parseInt(u16, rest[colon + 1 ..], 10) catch return error.InvalidNatsUrl;
+        if (host_part.len == 0) return error.InvalidNatsUrl;
+        return .{ .host = try allocator.dupe(u8, host_part), .port = port, .owned = true };
+    }
+    if (rest.len == 0) return error.InvalidNatsUrl;
+    return .{ .host = try allocator.dupe(u8, rest), .port = 4222, .owned = true };
+}
+
+/// NATS 线上的一帧。
+const Frame = union(enum) {
+    /// 控制行（+OK / -ERR / PING / PONG / INFO …），不含行尾 CRLF。
+    control: struct { line: []const u8, len: usize },
+    /// MSG 帧：MSG <subject> <sid> [reply-to] <#bytes>\r\n<payload>\r\n
+    msg: struct {
+        subject: []const u8,
+        reply_to: ?[]const u8,
+        payload: []const u8,
+        sid: u64,
+        len: usize,
+    },
+};
+
+/// 扫描 buf 开头的第一帧。
+/// 返回 null = 帧没收全（需要更多字节）；error.ProtocolError = 帧头认不出来。
+fn scanFrame(buf: []const u8) error{ProtocolError}!?Frame {
+    if (buf.len == 0) return null;
+
+    if (std.mem.startsWith(u8, buf, "MSG ")) {
+        const nl = std.mem.indexOfScalar(u8, buf, '\n') orelse return null;
+        var header = buf[4..nl];
+        if (header.len > 0 and header[header.len - 1] == '\r') header = header[0 .. header.len - 1];
+
+        var parts = std.mem.splitScalar(u8, header, ' ');
+        const subject = parts.next() orelse return error.ProtocolError;
+        const sid_str = parts.next() orelse return error.ProtocolError;
+        const sid = std.fmt.parseInt(u64, sid_str, 10) catch return error.ProtocolError;
+
+        var reply_to: ?[]const u8 = null;
+        var size_tok = parts.next() orelse return error.ProtocolError;
+        const payload_len = std.fmt.parseInt(usize, size_tok, 10) catch blk: {
+            reply_to = size_tok;
+            size_tok = parts.next() orelse return error.ProtocolError;
+            break :blk std.fmt.parseInt(usize, size_tok, 10) catch return error.ProtocolError;
+        };
+
+        // 帧长 = 头（含 \n） + payload + 结尾 \r\n
+        const total = nl + 1 + payload_len + 2;
+        if (buf.len < total) return null;
+        return .{ .msg = .{
+            .subject = subject,
+            .reply_to = reply_to,
+            .payload = buf[nl + 1 .. nl + 1 + payload_len],
+            .sid = sid,
+            .len = total,
+        } };
+    }
+
+    // 控制行：以 \n 结束（可能带 \r）
+    const nl = std.mem.indexOfScalar(u8, buf, '\n') orelse return null;
+    var line = buf[0..nl];
+    if (line.len > 0 and line[line.len - 1] == '\r') line = line[0 .. line.len - 1];
+    return .{ .control = .{ .line = line, .len = nl + 1 } };
+}
 
 pub const NatsClient = struct {
     const Self = @This();
@@ -34,6 +146,12 @@ pub const NatsClient = struct {
     sid_counter: u64 = 0,
     subscriptions: std.StringHashMap(Subscription),
     reconnect_attempts: usize = 0,
+    /// 已从 socket 读入、还没被帧解析器消费的字节。
+    rx: std.ArrayList(u8),
+    /// 收到过 PONG —— `ping()` 在等它。
+    pong_pending: bool = false,
+    /// 服务端 INFO 的原文 —— `ServerInfo` 的字段都指向它，由客户端持有。
+    info_raw: []const u8 = "",
 
     pub const Subscription = struct {
         sid: u64,
@@ -50,6 +168,8 @@ pub const NatsClient = struct {
     };
 
     /// Info returned by NATS server on connect (parsed from INFO JSON).
+    ///
+    /// 字段都指向客户端持有的 INFO 原文 —— 客户端销毁后不要再用。
     pub const ServerInfo = struct {
         server_id: []const u8 = "",
         server_name: []const u8 = "",
@@ -57,6 +177,7 @@ pub const NatsClient = struct {
         host: []const u8 = "",
         port: u16 = 0,
         max_payload: usize = 1024 * 1024,
+        /// 原始 INFO JSON。
         raw_json: []const u8 = "",
     };
 
@@ -66,6 +187,7 @@ pub const NatsClient = struct {
             .io = io,
             .config = config,
             .subscriptions = std.StringHashMap(Subscription).init(allocator),
+            .rx = std.ArrayList(u8).empty,
         };
     }
 
@@ -81,6 +203,8 @@ pub const NatsClient = struct {
             }
         }
         self.subscriptions.deinit();
+        self.rx.deinit(self.allocator);
+        if (self.info_raw.len > 0) self.allocator.free(self.info_raw);
 
         if (self.stream) |*s| {
             s.close(self.io);
@@ -92,34 +216,27 @@ pub const NatsClient = struct {
     /// Establish TCP connection, parse server INFO, and send CONNECT frame.
     /// Returns server info parsed from the INFO line.
     pub fn connect(self: *Self) !ServerInfo {
-        const addr = try std.Io.net.IpAddress.parseIp4(self.config.url, self.config.port);
+        const addr = try self.resolveAddress();
         const stream = try addr.connect(self.io, .{ .mode = .stream });
-        errdefer stream.close(self.io);
+        self.stream = stream;
+        self.rx.clearRetainingCapacity();
+        errdefer {
+            self.stream = null;
+            stream.close(self.io);
+        }
 
         // ── Read server INFO ──
         // NATS sends an INFO JSON line on each new connection:
         //   INFO {"server_id":"...","version":"...",...}\r\n
-        var info_line = std.ArrayList(u8).empty;
-        defer info_line.deinit(self.allocator);
-
-        // Read until newline (chunked sockread — not byte-at-a-time).
-        while (true) {
-            var chunk: [512]u8 = undefined;
-            const got = sockread.readSome(stream, &chunk) catch return error.ConnectionError;
-            if (got == 0) return error.ConnectionError;
-            try info_line.appendSlice(self.allocator, chunk[0..got]);
-            if (std.mem.indexOfScalar(u8, info_line.items, '\n')) |nl| {
-                info_line.shrinkRetainingCapacity(nl); // drop '\n' and any trailing bytes
-                break;
-            }
-            if (info_line.items.len > 64 * 1024) return error.ConnectionError;
+        // 行尾之后多出来的字节留在 rx 里，别丢。
+        while (std.mem.indexOfScalar(u8, self.rx.items, '\n') == null) {
+            const n = try self.fill();
+            if (n == 0) return error.ConnectionError;
+            if (self.rx.items.len > 64 * 1024) return error.ConnectionError;
         }
-
-        // Strip trailing \r if present
-        const raw: []const u8 = if (info_line.items.len > 0 and info_line.items[info_line.items.len - 1] == '\r')
-            info_line.items[0 .. info_line.items.len - 1]
-        else
-            info_line.items;
+        const nl = std.mem.indexOfScalar(u8, self.rx.items, '\n').?;
+        var raw = self.rx.items[0..nl];
+        if (raw.len > 0 and raw[raw.len - 1] == '\r') raw = raw[0 .. raw.len - 1];
 
         // Parse "INFO " prefix
         const info_body: []const u8 = if (std.mem.startsWith(u8, raw, "INFO "))
@@ -127,13 +244,25 @@ pub const NatsClient = struct {
         else
             raw;
 
-        var server_info = ServerInfo{ .raw_json = info_body };
-        server_info.server_id = extractJsonString(info_body, "server_id") orelse "";
-        server_info.server_name = extractJsonString(info_body, "server_name") orelse "";
-        server_info.version = extractJsonString(info_body, "version") orelse "";
-        server_info.host = extractJsonString(info_body, "host") orelse "";
-        server_info.port = extractJsonU16(info_body, "port") orelse 4222;
-        server_info.max_payload = extractJsonUsize(info_body, "max_payload") orelse 1024 * 1024;
+        // info_body 指向 rx 内部，而 consume() 会把后面的字节搬上来 ——
+        // 所以先把 INFO 原文拷到客户端自己持有的缓冲里，再消费接收缓冲区。
+        // `ServerInfo` 的字段都指向这份副本，调用方不需要（也不能）释放。
+        const raw_json = try self.allocator.dupe(u8, info_body);
+        if (self.info_raw.len > 0) self.allocator.free(self.info_raw);
+        self.info_raw = raw_json;
+        errdefer {
+            self.allocator.free(self.info_raw);
+            self.info_raw = "";
+        }
+        self.consume(nl + 1);
+
+        var server_info = ServerInfo{ .raw_json = self.info_raw };
+        server_info.server_id = extractJsonString(self.info_raw, "server_id") orelse "";
+        server_info.server_name = extractJsonString(self.info_raw, "server_name") orelse "";
+        server_info.version = extractJsonString(self.info_raw, "version") orelse "";
+        server_info.host = extractJsonString(self.info_raw, "host") orelse "";
+        server_info.port = extractJsonU16(self.info_raw, "port") orelse 4222;
+        server_info.max_payload = extractJsonUsize(self.info_raw, "max_payload") orelse 1024 * 1024;
 
         // ── Send CONNECT ──
         var connect_json = std.ArrayList(u8).empty;
@@ -172,8 +301,43 @@ pub const NatsClient = struct {
         try w.interface.writeAll("\r\n");
         try w.interface.flush();
 
-        self.stream = stream;
         return server_info;
+    }
+
+    /// 把配置里的主机名解析成可连接的地址。
+    ///
+    /// IP 字面量直接用；主机名走 DNS（原来只认点分十进制，
+    /// 连默认的 "localhost" 都解析不了 —— 默认配置从来就连不上）。
+    fn resolveAddress(self: *Self) !std.Io.net.IpAddress {
+        if (std.Io.net.IpAddress.parseIp4(self.config.url, self.config.port)) |a| return a else |_| {}
+        if (std.Io.net.IpAddress.parseIp6(self.config.url, self.config.port)) |a| return a else |_| {}
+
+        const host = std.Io.net.HostName.init(self.config.url) catch return error.UnknownHostName;
+        var results: [16]std.Io.net.HostName.LookupResult = undefined;
+        var queue = std.Io.Queue(std.Io.net.HostName.LookupResult).init(&results);
+        try std.Io.net.HostName.lookup(host, self.io, &queue, .{ .port = self.config.port });
+
+        // 优先 IPv4（NATS 部署里最常见），没有再退化到 IPv6。
+        var v6: ?std.Io.net.IpAddress = null;
+        var buf: [1]std.Io.net.HostName.LookupResult = undefined;
+        while (true) {
+            const n = queue.get(self.io, &buf, 1) catch |err| switch (err) {
+                error.Closed => break,
+                error.Canceled => return error.Canceled,
+            };
+            if (n == 0) break;
+            switch (buf[0]) {
+                .address => |a| switch (a) {
+                    .ip4 => return a,
+                    .ip6 => if (v6 == null) {
+                        v6 = a;
+                    },
+                },
+                .canonical_name => {},
+            }
+        }
+        if (v6) |a| return a;
+        return error.UnknownHostName;
     }
 
     /// Publish a message to a subject.
@@ -276,7 +440,7 @@ pub const NatsClient = struct {
 
         // Generate unique inbox subject
         var inbox_buf: [64]u8 = undefined;
-        const inbox = try std.fmt.bufPrint(&inbox_buf, "_INBOX.zf{d}", .{nowMillis()});
+        const inbox = try std.fmt.bufPrint(&inbox_buf, "_INBOX.zf{d}", .{nowMillis(self.io)});
 
         // Send SUB for the inbox
         self.sid_counter += 1;
@@ -293,79 +457,40 @@ pub const NatsClient = struct {
         // Send PUB with reply-to = inbox
         try self.publishReply(subject, inbox, payload);
 
-        // Poll for response until timeout
-        const deadline = nowMillis() + @as(i64, @intCast(timeout_ms));
-        var rbuf: [8192]u8 = undefined;
+        const deadline = nowMillis(self.io) + @as(i64, @intCast(timeout_ms));
+        var result: ?[]const u8 = null;
 
-        while (true) {
-            const now = nowMillis();
+        while (result == null) {
+            const now = nowMillis(self.io);
             if (now >= deadline) {
                 self.unsubscribeRaw(req_sid) catch {};
                 return error.Timeout;
             }
 
+            // 回应可能已经在缓冲区里了；途中别的订阅的消息照常派发。
+            _ = try self.pump(.{ .sid = req_sid, .payload = &result });
+            if (result != null) break;
+
             const rem = deadline - now;
             const timeout: i32 = @intCast(@min(rem, std.math.maxInt(i32)));
-            const n = sockread.readSomeTimeout(s, &rbuf, timeout) catch |err| {
-                self.unsubscribeRaw(req_sid) catch {};
-                return switch (err) {
-                    error.Timeout => error.Timeout,
-                    else => err,
-                };
+            const n = self.fillTimeout(timeout) catch |err| switch (err) {
+                error.Timeout => {
+                    self.unsubscribeRaw(req_sid) catch {};
+                    return error.Timeout;
+                },
+                else => |e| {
+                    self.unsubscribeRaw(req_sid) catch {};
+                    return e;
+                },
             };
             if (n == 0) {
                 self.unsubscribeRaw(req_sid) catch {};
                 return error.ConnectionError;
             }
-
-            // Parse for MSG lines matching our inbox subscription
-            if (try self.parseRequestResponse(rbuf[0..n], req_sid)) |resp| {
-                self.unsubscribeRaw(req_sid) catch {};
-                return resp;
-            }
         }
-    }
 
-    /// Parse a single MSG response for request-reply, returning payload if found.
-    fn parseRequestResponse(self: *Self, data: []const u8, target_sid: u64) !?[]const u8 {
-        var pos: usize = 0;
-
-        while (pos < data.len) {
-            const line_end = std.mem.indexOfScalarPos(u8, data, pos, '\n') orelse return null;
-            var line = data[pos..line_end];
-            if (line.len > 0 and line[line.len - 1] == '\r') line = line[0 .. line.len - 1];
-            pos = line_end + 1;
-
-            if (line.len == 0) continue;
-            if (std.mem.eql(u8, line, "+OK") or std.mem.eql(u8, line, "PONG")) continue;
-            if (std.mem.startsWith(u8, line, "-ERR")) continue;
-
-            if (std.mem.startsWith(u8, line, "MSG ")) {
-                // MSG <subject> <sid> [reply-to] <#bytes>\r\n<payload>\r\n
-                var parts = std.mem.splitScalar(u8, line[4..], ' ');
-                _ = parts.next(); // subject
-                const sid_str = parts.next() orelse continue;
-                const line_sid = std.fmt.parseInt(u64, sid_str, 10) catch continue;
-
-                if (line_sid != target_sid) continue;
-
-                // Parse payload size (3rd or 4th token)
-                const third = parts.next() orelse continue;
-                const payload_len = std.fmt.parseInt(usize, third, 10) catch blk: {
-                    const fourth = parts.next() orelse continue;
-                    const len = std.fmt.parseInt(usize, fourth, 10) catch continue;
-                    break :blk len;
-                };
-
-                if (pos + payload_len + 2 > data.len) return null;
-                const payload = data[pos .. pos + payload_len];
-                // pos += payload_len + 2 handled by caller if needed
-
-                const result = try self.allocator.dupe(u8, payload);
-                return result;
-            }
-        }
-        return null;
+        self.unsubscribeRaw(req_sid) catch {};
+        return result.?;
     }
 
     /// Flush ensures all published messages have been processed by the server.
@@ -377,15 +502,21 @@ pub const NatsClient = struct {
     /// Poll for messages. Dispatches matching callbacks.
     /// Returns number of messages processed.
     pub fn poll(self: *Self) !usize {
-        const s = self.stream orelse return error.NotConnected;
-        var buf: [8192]u8 = undefined;
-        const n = sockread.readSome(s, &buf) catch |err| return err;
-        if (n == 0) return 0;
+        var p = try self.pump(null);
+        if (p.frames > 0) return p.messages;
 
-        return try self.parseMessages(buf[0..n]);
+        const n = try self.fill();
+        if (n == 0) return 0;
+        p = try self.pump(null);
+        return p.messages;
     }
 
     /// Send PING and expect PONG.
+    ///
+    /// 服务端会先把 MSG 发回来再回 PONG，所以这里必须扫到真正的 PONG；
+    /// 途中遇到的 MSG 照常派发给订阅回调 —— 原来的实现只看一次读的
+    /// 前 6 个字节是不是 "PONG\r\n"，既会误报 ProtocolError，
+    /// 又会把先到的消息直接丢掉。
     pub fn ping(self: *Self) !void {
         const s = self.stream orelse return error.NotConnected;
         var wbuf: [64]u8 = undefined;
@@ -393,82 +524,126 @@ pub const NatsClient = struct {
         try w.interface.writeAll("PING\r\n");
         try w.interface.flush();
 
-        var rbuf: [128]u8 = undefined;
-        const n = sockread.readSome(s, &rbuf) catch return error.ConnectionError;
-        if (n < 6 or !std.mem.eql(u8, rbuf[0..6], "PONG\r\n")) return error.ProtocolError;
+        self.pong_pending = false;
+        while (true) {
+            _ = try self.pump(null);
+            if (self.pong_pending) {
+                self.pong_pending = false;
+                return;
+            }
+            const n = try self.fill();
+            if (n == 0) return error.ConnectionError;
+        }
     }
 
-    // ── Internal: parse incoming NATS messages and dispatch to callbacks ──
+    // ── Internal: receive buffer + frame dispatch ──
 
-    fn parseMessages(self: *Self, data: []const u8) !usize {
-        var count: usize = 0;
-        var pos: usize = 0;
-
-        while (pos < data.len) {
-            const line_end = std.mem.indexOfScalarPos(u8, data, pos, '\n') orelse break;
-            const line = data[pos..line_end];
-            const trimmed = if (line.len > 0 and line[line.len - 1] == '\r') line[0 .. line.len - 1] else line;
-            pos = line_end + 1;
-
-            if (trimmed.len == 0) continue;
-
-            if (std.mem.eql(u8, trimmed, "PING")) {
-                const s = self.stream orelse return error.NotConnected;
-                var wbuf: [64]u8 = undefined;
-                var w = s.writer(self.io, &wbuf);
-                try w.interface.writeAll("PONG\r\n");
-                try w.interface.flush();
-                continue;
-            }
-
-            if (std.mem.eql(u8, trimmed, "PONG")) {
-                continue;
-            }
-
-            if (std.mem.eql(u8, trimmed, "+OK")) {
-                continue;
-            }
-
-            if (std.mem.startsWith(u8, trimmed, "-ERR")) {
-                std.log.warn("[NATS] Server error: {s}", .{trimmed});
-                continue;
-            }
-
-            // MSG <subject> <sid> [reply-to] <#bytes>\r\n<payload>\r\n
-            if (std.mem.startsWith(u8, trimmed, "MSG ")) {
-                var parts = std.mem.splitScalar(u8, trimmed[4..], ' ');
-                const subj = parts.next() orelse continue;
-                const sid_str = parts.next() orelse continue;
-                const sid = std.fmt.parseInt(u64, sid_str, 10) catch continue;
-
-                var reply_to: ?[]const u8 = null;
-                var maybe_bytes = parts.next() orelse continue;
-
-                const payload_len = std.fmt.parseInt(usize, maybe_bytes, 10) catch blk: {
-                    reply_to = maybe_bytes;
-                    maybe_bytes = parts.next() orelse continue;
-                    const len = std.fmt.parseInt(usize, maybe_bytes, 10) catch continue;
-                    break :blk len;
-                };
-
-                if (pos + payload_len + 2 > data.len) break;
-                const payload = data[pos .. pos + payload_len];
-                pos += payload_len + 2;
-
-                const sid_key = try std.fmt.allocPrint(self.allocator, "{d}", .{sid});
-                defer self.allocator.free(sid_key);
-                if (self.subscriptions.get(sid_key)) |sub| {
-                    sub.callback(.{
-                        .subject = subj,
-                        .reply_to = reply_to,
-                        .payload = payload,
-                        .sid = sid,
-                    });
-                    count += 1;
-                }
-            }
+    /// 丢掉接收缓冲区前 n 个字节。
+    fn consume(self: *Self, n: usize) void {
+        if (n == 0) return;
+        if (n >= self.rx.items.len) {
+            self.rx.clearRetainingCapacity();
+            return;
         }
-        return count;
+        const rest = self.rx.items[n..];
+        std.mem.copyForwards(u8, self.rx.items[0..rest.len], rest);
+        self.rx.items.len = rest.len;
+    }
+
+    /// 从 socket 读一批字节进接收缓冲区。返回 0 表示对端已关闭。
+    fn fill(self: *Self) !usize {
+        const s = self.stream orelse return error.NotConnected;
+        var chunk: [4096]u8 = undefined;
+        const n = try sockread.readSome(s, &chunk);
+        if (n > 0) try self.rx.appendSlice(self.allocator, chunk[0..n]);
+        return n;
+    }
+
+    /// 同 `fill`，但最多等 timeout_ms 毫秒。
+    fn fillTimeout(self: *Self, timeout_ms: i32) !usize {
+        const s = self.stream orelse return error.NotConnected;
+        var chunk: [4096]u8 = undefined;
+        const n = try sockread.readSomeTimeout(s, &chunk, timeout_ms);
+        if (n > 0) try self.rx.appendSlice(self.allocator, chunk[0..n]);
+        return n;
+    }
+
+    const PumpResult = struct {
+        /// 派发给订阅回调的消息数。
+        messages: usize = 0,
+        /// 处理的帧数（控制行也算帧）。
+        frames: usize = 0,
+    };
+
+    /// 让 `pump` 顺带捕获某个 sid 的消息（request-reply 用）。
+    const Capture = struct {
+        /// 只捕获这个 sid 的消息。
+        sid: u64,
+        /// 捕获到的 payload（调用方拥有）。
+        payload: *?[]const u8,
+    };
+
+    /// 解析接收缓冲区里所有完整的帧：MSG 派发给订阅回调，PING 回 PONG，
+    /// PONG 记到 `pong_pending`。
+    ///
+    /// `capture` 非空时，sid 匹配的 MSG 的 payload 会被拷进 `capture.payload`
+    /// （用于 request-reply），不再派发给回调。收不全的帧留在缓冲区里。
+    fn pump(self: *Self, capture: ?Capture) !PumpResult {
+        var result = PumpResult{};
+        var pos: usize = 0;
+        var consumed: usize = 0;
+
+        loop: while (pos < self.rx.items.len) {
+            const frame = (try scanFrame(self.rx.items[pos..])) orelse break;
+            switch (frame) {
+                .control => |c| {
+                    if (std.mem.eql(u8, c.line, "PONG")) {
+                        self.pong_pending = true;
+                    } else if (std.mem.eql(u8, c.line, "PING")) {
+                        try self.sendPong();
+                    } else if (std.mem.startsWith(u8, c.line, "-ERR")) {
+                        std.log.warn("[NATS] Server error: {s}", .{c.line});
+                    }
+                    pos += c.len;
+                },
+                .msg => |m| {
+                    if (capture) |cap| {
+                        if (m.sid == cap.sid) {
+                            cap.payload.* = try self.allocator.dupe(u8, m.payload);
+                            pos += m.len;
+                            consumed = pos;
+                            break :loop;
+                        }
+                    }
+                    const sid_key = try std.fmt.allocPrint(self.allocator, "{d}", .{m.sid});
+                    defer self.allocator.free(sid_key);
+                    if (self.subscriptions.get(sid_key)) |sub| {
+                        sub.callback(.{
+                            .subject = m.subject,
+                            .reply_to = m.reply_to,
+                            .payload = m.payload,
+                            .sid = m.sid,
+                        });
+                        result.messages += 1;
+                    }
+                    pos += m.len;
+                },
+            }
+            result.frames += 1;
+            consumed = pos;
+        }
+
+        if (consumed > 0) self.consume(consumed);
+        return result;
+    }
+
+    /// 服务端发来 PING（保活），必须回 PONG。
+    fn sendPong(self: *Self) !void {
+        const s = self.stream orelse return error.NotConnected;
+        var wbuf: [64]u8 = undefined;
+        var w = s.writer(self.io, &wbuf);
+        try w.interface.writeAll("PONG\r\n");
+        try w.interface.flush();
     }
 
     // ── Minimal JSON value extractors ──
@@ -513,6 +688,14 @@ pub const NatsClient = struct {
 
 // ── Tests ──
 
+/// 从环境变量 NATS_URL 取端点。没设置（或为空）返回 null —— 活体测试据此跳过。
+fn envEndpoint(allocator: std.mem.Allocator) !?ParsedUrl {
+    const raw = std.c.getenv("NATS_URL") orelse return null;
+    const span = std.mem.span(raw);
+    if (span.len == 0) return null;
+    return try parseUrl(allocator, span);
+}
+
 test "NatsClient init and deinit" {
     const allocator = std.testing.allocator;
     var client = NatsClient.init(allocator, std.testing.io, .{});
@@ -526,13 +709,100 @@ test "NatsConfig defaults" {
     try std.testing.expectEqual(@as(usize, 10), cfg.max_reconnect_attempts);
 }
 
+test "parseUrl handles scheme, port, and userinfo" {
+    const a = std.testing.allocator;
+    {
+        const p = try parseUrl(a, "nats://127.0.0.1:4222");
+        defer if (p.owned) a.free(p.host);
+        try std.testing.expectEqualStrings("127.0.0.1", p.host);
+        try std.testing.expectEqual(@as(u16, 4222), p.port);
+    }
+    {
+        const p = try parseUrl(a, "broker.local");
+        defer if (p.owned) a.free(p.host);
+        try std.testing.expectEqualStrings("broker.local", p.host);
+        try std.testing.expectEqual(@as(u16, 4222), p.port);
+    }
+    {
+        const p = try parseUrl(a, "nats://user:pass@broker.local:4333");
+        defer if (p.owned) a.free(p.host);
+        try std.testing.expectEqualStrings("broker.local", p.host);
+        try std.testing.expectEqual(@as(u16, 4333), p.port);
+    }
+    {
+        const p = try parseUrl(a, "nats://[::1]:4222");
+        defer if (p.owned) a.free(p.host);
+        try std.testing.expectEqualStrings("::1", p.host);
+        try std.testing.expectEqual(@as(u16, 4222), p.port);
+    }
+    try std.testing.expectError(error.InvalidNatsUrl, parseUrl(a, "nats://"));
+}
+
+test "scanFrame keeps an incomplete MSG frame" {
+    // 帧被拆到两次读里 —— 没收全就不能当成一帧。
+    try std.testing.expect((try scanFrame("MSG foo 1 5\r\nab")) == null);
+    try std.testing.expect((try scanFrame("MSG foo 1 5\r\n")) == null);
+
+    const full = "MSG foo 1 5\r\nabcde\r\n";
+    const frame = (try scanFrame(full)).?;
+    try std.testing.expectEqualStrings("foo", frame.msg.subject);
+    try std.testing.expectEqualStrings("abcde", frame.msg.payload);
+    try std.testing.expectEqual(@as(u64, 1), frame.msg.sid);
+    try std.testing.expectEqual(full.len, frame.msg.len);
+}
+
+test "scanFrame reads a MSG frame with reply-to" {
+    const raw = "MSG foo 7 reply.inbox 3\r\nabc\r\n";
+    const frame = (try scanFrame(raw)).?;
+    try std.testing.expectEqualStrings("foo", frame.msg.subject);
+    try std.testing.expectEqualStrings("reply.inbox", frame.msg.reply_to.?);
+    try std.testing.expectEqualStrings("abc", frame.msg.payload);
+    try std.testing.expectEqual(raw.len, frame.msg.len);
+}
+
+test "scanFrame reads control lines" {
+    {
+        const frame = (try scanFrame("PONG\r\n")).?;
+        try std.testing.expectEqualStrings("PONG", frame.control.line);
+        try std.testing.expectEqual(@as(usize, 6), frame.control.len);
+    }
+    {
+        const frame = (try scanFrame("+OK\r\n")).?;
+        try std.testing.expectEqualStrings("+OK", frame.control.line);
+    }
+    try std.testing.expect((try scanFrame("PO")) == null);
+}
+
+test "NATS client resolves a hostname" {
+    // "localhost" 必须能解析 —— 原来只认点分十进制，默认配置从来连不上。
+    const a = std.testing.allocator;
+    var client = NatsClient.init(a, std.testing.io, .{ .url = "localhost" });
+    defer client.deinit();
+    const addr = try client.resolveAddress();
+    switch (addr) {
+        .ip4 => try std.testing.expectEqual(@as(u8, 127), addr.ip4.bytes[0]),
+        .ip6 => {
+            // ::1
+            var leading_zero = true;
+            for (addr.ip6.bytes[0..15]) |b| {
+                if (b != 0) leading_zero = false;
+            }
+            try std.testing.expect(leading_zero);
+            try std.testing.expectEqual(@as(u8, 1), addr.ip6.bytes[15]);
+        },
+    }
+}
+
 test "NATS connect and ping" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
-    const nats_url = if (std.c.getenv("NATS_URL")) |ptr| std.mem.span(ptr) else null;
-    if (nats_url == null or nats_url.?.len == 0) return error.SkipZigTest;
-
     const allocator = std.testing.allocator;
-    var client = NatsClient.init(allocator, std.testing.io, .{});
+    const endpoint = (try envEndpoint(allocator)) orelse return error.SkipZigTest;
+    defer if (endpoint.owned) allocator.free(endpoint.host);
+
+    var client = NatsClient.init(allocator, std.testing.io, .{
+        .url = endpoint.host,
+        .port = endpoint.port,
+    });
     defer client.deinit();
 
     const info = try client.connect();
@@ -548,11 +818,14 @@ var g_nats_soak_hits: std.atomic.Value(usize) = .init(0);
 
 test "NATS publish and subscribe" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
-    const nats_url = if (std.c.getenv("NATS_URL")) |ptr| std.mem.span(ptr) else null;
-    if (nats_url == null or nats_url.?.len == 0) return error.SkipZigTest;
-
     const allocator = std.testing.allocator;
-    var client = NatsClient.init(allocator, std.testing.io, .{});
+    const endpoint = (try envEndpoint(allocator)) orelse return error.SkipZigTest;
+    defer if (endpoint.owned) allocator.free(endpoint.host);
+
+    var client = NatsClient.init(allocator, std.testing.io, .{
+        .url = endpoint.host,
+        .port = endpoint.port,
+    });
     defer client.deinit();
 
     _ = try client.connect();
@@ -578,13 +851,55 @@ test "NATS publish and subscribe" {
     try std.testing.expect(g_nats_soak_hits.load(.monotonic) >= 1);
 }
 
+var g_nats_ping_hits: std.atomic.Value(usize) = .init(0);
+
+test "NATS ping does not swallow a queued message" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const endpoint = (try envEndpoint(allocator)) orelse return error.SkipZigTest;
+    defer if (endpoint.owned) allocator.free(endpoint.host);
+
+    var client = NatsClient.init(allocator, std.testing.io, .{
+        .url = endpoint.host,
+        .port = endpoint.port,
+    });
+    defer client.deinit();
+
+    _ = try client.connect();
+
+    g_nats_ping_hits.store(0, .monotonic);
+    const sid = try client.subscribe("zfinal.test.ping.msg", struct {
+        fn handler(msg: NatsClient.Message) void {
+            if (std.mem.eql(u8, msg.payload, "ping-msg")) {
+                _ = g_nats_ping_hits.fetchAdd(1, .monotonic);
+            }
+        }
+    }.handler);
+    defer client.unsubscribe(sid) catch {};
+
+    try client.publish("zfinal.test.ping.msg", "ping-msg");
+    // 服务端先把 MSG 发回来、再回 PONG。ping 必须扫到真正的 PONG，
+    // 途中那条 MSG 还得原样送到订阅回调。
+    try client.ping();
+
+    var waited: usize = 0;
+    while (g_nats_ping_hits.load(.monotonic) == 0 and waited < 40) : (waited += 1) {
+        _ = try client.poll();
+        std.Io.sleep(std.testing.io, std.Io.Duration.fromMilliseconds(25), .real) catch {};
+    }
+    try std.testing.expect(g_nats_ping_hits.load(.monotonic) >= 1);
+}
+
 test "NATS request-reply" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
-    const nats_url = if (std.c.getenv("NATS_URL")) |ptr| std.mem.span(ptr) else null;
-    if (nats_url == null or nats_url.?.len == 0) return error.SkipZigTest;
-
     const allocator = std.testing.allocator;
-    var client = NatsClient.init(allocator, std.testing.io, .{});
+    const endpoint = (try envEndpoint(allocator)) orelse return error.SkipZigTest;
+    defer if (endpoint.owned) allocator.free(endpoint.host);
+
+    var client = NatsClient.init(allocator, std.testing.io, .{
+        .url = endpoint.host,
+        .port = endpoint.port,
+    });
     defer client.deinit();
 
     _ = try client.connect();
