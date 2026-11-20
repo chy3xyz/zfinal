@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const zfinal = @import("zfinal");
 const Config = @import("config/config.zig");
 const Routes = @import("config/routes.zig");
@@ -7,7 +8,7 @@ const Interceptors = @import("interceptor/interceptors.zig");
 
 pub fn main(init: std.process.Init) !void {
     zfinal.io_instance.init(init);
-    const allocator = init.gpa;
+    const allocator = if (builtin.mode == .Debug) init.gpa else std.heap.smp_allocator;
 
     // 初始化数据库
     const db_config = Config.DBConfig.get();

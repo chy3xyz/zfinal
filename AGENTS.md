@@ -123,9 +123,17 @@ Zig 0.17 specifics: `@cImport` removed → use `b.addTranslateC` in build.zig.
 - Prefer writing architecture / best-practice conclusions into `doc/` (not chat-only).
 - Prefer graduating experimental plugins and queue clients into stable public API rather than leaving them under `experimental`.
 - When asked to submit / commit / ship / 打 tag, create the git commit **and** annotated version tag, then **automatically** `git push origin <branch>` and `git push origin <tag>` (do not wait for a separate push ask).
+- Terse follow-ups like 继续 / 开干 / 要 / 提交 mean auto-execute; do not ask for confirmation before acting.
+- Prefer SaaS / multi-tenant column naming configurable as `app_id` (not hardcoded `tenant_id`).
+- Prefer business AI (`zfinal.ai`) as an integrable runtime (provider / key pool, MCP → SkillRegistry); keep `ZfTool` / codegen AI as a separate concern.
+- Prefer DeepSeek default model `deepseek-v4-flash` (not deprecated `deepseek-chat`).
 
 ## Learned Workspace Facts
 
-- Sibling project `zigmodu` at `/Users/n0x/w4_proj/zig_ws/zigmodu` is the reference for connector patterns (Kafka → RobustMQ) and zent integration.
+- Sibling project `zigmodu` at `/Users/n0x/w4_proj/zig_ws/zigmodu` is the reference for connector patterns (Kafka → RobustMQ), zent integration, and AI-runtime ports.
 - Stable messaging surface targets formal `QueueNatsClient` and RobustMQ connectors, not long-lived experimental exports.
 - Keep pace with the locally installed latest Zig 0.17-dev when upgrading compatibility.
+- Optional Bus adapter (Memory / NATS / RobustMQ) is the intended scale messaging path; avoid a mandatory heavy EventBus.
+- `zent` is a peer / alternative primary data layer to `DB`/`Model` (e-commerce / social); codegen via `zf crud:zent`.
+- Performance work often references Lighting (`https://github.com/jiacai2050/lighting`) and zigmodu Io / socket patterns.
+- SaaS kit lives at `examples/zfsaas` and `doc/saas_kit.md`, inspired by `~/w4_proj/dev_machine/saas_admin_ui/zsaas-start`.

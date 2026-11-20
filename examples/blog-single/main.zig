@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const zfinal = @import("zfinal");
 
 // ============ Models ============
@@ -287,7 +288,7 @@ pub const AuthInterceptor = zfinal.Interceptor{
 
 pub fn main(init: std.process.Init) !void {
     zfinal.io_instance.init(init);
-    const allocator = init.gpa;
+    const allocator = if (builtin.mode == .Debug) init.gpa else std.heap.smp_allocator;
 
     // 初始化数据库
     const config = zfinal.DBConfig.sqlite("blog.db");

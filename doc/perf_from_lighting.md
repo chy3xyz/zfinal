@@ -29,6 +29,15 @@ and what we **intentionally did not**.
    interceptors in place (no per-request `InterceptorChain` merge).
 5. **8 KiB connection buffers** — matches Lighting’s default read size.
 
+## What ZFinal adopted (v0.28.10 KA-prep + alloc)
+
+6. **Bounded unread-body drain** — `max_drain_body_bytes` (256 KiB); over limit
+   → `keep_alive=false` (`keepalive_safety.DrainResult.too_large`).
+7. **Absolute header / idle / body deadlines** — `read_header_timeout_ms` (5s),
+   `idle_timeout_ms` (120s), absolute `read_timeout_ms` via `TimedIoReader`.
+8. **Empty Context HashMaps** — no `ensureTotalCapacity` on init.
+9. **`smp_allocator`** in production/blog/blog-single for non-Debug builds.
+
 ## Biggest remaining gap (do not flip casually)
 
 ```zig
@@ -46,11 +55,32 @@ zig build run-blog -Doptimize=ReleaseFast
 
 Prefer reverse-proxy keep-alive in production until #25017 is fixed.
 
+## Remaining portable wins (after v0.28.10)
+
+| Rank | Technique | Notes |
+|------|-----------|-------|
+| **E+** | Fully lazy optional HashMaps | null until first put; avoid Arena restore |
+| **F** | Contiguous header buf → 1–2 iovec | Blocked on `std.http.respond` |
+| **G** | `Expect: 100-continue` | Protocol correctness for large POST |
+
+### Still gated on zig#25017 + soak
+
+- `force_connection_close = false`（Lighting QPS 主杠杆）
+- Pipelining leftover `copyForwards`
+- Connection-scoped `ArenaAllocator.reset(.retain_with_limit = 64KiB)`
+
+### Suggested next
+
+1. Write-path iovec probe / KA soak harness (no default flip).
+2. Optional fully-lazy Context maps if profiling still shows HashMap init cost.
+
 ## What we did **not** copy
 
 - Full custom HTTP parser / `ResponseWriter` rewrite
 - zio / core-pinning / heterogeneous-CPU bench harness
 - Replacing the ServeMux decision tree wholesale
+- Unconditional per-request Arena for all containers (historical segfault)
+- Fragmented zero-copy iovec floods (Lighting themselves abandoned this)
 
 Those are high risk / low ROI relative to allocation + KA policy work above.
 

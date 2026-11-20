@@ -26,14 +26,26 @@ pub const ServerConfig = struct {
     /// Prevents hang forever when a client never closes. Default 30s.
     drain_timeout_ms: u64 = 30_000,
     /// Per-request handler deadline (ms) on `Context` (`isExpired`).
-    /// Idle time waiting on `receiveHead` is bounded by `read_timeout_ms`
-    /// instead — do **not** spawn a second Io fiber per connection for that
-    /// (it consumed `async_limit` slots and looked like "thread pool leak"
-    /// after ~3–4 keep-alive connections). 0 disables. Default 30s.
+    /// Idle / header reads use absolute sockread deadlines below — do **not**
+    /// spawn a second Io fiber per connection for that (it consumed
+    /// `async_limit` slots). 0 disables. Default 30s.
     request_timeout_ms: u64 = 30_000,
-    /// Per-read poll deadline (ms) for receiveHead/body via sockread.
-    /// This is the real between-request idle limit. 0 = wait forever. Default 30s.
+    /// Absolute wall-clock deadline (ms) to finish `receiveHead` on the first
+    /// request of a connection (Lighting `read_header_timeout`). Defends
+    /// against Slowloris — relative poll timeouts reset on each byte.
+    /// 0 = fall back to `read_timeout_ms`. Default 5s.
+    read_header_timeout_ms: u64 = 5_000,
+    /// Absolute deadline (ms) waiting for the next request on a keep-alive
+    /// connection (Lighting `idle_timeout`). 0 = fall back to `read_timeout_ms`.
+    /// Default 120s.
+    idle_timeout_ms: u64 = 120_000,
+    /// Absolute deadline (ms) for body reads after the request head is received.
+    /// 0 = wait forever. Default 30s.
     read_timeout_ms: u64 = 30_000,
+    /// Max unread request body to discard before respond (Lighting
+    /// `maxPostHandlerReadBytes`). Over this limit forces Connection: close.
+    /// Default 256 KiB.
+    max_drain_body_bytes: usize = 256 * 1024,
     /// Per-response write deadline (ms), wall-clock from the first `drain`
     /// of each request. Zig 0.17 removed `Operation.net_write`, so this is
     /// enforced in user space rather than via `operateTimeout`. 0 disables.
@@ -326,7 +338,33 @@ fn handleConn(io: std.Io, conn: std.Io.net.Stream, server: *Server) std.Io.Cance
         // Between keep-alive requests: exit promptly on shutdown instead of
         // waiting for the next read timeout (matters when read_timeout_ms = 0).
         if (shutdown.isShuttingDown()) break;
+
+        // First request: short absolute header deadline (Slowloris).
+        // Later KA waits: longer idle deadline, then the same receiveHead path.
+        const head_ms = if (req_count == 0) blk: {
+            break :blk if (server.config.read_header_timeout_ms != 0)
+                server.config.read_header_timeout_ms
+            else
+                server.config.read_timeout_ms;
+        } else blk: {
+            break :blk if (server.config.idle_timeout_ms != 0)
+                server.config.idle_timeout_ms
+            else
+                server.config.read_timeout_ms;
+        };
+        if (head_ms == 0)
+            reader.clearDeadline()
+        else
+            reader.setDeadlineFromNow(head_ms);
+
         var request = http_srv.receiveHead() catch break;
+
+        // Body / remainder of this request: absolute `read_timeout_ms`.
+        if (server.config.read_timeout_ms == 0)
+            reader.clearDeadline()
+        else
+            reader.setDeadlineFromNow(server.config.read_timeout_ms);
+
         writer.resetWriteDeadline();
         if (tryWebSocketUpgrade(&request, server, conn) catch |err| {
             getLog().warnFmt("WebSocket upgrade failed: {t}", .{err});
@@ -500,6 +538,7 @@ fn dispatch(request: *http.Server.Request, server: *Server, peer_addr: ?std.Io.n
     // walks `iterateHeaders` while still in `.received_head`; body readers
     // call `cacheHeaders` immediately before consuming the body.
     ctx.max_body_size = server.config.max_body_size;
+    ctx.max_drain_body_bytes = server.config.max_drain_body_bytes;
     ctx.compress_enabled = server.config.compress_responses;
     ctx.compress_min_bytes = server.config.compress_min_bytes;
     ctx.app_state = server.app_state;

@@ -109,12 +109,27 @@ pub const BufReader = struct {
     }
 };
 
+/// Monotonic milliseconds — absolute deadlines without needing `std.Io`.
+fn monoMsNow() u64 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(std.c.CLOCK.MONOTONIC, &ts);
+    const ms: i64 = @as(i64, ts.sec) * 1000 + @divTrunc(ts.nsec, 1_000_000);
+    return @intCast(@max(ms, 0));
+}
+
 /// `std.Io.Reader` backed by timed sockread — underlay for `http.Server`, TLS
-/// `Client`, etc. (`timeout_ms == 0` = wait forever).
+/// `Client`, etc.
+///
+/// - `timeout_ms == 0` and no absolute deadline → wait forever.
+/// - Relative `timeout_ms` alone resets on every successful poll (Slowloris-able).
+/// - Prefer `setDeadlineFromNow` for header / idle phases (Lighting absolute deadline).
 pub const TimedIoReader = struct {
     interface: std.Io.Reader,
     stream: std.Io.net.Stream,
+    /// Fallback relative poll timeout when `deadline_ms == 0`.
     timeout_ms: u64,
+    /// Absolute mono deadline (ms). 0 = disabled (use relative `timeout_ms`).
+    deadline_ms: u64 = 0,
     err: ?anyerror = null,
 
     const max_iovecs_len = 8;
@@ -135,12 +150,37 @@ pub const TimedIoReader = struct {
         };
     }
 
+    /// Arm an absolute wall-clock deadline `duration_ms` from now.
+    /// `duration_ms == 0` clears the absolute deadline.
+    pub fn setDeadlineFromNow(self: *TimedIoReader, duration_ms: u64) void {
+        if (duration_ms == 0) {
+            self.deadline_ms = 0;
+            return;
+        }
+        self.deadline_ms = monoMsNow() +% duration_ms;
+    }
+
+    pub fn clearDeadline(self: *TimedIoReader) void {
+        self.deadline_ms = 0;
+    }
+
     fn streamImpl(io_r: *std.Io.Reader, io_w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
         const dest = limit.slice(try io_w.writableSliceGreedy(1));
         var data: [1][]u8 = .{dest};
         const n = try readVec(io_r, &data);
         io_w.advance(n);
         return n;
+    }
+
+    fn pollTimeoutMs(r: *const TimedIoReader) i32 {
+        if (r.deadline_ms != 0) {
+            const now = monoMsNow();
+            if (now >= r.deadline_ms) return 0; // already expired → Timeout on poll
+            const rem = r.deadline_ms - now;
+            return @intCast(@min(rem, std.math.maxInt(i32)));
+        }
+        if (r.timeout_ms == 0) return -1;
+        return @intCast(@min(r.timeout_ms, std.math.maxInt(i32)));
     }
 
     fn readVec(io_r: *std.Io.Reader, data: [][]u8) std.Io.Reader.Error!usize {
@@ -150,11 +190,12 @@ pub const TimedIoReader = struct {
         const dest = iovecs_buffer[0..dest_n];
         std.debug.assert(dest[0].len > 0);
 
-        const timeout: i32 = if (r.timeout_ms == 0)
-            -1
-        else
-            @intCast(@min(r.timeout_ms, std.math.maxInt(i32)));
+        if (r.deadline_ms != 0 and monoMsNow() >= r.deadline_ms) {
+            r.err = error.Timeout;
+            return error.ReadFailed;
+        }
 
+        const timeout = pollTimeoutMs(r);
         const n = readSomeTimeout(r.stream, dest[0], timeout) catch |err| {
             r.err = err;
             return error.ReadFailed;
@@ -200,6 +241,39 @@ test "readSomeTimeout returns Timeout when nothing ready" {
     const stream = std.Io.net.Stream{ .socket = .{ .handle = fds[0], .address = undefined } };
     var buf: [16]u8 = undefined;
     try std.testing.expectError(error.Timeout, readSomeTimeout(stream, &buf, 0));
+}
+
+test "TimedIoReader absolute deadline is not refreshed by slow bytes" {
+    var fds: [2]std.posix.socket_t = undefined;
+    const rc = std.posix.system.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &fds);
+    switch (std.posix.errno(rc)) {
+        .SUCCESS => {},
+        else => return error.SkipZigTest,
+    }
+    const peer = std.Io.net.Stream{ .socket = .{ .handle = fds[1], .address = undefined } };
+    const stream = std.Io.net.Stream{ .socket = .{ .handle = fds[0], .address = undefined } };
+    defer peer.close(std.testing.io);
+    defer stream.close(std.testing.io);
+
+    var rbuf: [64]u8 = undefined;
+    // Relative timeout alone would refresh on each byte; absolute must win.
+    var reader = TimedIoReader.init(stream, &rbuf, 5_000);
+    reader.setDeadlineFromNow(80);
+
+    var got: usize = 0;
+    var timed_out = false;
+    while (got < 8) {
+        _ = std.posix.system.write(fds[1], "x", 1);
+        std.testing.io.sleep(std.Io.Duration.fromMilliseconds(25), .awake) catch {};
+        var one: [1]u8 = undefined;
+        _ = reader.interface.readSliceShort(&one) catch {
+            timed_out = true;
+            break;
+        };
+        got += 1;
+    }
+    try std.testing.expect(timed_out);
+    try std.testing.expect(got < 8);
 }
 
 test "BufReader serves many small reads from one refill" {

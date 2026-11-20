@@ -2,6 +2,17 @@
 
 <!-- New changes land here; on release, move them under a new `## [x.y.z]` section. -->
 
+## [0.28.10] - 2026-11-20
+
+### Performance / KA-prep — Lighting absolute deadlines + bounded drain + alloc path
+
+- **`ServerConfig.max_drain_body_bytes`** (default 256 KiB): `keepalive_safety.drainPreparedBody` returns `.too_large` past the ceiling; `Context` forces `keep_alive=false`.
+- **`ServerConfig.read_header_timeout_ms`** (default 5s) + **`idle_timeout_ms`** (default 120s): absolute deadlines for first `receiveHead` vs KA idle wait.
+- **`TimedIoReader` absolute deadlines**: `setDeadlineFromNow` / `clearDeadline`; body phase uses absolute `read_timeout_ms`.
+- **`Context.init`**: no HashMap pre-capacity — empty maps until first `setHeader`/`setAttr`.
+- **Examples** (`production`, `blog`, `blog-single`): ReleaseFast/Safe use `std.heap.smp_allocator`.
+- `force_connection_close` remains **true** by default (zig#25017).
+
 ## [0.28.9] - 2026-11-20
 
 ### Fixed

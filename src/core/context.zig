@@ -65,6 +65,8 @@ pub const Context = struct {
     remote_addr: ?std.Io.net.IpAddress = null,
     /// Maximum request body size in bytes (default 10MB).
     max_body_size: usize = 10 * 1024 * 1024,
+    /// Max unread body to discard before respond (see `ServerConfig.max_drain_body_bytes`).
+    max_drain_body_bytes: usize = 256 * 1024,
     deadline_ns: ?i128 = null,
     query_params: ?std.StringHashMap([]const u8) = null,
     path_params: ?std.StringHashMap([]const u8) = null,
@@ -124,25 +126,18 @@ pub const Context = struct {
     /// Create per-request Context. Uses parent allocator directly (no Arena)
     /// to avoid Arena+container reallocation segfaults in Zig 0.17 threaded IO.
     /// Handlers MUST individually free all allocated memory via ctx.allocator.
+    ///
+    /// HashMaps start empty (no `ensureTotalCapacity`) so GET/health paths that
+    /// never `setHeader`/`setAttr` pay only the struct footprint — Lighting-style
+    /// avoid fixed per-request allocation tax.
     pub fn init(req: *std.http.Server.Request, parent_allocator: std.mem.Allocator) Context {
-        var headers = std.StringHashMap([]const u8).init(parent_allocator);
-        // Pre-allocate is best-effort — fall back to incremental growth if OOM.
-        headers.ensureTotalCapacity(16) catch |err| {
-            std.debug.print("context.init: headers pre-alloc failed ({s}); using incremental growth\n", .{@errorName(err)});
-        };
-
-        var attrs = std.StringHashMap([]const u8).init(parent_allocator);
-        attrs.ensureTotalCapacity(8) catch |err| {
-            std.debug.print("context.init: attrs pre-alloc failed ({s}); using incremental growth\n", .{@errorName(err)});
-        };
-
         return Context{
             .req = req,
             .allocator = parent_allocator,
             .arena = null,
-            .attributes = attrs,
-            .response_cookies = std.ArrayList(Cookie).empty,
-            .response_headers = headers,
+            .attributes = .init(parent_allocator),
+            .response_cookies = .empty,
+            .response_headers = .init(parent_allocator),
         };
     }
 
@@ -681,9 +676,15 @@ pub const Context = struct {
     /// Handlers that don't call getBodyText leave the POST body unread,
     /// which causes std.http.Server.discardBody assertion failure in Zig 0.17.
     /// See `keepalive_safety.zig` + zig#25017.
+    /// Over `max_drain_body_bytes` forces `keep_alive = false` (Lighting-style).
     fn drainUnconsumedBody(self: *Context) void {
         const ka = @import("keepalive_safety.zig");
-        ka.drainPreparedBody(self.req);
+        switch (ka.drainPreparedBody(self.req, self.max_drain_body_bytes)) {
+            .ok => {},
+            .too_large, .failed => {
+                self.req.head.keep_alive = false;
+            },
+        }
     }
 
     fn freeSetCookieDupes(self: *Context, headers: std.ArrayList(std.http.Header)) void {

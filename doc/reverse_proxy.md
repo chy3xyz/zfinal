@@ -30,7 +30,10 @@ ZFinal（force_connection_close=true，默认）
 ### 实现注意（v0.20.8+）
 
 - `force_connection_close` 必须在 **`respond` 之前** 清掉 `req.head.keep_alive`，否则响应头仍是 keep-alive，`handleConn` 会卡在下一次 `receiveHead`，占住 `async_limit` 槽。
-- 每个连接只跑 **一个** Io fiber；不要再为 idle 另 `group.async` 一个 watchdog（会把有效并发减半，顺序压测约 3–4 个请求后全 HTTP 000）。空闲读超时用 `read_timeout_ms`。
+- 每个连接只跑 **一个** Io fiber；不要再为 idle 另 `group.async` 一个 watchdog（会把有效并发减半，顺序压测约 3–4 个请求后全 HTTP 000）。
+- 读超时用**绝对截止**：`read_header_timeout_ms`（默认 5s，首请求 `receiveHead`）+ `idle_timeout_ms`（默认 120s，KA 等下一请求）+ `read_timeout_ms`（默认 30s，body）。相对 poll 超时可被 Slowloris 续命。
+- 未读 body 最多 drain `max_drain_body_bytes`（默认 256KiB），超出强制关连接。
+- ReleaseFast/Safe 示例优先 `std.heap.smp_allocator`（见 `examples/production` / `blog`）。
 
 ---
 
@@ -41,7 +44,10 @@ app.setConfig(.{
     .port = 8080,
     // 默认即为 true；显式写出便于审计
     .force_connection_close = true,
+    .read_header_timeout_ms = 5_000,
+    .idle_timeout_ms = 120_000,
     .read_timeout_ms = 30_000,
+    .max_drain_body_bytes = 256 * 1024,
     .write_timeout_ms = 30_000,
     .request_timeout_ms = 30_000,
     .drain_timeout_ms = 15_000,
