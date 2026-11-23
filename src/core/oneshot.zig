@@ -73,6 +73,12 @@ pub fn captureWith(
         }
     }
 
+    // Mock mode: `req` is undefined, so `ensureQueryParams` (which reads
+    // req.head.target) must never run. Pre-init an empty map — getPara*
+    // then return null and handlers fall back to their defaults.
+    // Context.deinit frees it (empty map = no-op key loop).
+    ctx.query_params = std.StringHashMap([]const u8).init(allocator);
+
     try router.execute(path, method, &ctx);
 
     return .{
